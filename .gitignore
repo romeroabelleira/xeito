@@ -1,0 +1,8 @@
+.DS_Store
+_build/
+deps/
+*.ez
+/tmp/
+.elixir_ls/
+/models/
+*.gguf
