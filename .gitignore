@@ -6,3 +6,6 @@ deps/
 .elixir_ls/
 /models/
 *.gguf
+local/
+*.local.*
+.env*

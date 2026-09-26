@@ -1,0 +1,31 @@
+# Xeito
+
+> A minimalist agent harness that puts language models inside a state-machine corset,
+> records every transition, and mines its own runs to get better.
+
+Xeito keeps the front end small and plain, in the style of [pi](https://pi.dev): a terminal, a handful of tools, no ceremony.
+The back end rests on three ideas:
+
+1. **State machines first.** Every task is modelled as a statechart before any model is called.
+   A model call can only choose among the transitions that are legal in the current state.
+2. **Typed decisions.** A model never "decides" in free text.
+   Each decision returns a value of a closed, schema-validated type, together with a confidence score, and it can be cached, replayed and evaluated.
+3. **Process mining as the meta state machine.** Every transition is written to an object-centric event log (OCEL 2.0).
+   Mining those logs shows the process that *actually* happened. Conformance checking compares it with the declared machine, and the findings become reviewed changes to the machines.
+
+The reference deployment runs on a single workstation. A small CPU-bound model makes typed decisions, and delegation to larger models (a local GPU, then a remote API) is itself a state machine.
+
+## Documents
+
+| Doc | What it is |
+|---|---|
+| [docs/design.md](docs/design.md) | One-page design doc |
+| [docs/architecture/00-overview.md](docs/architecture/00-overview.md) | Architecture draft (overview + one file per section) |
+| [docs/implementation-plan.md](docs/implementation-plan.md) | Step-by-step implementation plan with exit criteria |
+| [docs/architecture/references.md](docs/architecture/references.md) | Prior art and bibliography |
+
+## Status
+
+Design stage (September 2026). No code yet. The proposed stack is Elixir/OTP; see [08-tech-stack](docs/architecture/08-tech-stack.md).
+
+*Xeito* is Galician for "knack" or "the right way of doing something".
