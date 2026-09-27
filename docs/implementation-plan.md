@@ -82,7 +82,7 @@ gantt
 2. Add tier clients. `Large` uses the Ollama API on `:11434` with `format` = JSON Schema, detects which model is loaded (`/api/ps`), and models the swap substate. `Remote` uses ReqLLM (Anthropic) with tool-use schemas. `Human` asks through the TUI or a CLI prompt.
 3. Add the policy DSL and guards for data locality, budgets and a maximum number of swaps.
 4. Implement cost accounting per decision and per run: tokens, currency, wall-clock and estimated energy.
-5. Batching: queue large-tier decisions per model so that swaps are avoided.
+5. Batching: queue large-tier decisions per model so that swaps are avoided. Batch System One questions per state into one request, and give each backend a queue with its measured capacity ([bench 1](../bench/1-contention.md)).
 
 **Exit:** on the eval sets, the cascade (rules → small → large) matches or beats large-only accuracy while calling `large` for fewer than 30% of decisions (target to be confirmed in P2). The remote tier is provably never called for `Risk` (test). The swap state appears in the logs.
 

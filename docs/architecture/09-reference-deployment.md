@@ -43,7 +43,8 @@ flowchart TB
 
 - **What.** laya-multilingual (mmBERT-base, 322M, Apache-2.0), served by upstream **`laya-serve`**. It uses Laya's own CPU container (`compose.yaml` + `compose.http.yaml`, CPU PyTorch) and speaks the Jev-compatible `POST /v1/systemone` contract.
   - It is published on loopback only, with `LAYA_API_KEY_FILE` set, and runs as a non-root container user.
-  - **Measured in P0:** 62–89 ms per warm request on the CPU ([bench 0](../../bench/0-baseline.md)). The first request after a start costs ~23 s for the checkpoint build, so warm it at startup.
+  - **Measured in P0:** 62–89 ms per warm request on the CPU ([bench 0](../../bench/0-baseline.md)). The latency does not change while the large model generates on the GPU ([bench 1](../../bench/1-contention.md)).
+  - **Capacity:** `laya-serve` handles one request at a time, ~16 single-question decisions/s. Batch all questions for a state into one request instead of sending them concurrently. The first request after a start costs ~23 s for the checkpoint build, so warm it at startup.
   - The community `laya-onnx` port the research recommended (no PyTorch) was no longer available as of 2026-09-27. Other ONNX runtimes exist (Go, Rust, browser), but they are young. Upstream is the default until one of them proves itself.
 - **Pinning.**
   - Always send `"model": "multilingual"` **in every request**. The server-side `LAYA_MODELS` setting does not stop the router from picking the English checkpoint (observed in P0). Laya's router sends ~64% of short German utterances to the English checkpoint, which costs ~20 points on MASSIVE-de.
@@ -93,6 +94,12 @@ A typed decision is prompt-heavy and output-light. The **target is p50 below 400
 
 - Anthropic Claude via ReqLLM, using tool-use schemas for typed output. The model ID is kept in config.
 - Governed by policy ([04](04-delegation.md#guards-on-escalation)): `Risk` never goes remote, `:local_only` inputs never go remote, and each run has a budget.
+
+### Thread budget
+
+The CPU placement of the small tiers costs the GPU-resident large model almost nothing: ≤ 4% of its tokens/s ([bench 1](../../bench/1-contention.md)). The host side of GPU generation still keeps ~5 hardware threads busy. Budget explicitly, and check with bench 1 after changing any tier:
+large-tier host threads + small-tier threads + BEAM ≤ physical cores.
+If the large model's context or size forces partial CPU offload, this budget no longer holds.
 
 ## Services
 
