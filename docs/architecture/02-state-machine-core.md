@@ -17,70 +17,102 @@ Xeito uses the Harel statechart vocabulary, the same one SCXML and XState use:
 - **Final states.** Every machine has at least `:done` and `:failed`.
 - **History and parallel regions.** Deferred until needed. Parallel regions are modelled as child runs instead (see "Composition").
 
-The runtime is Erlang/OTP's `gen_statem` in `handle_event_function` mode. Xeito compiles a machine definition into a callback module, or interprets it through one generic module; an [open question](11-open-questions.md).
+The runtime is Erlang/OTP's `gen_statem` in `handle_event_function` mode. One generic module (`Xeito.Run`) interprets the compiled machine data. The statechart semantics live in a pure engine (`Xeito.Machine.Engine`) that the live run and log recovery share (Q1, decided in P1).
 `gen_statem` already provides postponed events, state enter calls, timeouts and a fully inspectable state. That is most of a statechart runtime, already battle-tested.
 
-### Machine definition (sketch, Elixir DSL)
+### Machine definition (Elixir DSL)
 
 ```elixir
 defmodule Xeito.Machines.FixFailingTest do
   use Xeito.Machine, version: "0.3.0"
 
-  decision :triage, Xeito.Decisions.Triage          # typed, see 03
+  alias Xeito.Effect
+
+  @tests_timeout 900_000
+  @work_timeout 3_600_000
 
   initial :reproduce
 
-  state :reproduce do
-    on :ran, to: :triage,  guard: &failed?/2
-    on :ran, to: :done,    guard: &passed?/2          # already green
+  state :reproduce, entry: :run_tests, timeout: @tests_timeout do
+    on :ran, to: :triage, guard: :failed?
+    on :ran, to: :done
   end
 
   state :triage do
-    decide :triage                                  # emits {:decided, %Decision{}}
-    on {:decided, :flaky},       to: :rerun
-    on {:decided, :code_bug},    to: :working
-    on {:decided, :test_bug},    to: :working
+    decide :triage
+    on {:decided, :flaky}, to: :rerun
+    on {:decided, :code_bug}, to: :working
+    on {:decided, :test_bug}, to: :working
     on {:decided, :env_problem}, to: :ask_human
+    on {:decided, :abstain}, to: :ask_human
+  end
+
+  state :rerun, entry: :run_tests, timeout: @tests_timeout do
+    on :ran, to: :done, guard: :passed?
+    on :ran, to: :triage, guard: :reruns_left?, action: :count_rerun
+    on :ran, to: :failed
   end
 
   state :working, initial: :planning do
-    state :planning  do on :planned, to: :editing end
-    state :editing   do on :edited,  to: :verifying end
-    state :verifying do
-      on :ran, to: :done,     guard: &passed?/2
-      on :ran, to: :planning, guard: &attempts_left?/2
+    on :give_up, to: :failed
+
+    state :planning, timeout: @work_timeout do
+      on :planned, to: :editing
+    end
+
+    state :editing, timeout: @work_timeout do
+      on :edited, to: :verifying
+    end
+
+    state :verifying, entry: :run_tests, timeout: @tests_timeout do
+      on :ran, to: :done, guard: :passed?
+      on :ran, to: :planning, guard: :attempts_left?, action: :count_attempt
       on :ran, to: :failed
     end
   end
 
-  state :rerun     do on :ran, to: :done, guard: &passed?/2; on :ran, to: :triage end
-  state :ask_human do on {:human, :answer}, to: :triage end
+  state :ask_human, timeout: 86_400_000 do
+    on :answered, to: :working
+    on :abort, to: :failed
+  end
+
   final :done
   final :failed
+
+  # Guards, actions and entry functions are ordinary public functions:
+  def run_tests(ctx), do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd)]
+  def failed?(_ctx, result), do: result.exit_status != 0
+  # …
 end
 ```
 
-The DSL compiles to plain data (`%Xeito.Machine{}`). That data can be exported as **SCXML** or as **Mermaid** for documentation, and as a **Petri net** for conformance checking ([05](05-event-log-and-process-mining.md)).
+This is the actual machine in `lib/xeito/machines/fix_failing_test.ex`. Guards, actions and entry functions are named by atom, so the definition stays data. Timeouts are `ms` or `{ms, event}`, and states without one get the machine's `default_timeout`. The DSL compiles to plain data (`%Xeito.Machine{}`). That data can be exported as **SCXML** or as **Mermaid** for documentation, and as a **Petri net** for conformance checking ([05](05-event-log-and-process-mining.md)).
 
+<!-- generated: mix xeito.export Xeito.Machines.FixFailingTest -->
 ```mermaid
 stateDiagram-v2
   [*] --> reproduce
-  reproduce --> triage: ran [failed]
-  reproduce --> done: ran [passed]
-  triage --> rerun: flaky
-  triage --> working: code_bug | test_bug
-  triage --> ask_human: env_problem
-  ask_human --> triage: answer
-  rerun --> done: ran [passed]
-  rerun --> triage: ran [failed]
+  reproduce --> triage: ran [failed?]
+  reproduce --> done: ran
+  triage --> rerun: decided flaky
+  triage --> working: decided code_bug
+  triage --> working: decided test_bug
+  triage --> ask_human: decided env_problem
+  triage --> ask_human: decided abstain
+  rerun --> done: ran [passed?]
+  rerun --> triage: ran [reruns_left?]
+  rerun --> failed: ran
+  working --> failed: give_up
+  working --> done: ran [passed?]
+  working --> failed: ran
+  ask_human --> working: answered
+  ask_human --> failed: abort
   state working {
     [*] --> planning
     planning --> editing: planned
     editing --> verifying: edited
-    verifying --> planning: ran [failed ∧ attempts_left]
+    verifying --> planning: ran [attempts_left?]
   }
-  working --> done: ran [passed]
-  working --> failed: ran [exhausted]
   done --> [*]
   failed --> [*]
 ```

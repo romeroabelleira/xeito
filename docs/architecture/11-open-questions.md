@@ -6,8 +6,8 @@ Each question is tagged with the phase of the [implementation plan](../implement
 
 | # | Question | Options | Decide by |
 |---|---|---|---|
-| Q1 | Should machines compile into their own `gen_statem` module, or be interpreted by one generic module? | Compiled is faster and gives better crash reports. Interpreted allows hot-swapping machine data and is simpler to replay. **Lean: interpreted.** | P1 |
-| Q2 | Should machines be written in an Elixir DSL or in a data format (SCXML/YAML)? | A DSL gives compile-time checks. Data makes it easier for mining proposals to edit machines. **Lean:** DSL that compiles to data, with proposals emitted as DSL diffs. | P1 |
+| Q1 | Should machines compile into their own `gen_statem` module, or be interpreted by one generic module? | **Decided (P1): interpreted**, through a pure engine shared by the live run and log recovery. | P1 ✅ |
+| Q2 | Should machines be written in an Elixir DSL or in a data format (SCXML/YAML)? | **Decided (P1):** a DSL that compiles to validated data. Guards, actions and entry functions are named by atom, and Mermaid/SCXML exports are generated. | P1 ✅ |
 | Q3 | Which confidence source is primary for each backend? | logprobs (llama.cpp) · self-consistency · verbalised. It depends on whether Ollama exposes logprobs for the large tier. | P2 |
 | Q4 | Which small model is the default? | Decided by the eval results on the reference workstation ([09](09-reference-deployment.md#tier-small-cpu)). | P2 |
 | Q5 | When does a decision type graduate to a classifier? | The thresholds in [03](03-typed-decisions.md) are guesses and need data. | P7 |

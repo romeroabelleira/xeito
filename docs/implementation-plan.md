@@ -57,6 +57,12 @@ gantt
 7. Add exporters: Mermaid and SCXML from `%Machine{}`.
 8. Write the first two machines, driven by code only with no model: `run_tests` and `fix_failing_test` (with a stubbed triage).
 
+**Status (2026-09-27):** done.
+- The DSL compiles to validated data, and a pure engine is shared by `Xeito.Run` and `Xeito.Run.Recovery`.
+- `Xeito.Log` writes OCEL 2.0 in SQLite. PM4Py reads it natively (`read_ocel2_sqlite`).
+- Local, fake and `:none` effect runners exist; `mix xeito.export` produces Mermaid and SCXML.
+- 34 tests pass, including a property test (up to 1,000 runs), kill/restart and in-flight-effect recovery.
+
 **Exit:** a property test shows that, for random event sequences, the log alone reproduces the final state. Killing a run mid-way and restarting it resumes in the same state. The Mermaid export of `fix_failing_test` matches [02](architecture/02-state-machine-core.md).
 
 ## P2 · Typed decisions and the CPU model (≈4 weeks)

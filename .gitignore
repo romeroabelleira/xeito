@@ -36,3 +36,6 @@ xeito-*.tar
 
 # Dialyzer PLTs
 /priv/plts/
+
+# Xeito event logs
+.xeito/

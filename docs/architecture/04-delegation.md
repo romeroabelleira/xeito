@@ -86,6 +86,12 @@ stateDiagram-v2
 The same machine shape covers handing a whole **sub-task** to a stronger agent. Examples: "have the remote model write this migration", or delegating to an external coding agent such as pi or Claude Code running headless.
 The sub-task is an invoked child machine whose deciders are all one tier. It returns an artefact, and the parent verifies it with guards. The delegate sees only the context the parent explicitly passes. That context is logged, so it is auditable what left the box.
 
+## Queues
+
+Decision queues are **in-memory, per backend**: a process per decider backend with the capacity measured in [bench 1](../../bench/1-contention.md). They need no database.
+Durability comes from the event log. A decision request is an effect (`effect_requested`), and one without a logged result is re-dispatched when a run recovers (at-least-once delivery, implemented in P1 for all effects).
+A persistent job queue (Oban on PostgreSQL or SQLite) would duplicate the log and add a second source of truth.
+
 ## What gets recorded
 
 Each escalation writes one event per state entered, including `from_tier`, `to_tier`, `reason` (`:low_confidence | :abstain | :guard_failed | :timeout | :policy`), the confidence that triggered it, and the cost incurred.
