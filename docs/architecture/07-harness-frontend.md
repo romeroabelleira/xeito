@@ -52,6 +52,19 @@ flowchart LR
 - **`xeito`** is a thin TUI client. It crashes independently of the daemon, and the TUI library can be swapped without touching the core ([08](08-tech-stack.md#the-tui-the-weakest-link)).
 - **JSONL client protocol.** One command or event per line. It is modelled after pi's RPC mode, so non-Elixir clients (the pi bridge, editor plugins, scripts) are trivial to write.
 
+### As implemented (P4)
+
+- **`xeitod`** is the application with `Xeito.Api` enabled (`mix xeito.daemon`; a release in P8). It listens on a Unix socket: `$XEITO_SOCKET`, or `~/.xeito/run/xeito.sock`. The directory is 0700 and the socket 0600, and nothing binds to a network address.
+- **One protocol for every client.** JSON Lines over that socket (`Xeito.Api`). It carries requests (`start`, `attach`, `prompt`, `approve`, `deny`, `status`, `history`, `sessions`) and events: everything the session's runs log, plus the streamed `delta` text and session notices.
+  The TUI uses it too, instead of Erlang distribution. That keeps a single client path, needs no cookies or epmd, and lets the TUI be replaced without touching the daemon.
+- **Sessions** (`Xeito.Session`) hold the conversation. Each turn is a run `<session>/t<n>`, related `part_of` the session. The log is the workspace's own `.xeito/log.sqlite`, which gets its own `.gitignore`.
+  `attach` with a `cwd` rebuilds a session the daemon no longer holds from that log.
+- **Clients:**
+  - `mix xeito.tui`: TermUI, Elm architecture. Daemon events reach it through the root's `handle_info/2`.
+  - `mix xeito.chat`: line mode.
+  - Both use `Xeito.Client.Render`, which folds escalation runs into their decision and indents delegated runs.
+- **Delegation.** `fix_failing_test` with `delegate: true` hands the fix to a child run of the free chat machine (the `machine` effect). Machines compose without a second agent loop.
+
 ## Interaction model
 
 | User does | What happens |
@@ -63,6 +76,8 @@ flowchart LR
 | `/why` | Shows the last decisions with their confidence, tier and rationale |
 | `/replay <run>` | Replays in the TUI; `/inspect` opens the web inspector at that run |
 | `/budget 0.50` | Sets the run's remote-tier budget ([04](04-delegation.md#guards-on-escalation)) |
+| `/step`, `/next`, `/decide <value>`, `/continue`, `/break …` | Step mode and breakpoints ([06](06-observability.md#2-step)); implemented in P4 |
+| `y` / `n` | Approve or deny a command waiting in review (the TUI's shortcut for `/approve`, `/deny`) |
 
 ### The free chat machine: the escape hatch
 

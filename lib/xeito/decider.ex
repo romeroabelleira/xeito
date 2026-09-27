@@ -162,6 +162,10 @@ defmodule Xeito.Decider do
 
   defp apply_floor(decision, %Type{severity: nil}), do: decision
 
+  # The floor bounds what a *model* may decide. Rules and humans are authoritative.
+  defp apply_floor(%Decision{actor: actor} = decision, _type) when actor in [:rule, :human],
+    do: decision
+
   defp apply_floor(%Decision{value: value} = decision, %Type{
          severity: %{order: order, floor: floor}
        }) do

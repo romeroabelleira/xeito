@@ -13,7 +13,7 @@ defmodule Xeito.MixProject do
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
-        plt_add_apps: [:ex_unit, :mix]
+        plt_add_apps: [:ex_unit, :mix, :term_ui]
       ]
     ]
   end
@@ -36,6 +36,8 @@ defmodule Xeito.MixProject do
     [
       {:exqlite, "~> 0.41"},
       {:req, "~> 0.7"},
+      # The TUI client only; not started with the daemon (mix xeito.tui starts it).
+      {:term_ui, "~> 1.0", runtime: false},
       {:plug, "~> 1.20", only: :test},
       {:stream_data, "~> 1.4", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

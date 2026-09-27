@@ -217,6 +217,17 @@ defmodule Xeito.EscalationTest do
     assert Enum.any?(d.evidence, &match?(%{tier: :large, error: {:skipped, _}}, &1))
   end
 
+  test "a rule's verdict is not raised by the severity floor; a model's is" do
+    {safe, _, _} = decide(Risk, %{command: "git status"}, deciders: [])
+    assert %{value: :safe, actor: :rule} = safe
+
+    {forbidden, _, _} = decide(Risk, %{command: "rm -rf /"}, deciders: [])
+    assert %{value: :forbidden, actor: :rule} = forbidden
+
+    {unknown, _, _} = decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [])
+    assert %{value: :review, actor: :none} = unknown
+  end
+
   test "off-box tiers are never called for local-only inputs or for Risk" do
     tiers = [small: small(0.4), openrouter: openrouter(self(), 0.99), remote: remote(self())]
 

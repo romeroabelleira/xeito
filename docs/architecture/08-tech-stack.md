@@ -112,6 +112,11 @@ A TUI library crash, or a NIF crash if ExRatatui wins, then never kills a run, a
 Start with **TermUI**. Spike ExRatatui in P4 if TermUI's editor or diff widgets fall short.
 Offer a **pi bridge extension** (a small TS file, the only JS in the project, and optional) that lets pi users call Xeito machines from inside pi. It is cheap reach into the pi community, not a dependency.
 
+**Outcome (P4).**
+- **TermUI is adopted.** Its Elm runtime forwards other processes' messages to the root's `handle_info/2`, so daemon events need no glue. Its text input and styling cover the prompt, transcript and status line. The ExRatatui spike was not needed.
+- **The client talks JSON Lines** over the daemon's Unix socket rather than Erlang distribution ([07](07-harness-frontend.md#as-implemented-p4)).
+- **Caveat:** TermUI pulls in `mdex`, whose native part is a precompiled Rust NIF fetched at build time. It is loaded only in the TUI process, since `term_ui` is a `runtime: false` dependency the daemon never starts. The P8 Burrito packaging should split the TUI into its own binary.
+
 ## What stays outside Elixir, and why
 
 | Component | Language | Reason |

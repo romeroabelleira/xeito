@@ -41,8 +41,8 @@ defmodule Xeito.Machines.FixFailingTest do
   state :triage do
     decide Xeito.Decisions.Triage, input: :triage_input
     on {:decided, :flaky}, to: :rerun
-    on {:decided, :code_bug}, to: :working
-    on {:decided, :test_bug}, to: :working
+    on {:decided, :code_bug}, to: :working, action: :record_triage
+    on {:decided, :test_bug}, to: :working, action: :record_triage
     on {:decided, :env_problem}, to: :ask_human
     on {:decided, :abstain}, to: :ask_human
   end
@@ -56,8 +56,12 @@ defmodule Xeito.Machines.FixFailingTest do
   state :working, initial: :planning do
     on :give_up, to: :failed
 
-    state :planning, timeout: @work_timeout do
+    # A human or external agent sends :planned/:edited; with `delegate: true` the entry
+    # starts a child run of the free chat machine, which reports back as :child_done.
+    state :planning, entry: :maybe_delegate, timeout: @work_timeout do
       on :planned, to: :editing
+      on :child_done, to: :verifying, guard: :fixed_by_child?, action: :record_fix
+      on :child_done, to: :ask_human, action: :record_fix
     end
 
     state :editing, timeout: @work_timeout do
@@ -104,6 +108,7 @@ stateDiagram-v2
   rerun --> triage: ran [reruns_left?]
   rerun --> failed: ran
   working --> failed: give_up
+  working --> ask_human: child_done
   working --> done: ran [passed?]
   working --> failed: ran
   ask_human --> working: answered
@@ -111,6 +116,7 @@ stateDiagram-v2
   state working {
     [*] --> planning
     planning --> editing: planned
+    planning --> verifying: child_done [fixed_by_child?]
     editing --> verifying: edited
     verifying --> planning: ran [attempts_left?]
   }

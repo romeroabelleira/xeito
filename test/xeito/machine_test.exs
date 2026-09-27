@@ -19,7 +19,7 @@ defmodule Xeito.MachineTest do
     machine = Machine.fetch!(FixFailingTest)
 
     assert machine.name == "fix_failing_test"
-    assert machine.version == "0.4.0"
+    assert machine.version == "0.5.0"
     assert machine.initial == :reproduce
     assert Machine.children(machine, :working) == [:planning, :editing, :verifying]
     assert Machine.leaf(machine, :working) == :planning

@@ -5,7 +5,12 @@ defmodule Xeito.Effects.Local do
     * `bash` runs `sh -c` in the workspace. Output is merged (stderr into stdout) and
       truncated to `opts[:max_output]` bytes (default 64 KiB). On timeout the result is
       `exit_status: 124`.
-    * `read` / `write` resolve paths relative to the workspace and refuse anything outside it.
+    * `read` / `write` / `edit` resolve paths relative to the workspace and refuse anything
+      outside it. `edit` replaces exactly one occurrence of the old text, or fails.
+    * `chat` runs one chat-model turn with the core tools (`Xeito.Chat`) and streams its output
+      to `Xeito.Events`. `opts[:chat]` overrides the chat model configuration.
+    * `machine` runs another machine to completion as a child run (`<effect id>/run`, related
+      `part_of` the requesting run) with this same runner, and returns its outcome.
     * `decide` runs the decision as an escalation machine (`Xeito.Escalation`), a child run in
       the same log, when the runner was dispatched by a run (`opts[:log]`). Without a log it
       falls back to the in-process `Xeito.Decider`. `opts[:decider]` passes options (deciders,
@@ -17,7 +22,8 @@ defmodule Xeito.Effects.Local do
 
   @behaviour Xeito.Effects.Runner
 
-  alias Xeito.{Budget, Decider, Decision, Effect, Escalation, Policy, Tiers}
+  alias Xeito.{Budget, Chat, Decider, Decision, Effect, Escalation, Log, Policy}
+  alias Xeito.{Run, RunSupervisor, Tiers, Tools}
   alias Xeito.Tiers.Ollama
 
   @max_output 65_536
@@ -51,6 +57,53 @@ defmodule Xeito.Effects.Local do
       %{ok: true}
     else
       {:error, reason} -> %{ok: false, error: reason}
+    end
+  end
+
+  def run(%Effect{kind: :edit, args: args}, _opts) do
+    with {:ok, path} <- resolve(args),
+         {:ok, content} <- File.read(path),
+         {:ok, updated} <- replace_once(content, args.old, args.new),
+         :ok <- File.write(path, updated) do
+      %{ok: true}
+    else
+      {:error, reason} -> %{ok: false, error: reason}
+    end
+  end
+
+  def run(%Effect{kind: :chat, args: args} = effect, opts) do
+    tools = if args.tools, do: Tools.specs(), else: []
+    on_delta = &Xeito.Events.delta(opts[:run_id], effect.id, &1)
+
+    case Chat.complete(args.messages, tools, Keyword.get(opts, :chat, []), on_delta) do
+      {:ok, message} -> message
+      {:error, reason} -> %{error: reason}
+    end
+  end
+
+  def run(%Effect{kind: :machine, args: args} = effect, opts) do
+    log = Keyword.fetch!(opts, :log)
+    id = effect.id <> "/run"
+    runner = {__MODULE__, opts |> Keyword.put(:run_id, id) |> Keyword.delete(:debug)}
+
+    # A delegated run inherits the requesting run's step mode and breakpoints.
+    start = [run_id: id, log: log, runner: runner, debug: opts[:debug]]
+
+    case RunSupervisor.start_run(args.machine, args.input, start) do
+      {:ok, ^id} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    if opts[:run_id], do: Log.relate(log, id, opts[:run_id], "part_of")
+
+    case Run.await(log, id, args.timeout) do
+      # The child's full context stays in its own log; the parent gets the outcome.
+      {:ok, result} ->
+        %{result | ctx: Map.take(result.ctx, [:answer, :error, :steps, :tokens_in, :tokens_out])}
+        |> Map.put(:run_id, id)
+
+      :timeout ->
+        %{run_id: id, status: :timeout, state: nil, ctx: %{}}
     end
   end
 
@@ -130,6 +183,16 @@ defmodule Xeito.Effects.Local do
     case String.split(run_id, "/e", parts: 2) do
       [parent, _] -> parent
       _ -> nil
+    end
+  end
+
+  defp replace_once(_content, "", _new), do: {:error, "old_text is empty"}
+
+  defp replace_once(content, old, new) do
+    case :binary.matches(content, old) do
+      [_] -> {:ok, String.replace(content, old, new, global: false)}
+      [] -> {:error, "old_text not found"}
+      many -> {:error, "old_text matches #{length(many)} times; include more context"}
     end
   end
 

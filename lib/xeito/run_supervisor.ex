@@ -18,7 +18,8 @@ defmodule Xeito.RunSupervisor do
 
   @doc """
   Starts a run of `machine` with `input`. Options: `:run_id` (generated if absent), `:log`,
-  `:runner`, `:supervisor`. Returns `{:ok, run_id}`.
+  `:runner`, `:debug` (step mode and breakpoints, see `Xeito.Run.debug/2`), `:supervisor`.
+  Returns `{:ok, run_id}`.
   """
   @spec start_run(module(), map(), keyword()) :: {:ok, Run.run_id()} | {:error, term()}
   def start_run(machine, input, opts \\ []) do
@@ -26,7 +27,8 @@ defmodule Xeito.RunSupervisor do
     supervisor = Keyword.get(opts, :supervisor, __MODULE__)
 
     child_opts =
-      [run_id: run_id, machine: machine, input: input] ++ Keyword.take(opts, [:log, :runner])
+      [run_id: run_id, machine: machine, input: input] ++
+        Keyword.take(opts, [:log, :runner, :debug])
 
     case DynamicSupervisor.start_child(supervisor, {Run, child_opts}) do
       {:ok, _pid} -> {:ok, run_id}

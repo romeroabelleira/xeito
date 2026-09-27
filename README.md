@@ -26,6 +26,19 @@ The reference deployment runs on a single workstation. A small CPU-bound model m
 
 ## Status
 
-Design stage (September 2026). No code yet. The proposed stack is Elixir/OTP; see [08-tech-stack](docs/architecture/08-tech-stack.md).
+Pre-release, in active development (September 2026), in Elixir/OTP ([08-tech-stack](docs/architecture/08-tech-stack.md)).
+- **Done:**
+  - the state-machine core and OCEL log (P1)
+  - typed decisions on CPU and GPU tiers, with evaluation (P2)
+  - escalation as a state machine, with policy and budgets (P3, P3b)
+- **In progress:** the harness (P4): a daemon, a TUI and a free chat machine.
+- See the [implementation plan](docs/implementation-plan.md) and the [benchmarks](bench/).
+
+```bash
+mix xeito.daemon            # runs, logs, and the client socket (tier endpoints from the environment)
+mix xeito.tui --cwd PROJECT # terminal UI on a session in PROJECT (or: mix xeito.chat, line mode)
+```
+
+Tier endpoints are configured through `XEITO_*` environment variables; see `config/runtime.exs`.
 
 *Xeito* is Galician for "knack" or "the right way of doing something".

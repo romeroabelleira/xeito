@@ -20,7 +20,8 @@ defmodule Xeito.Run do
 
   @behaviour :gen_statem
 
-  alias Xeito.{Effect, Effects, Log, Machine}
+  alias Xeito.{Decision, Effect, Effects, Log, Machine}
+  alias Xeito.Decision.Type
   alias Xeito.Log.Event
   alias Xeito.Machine.Engine
   alias Xeito.Run.Recovery
@@ -53,6 +54,26 @@ defmodule Xeito.Run do
   def send_event(run_id, name, data \\ %{}, actor \\ :human) do
     :gen_statem.call(via(run_id), {:event, name, data, actor})
   end
+
+  @doc """
+  Sets the debug settings of a live run: `%{step: boolean, breakpoints: [breakpoint]}`.
+
+  A breakpoint is `{:state, name}` (pause on any result arriving in that state),
+  `{:decision, module}` (pause on that decision type's result) or `{:confidence_below, x}`
+  (pause on a decision whose confidence is below `x`). With `step: true` the run pauses before
+  every effect result. Turning step mode off releases a held result.
+  See `docs/architecture/06-observability.md#2-step`.
+  """
+  @spec debug(run_id(), map()) :: :ok
+  def debug(run_id, settings), do: :gen_statem.call(via(run_id), {:debug, settings})
+
+  @doc """
+  Releases the result a paused run is holding. With `{:decide, value}`, a held decision is
+  replaced by a human decision of that value (logged with `actor: :human`, a labelled example).
+  Returns `:ok`, `{:error, :not_paused}` or `{:error, :invalid_value}`.
+  """
+  @spec step(run_id(), :next | {:decide, atom()}) :: :ok | {:error, atom()}
+  def step(run_id, how \\ :next), do: :gen_statem.call(via(run_id), {:step, how})
 
   @doc "Returns `%{leaf: atom, ctx: map}` of a live run."
   @spec snapshot(run_id()) :: %{leaf: atom(), ctx: map()}
@@ -107,6 +128,44 @@ defmodule Xeito.Run do
     }
   end
 
+  @doc "Waits until run `id` has finished. Returns its logged result or `:timeout`."
+  @spec await(Log.server(), String.t(), timeout()) :: {:ok, map()} | :timeout
+  def await(log, id, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    wait(log, id, deadline)
+  end
+
+  defp wait(log, id, deadline) do
+    case result(log, id) do
+      {:ok, result} ->
+        {:ok, result}
+
+      :running ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        cond do
+          remaining <= 0 ->
+            :timeout
+
+          pid = whereis(id) ->
+            ref = Process.monitor(pid)
+
+            receive do
+              {:DOWN, ^ref, :process, _, _} -> wait(log, id, deadline)
+            after
+              min(remaining, 1_000) ->
+                Process.demonitor(ref, [:flush])
+                wait(log, id, deadline)
+            end
+
+          true ->
+            # Not running and not finished: being restarted by its supervisor.
+            Process.sleep(20)
+            wait(log, id, deadline)
+        end
+    end
+  end
+
   defp via(run_id), do: {:via, Registry, {Xeito.RunRegistry, run_id}}
 
   # --- gen_statem --------------------------------------------------------------------------
@@ -126,7 +185,10 @@ defmodule Xeito.Run do
       runner: Keyword.get(opts, :runner, :none),
       ctx: %{},
       effect_count: 0,
-      effects: %{}
+      effects: %{},
+      debug: Keyword.get(opts, :debug) || %{step: false, breakpoints: []},
+      held: nil,
+      queued: []
     }
 
     case Log.read_run(data.log, run_id) do
@@ -198,10 +260,49 @@ defmodule Xeito.Run do
   end
 
   def handle_event({:call, from}, :snapshot, leaf, data) do
-    {:keep_state_and_data, [{:reply, from, %{leaf: leaf, ctx: data.ctx}}]}
+    {:keep_state_and_data,
+     [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
   end
 
-  def handle_event(:info, {:xeito_effect, id, result}, leaf, data) do
+  def handle_event({:call, from}, {:debug, settings}, leaf, data) do
+    data = %{data | debug: Map.merge(%{step: false, breakpoints: []}, settings)}
+
+    if data.held && not data.debug.step,
+      do: release(leaf, data, from, :next),
+      else: {:keep_state, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:step, _how}, _leaf, %{held: nil}),
+    do: {:keep_state_and_data, [{:reply, from, {:error, :not_paused}}]}
+
+  def handle_event({:call, from}, {:step, how}, leaf, data), do: release(leaf, data, from, how)
+
+  # While a result is held, further results wait in order; timeouts are dropped (a paused
+  # run is under human control, and the next state re-arms its own timeout).
+  def handle_event(:info, {:xeito_effect, _, _} = msg, _leaf, %{held: held} = data)
+      when held != nil,
+      do: {:keep_state, %{data | queued: data.queued ++ [msg]}}
+
+  def handle_event(:state_timeout, _name, _leaf, %{held: held}) when held != nil,
+    do: :keep_state_and_data
+
+  def handle_event(:info, {:xeito_effect, id, result} = msg, leaf, data) do
+    case Map.fetch(data.effects, id) do
+      {:ok, effect} ->
+        if pause?(data, leaf, effect, result),
+          do: hold(leaf, data, msg, effect, result),
+          else: complete(leaf, data, id, result)
+
+      :error ->
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event(:state_timeout, name, leaf, data) do
+    process(leaf, data, name, %{}, :code, [], nil)
+  end
+
+  defp complete(leaf, data, id, result) do
     case Map.pop(data.effects, id) do
       {nil, _} ->
         :keep_state_and_data
@@ -223,9 +324,102 @@ defmodule Xeito.Run do
     end
   end
 
-  def handle_event(:state_timeout, name, leaf, data) do
-    process(leaf, data, name, %{}, :code, [], nil)
+  # --- step mode and breakpoints -------------------------------------------------------------
+
+  defp pause?(%{debug: %{step: true}}, _leaf, _effect, _result), do: true
+
+  defp pause?(%{debug: %{breakpoints: breakpoints}}, leaf, effect, result),
+    do: Enum.any?(breakpoints, &breakpoint?(&1, leaf, effect, result))
+
+  defp breakpoint?({:state, state}, leaf, _effect, _result), do: state == leaf
+
+  defp breakpoint?({:decision, type}, _leaf, %Effect{kind: :decide, args: args}, _result),
+    do: args.decision == type
+
+  defp breakpoint?({:confidence_below, x}, _leaf, %Effect{kind: :decide}, %{decision: d}),
+    do: is_number(d[:confidence]) and d[:confidence] < x
+
+  defp breakpoint?(_breakpoint, _leaf, _effect, _result), do: false
+
+  defp hold(leaf, data, msg, effect, result) do
+    Xeito.Events.transient(data.run_id, "paused", %{
+      "state" => leaf,
+      "kind" => effect.kind,
+      "summary" => summary(effect, result)
+    })
+
+    {:keep_state, %{data | held: msg}}
   end
+
+  defp release(leaf, data, from, how) do
+    {:xeito_effect, id, result} = data.held
+    effect = Map.fetch!(data.effects, id)
+
+    case override(effect, result, how) do
+      {:ok, result} ->
+        Enum.each(data.queued, &send(self(), &1))
+        data = %{data | held: nil, queued: []}
+
+        case complete(leaf, data, id, result) do
+          {:keep_state, data, actions} ->
+            {:keep_state, data, [{:reply, from, :ok} | actions]}
+
+          {:next_state, to, data, actions} ->
+            {:next_state, to, data, [{:reply, from, :ok} | actions]}
+
+          {:stop, reason, data} ->
+            {:stop_and_reply, reason, [{:reply, from, :ok}], data}
+
+          other ->
+            other
+        end
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  # A human decision replaces the model's: same effect, `actor: :human`, confidence 1.
+  defp override(_effect, result, :next), do: {:ok, result}
+
+  defp override(%Effect{kind: :decide, args: args}, result, {:decide, value}) do
+    type = Decision.type!(args.decision)
+
+    if value in Type.values(type) do
+      decision = %Decision{
+        type: args.decision,
+        type_version: type.version,
+        value: value,
+        confidence: 1.0,
+        actor: :human,
+        model: "human",
+        probabilities: %{value => 1.0},
+        input_hash: get_in(result, [:decision, :input_hash]),
+        evidence: [%{replaced: replaced(result)}]
+      }
+
+      {:ok, %{value: value, decision: Decision.to_map(decision)}}
+    else
+      {:error, :invalid_value}
+    end
+  end
+
+  defp override(_effect, _result, {:decide, _}), do: {:error, :not_a_decision}
+
+  defp replaced(%{decision: d}) when is_map(d), do: Map.take(d, [:value, :confidence, :actor])
+  defp replaced(result), do: Map.take(result, [:value])
+
+  defp summary(%Effect{kind: :decide, args: args}, %{decision: d}) do
+    %{
+      "decision" => inspect(args.decision),
+      "value" => d[:value],
+      "confidence" => d[:confidence],
+      "actor" => d[:actor]
+    }
+  end
+
+  defp summary(%Effect{kind: :bash}, %{exit_status: status}), do: %{"exit_status" => status}
+  defp summary(%Effect{kind: kind}, _result), do: %{"kind" => kind}
 
   defp process(leaf, data, name, event_data, actor, prefix, from) do
     received =
@@ -273,7 +467,11 @@ defmodule Xeito.Run do
     else
       Enum.each(
         effects,
-        &Effects.dispatch(data.runner, &1, self(), log: data.log, run_id: data.run_id)
+        &Effects.dispatch(data.runner, &1, self(),
+          log: data.log,
+          run_id: data.run_id,
+          debug: data.debug
+        )
       )
 
       data = %{data | effects: Map.merge(data.effects, Map.new(effects, &{&1.id, &1}))}
@@ -367,6 +565,7 @@ defmodule Xeito.Run do
 
   defp log!(data, events) do
     {:ok, _seqs} = Log.append(data.log, data.run_id, events)
+    Xeito.Events.publish(data.run_id, events)
     :ok
   end
 end

@@ -8,6 +8,9 @@ defmodule Xeito.Effect do
   | `:bash`   | `:ran` (or `:reply`)  | `%{exit_status: integer, output: binary}` |
   | `:read`   | `:read`               | `%{ok: true, content: binary}` or `%{ok: false, error: term}` |
   | `:write`  | `:written`            | `%{ok: true}` or `%{ok: false, error: term}` |
+  | `:edit`   | `:edited`             | `%{ok: true}` or `%{ok: false, error: term}` (old text must match once) |
+  | `:chat`   | `:chatted`            | `%{content, tool_calls, model, tokens_in, tokens_out}` or `%{error: reason}` |
+  | `:machine`| `:child_done`         | `%{run_id, status, state, ctx}` of a child run of another machine |
   | `:decide` | `{:decided, value}`   | `%{value: term}`                         |
   | `:tier`   | `:tier_done`          | a tier result, or `%{tier: t, error: reason}` (escalation) |
   | `:probe`  | `:probed`             | `%{loaded: boolean, swap_allowed: boolean}` (escalation) |
@@ -20,7 +23,8 @@ defmodule Xeito.Effect do
   @enforce_keys [:kind, :args, :reply]
   defstruct [:id, :kind, :args, :reply]
 
-  @type kind :: :bash | :read | :write | :decide | :tier | :probe | :swap
+  @type kind ::
+          :bash | :read | :write | :edit | :chat | :machine | :decide | :tier | :probe | :swap
   @type t :: %__MODULE__{id: String.t() | nil, kind: kind(), args: map(), reply: term()}
 
   @doc "Run a shell command. Options: `:cwd`, `:timeout` (ms, default 60 000), `:reply`."
@@ -50,6 +54,42 @@ defmodule Xeito.Effect do
       kind: :write,
       args: %{path: path, content: IO.iodata_to_binary(content), cwd: opts[:cwd]},
       reply: Keyword.get(opts, :reply, :written)
+    }
+  end
+
+  @doc "Replace the single exact occurrence of `old` with `new` in a workspace file."
+  @spec edit(String.t(), String.t(), String.t(), keyword()) :: t()
+  def edit(path, old, new, opts \\ []) do
+    %__MODULE__{
+      kind: :edit,
+      args: %{path: path, old: old, new: new, cwd: opts[:cwd]},
+      reply: Keyword.get(opts, :reply, :edited)
+    }
+  end
+
+  @doc """
+  One chat-model turn over `messages` with the core tools (`Xeito.Chat`). Streamed output is
+  published to `Xeito.Events` as it arrives; the complete message is the result.
+  """
+  @spec chat([map()], keyword()) :: t()
+  def chat(messages, opts \\ []) do
+    %__MODULE__{
+      kind: :chat,
+      args: %{messages: messages, tools: Keyword.get(opts, :tools, true)},
+      reply: Keyword.get(opts, :reply, :chatted)
+    }
+  end
+
+  @doc """
+  Run another machine to completion as a child run (a delegated sub-task). The child is logged
+  in the same log with a `part_of` relation, and its outcome is the result.
+  """
+  @spec machine(module(), map(), keyword()) :: t()
+  def machine(module, input, opts \\ []) do
+    %__MODULE__{
+      kind: :machine,
+      args: %{machine: module, input: input, timeout: Keyword.get(opts, :timeout, 3_600_000)},
+      reply: Keyword.get(opts, :reply, :child_done)
     }
   end
 

@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-09-27 (P0–P3b done) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-09-27 (P0–P3b done, P4 in progress) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -21,7 +21,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P2 · Typed decisions | 2026-11-16 → 2026-12-14 | done 2026-09-27 | [bench 2](../bench/2-decisions.md) |
 | P3 · Delegation tiers | 2026-12-14 → 2027-01-04 | done 2026-09-27 | [bench 3](../bench/3-escalation.md) |
 | P3b · OpenRouter tier (inserted) | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
-| P4 · TUI harness | 2027-01-04 → 2027-02-08 | not started | — |
+| P4 · TUI harness | 2027-01-04 → 2027-02-08 | in progress, started 2026-09-27 | [bench 4](../bench/4-harness.md) |
 
 ```mermaid
 gantt
@@ -35,7 +35,7 @@ gantt
   P3 Delegation tiers            :done, p3, 2026-09-27, 1d
   P3b OpenRouter tier            :done, p3b, 2026-09-27, 1d
   section Harness
-  P4 TUI harness (pi parity)     :p4, after p3b, 5w
+  P4 TUI harness (pi parity)     :active, p4, 2026-09-27, 5w
   section Insight
   P5 OCEL + mining               :p5, after p4, 4w
   P6 Web inspector               :p6, after p5, 5w
@@ -162,6 +162,18 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
 6. Add session save/resume, which comes for free from the log.
 7. Write the optional `pi-xeito` bridge extension ([07](architecture/07-harness-frontend.md#pi-bridge-optional)).
 8. **Dogfood.** Use Xeito for its own development for at least two weeks, and log the friction as issues.
+
+**Status:** in progress since 2026-09-27. See [bench 4](../bench/4-harness.md).
+- Done (items 1–4, 6, and 5 for `AGENTS.md`):
+  - `xeitod` (`mix xeito.daemon`) with a JSONL client API on a private Unix socket.
+  - The TUI (`mix xeito.tui`, TermUI) with transcript, edit diffs, status line (machine, state, tier, cost), reviews and step mode, plus a line-mode client (`mix xeito.chat`).
+  - The free chat machine (tools as effects, `bash` behind `Risk`, reviews), machine selection from `Intent`, and delegation (`fix_failing_test` hands the fix to a chat child run).
+  - Step mode and breakpoints, with human decisions logged as labels.
+  - Per-workspace logs, and sessions that survive the client and are rebuilt from the log after a daemon restart.
+- Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
+- Open: pi's skills directory (item 5), the pi bridge (item 7), and dogfooding (item 8).
+- Exit latency not met yet: the median time to first token is 1.70 s against 1.5 s. Ollama holds back streamed content when tools are offered; options are listed in bench 4.
+- Deviation from [07](architecture/07-harness-frontend.md): the TUI uses the same JSONL socket as every other client, not Erlang distribution.
 
 **Exit:** a two-week dogfood log with ≥ 50 runs. At least five structured machines are in daily use. Median latency of `Intent` + first token is under 1.5 s on the reference workstation.
 

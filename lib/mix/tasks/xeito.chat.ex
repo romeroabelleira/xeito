@@ -1,0 +1,105 @@
+defmodule Mix.Tasks.Xeito.Chat do
+  @shortdoc "Line-mode client for xeitod (a session in the current directory)"
+  @moduledoc """
+  A minimal, line-mode client of the daemon: type a request, watch the machine work, approve or
+  deny commands sent to review. It is the TUI without the layout, and useful where the TUI is
+  not (logs, pipes, a plain SSH session).
+
+      mix xeito.chat [--cwd DIR] [--socket PATH] [--session ID]
+
+  Needs a running daemon (`mix xeito.daemon`). Slash commands are passed through (`/help`).
+  `y` / `n` answer a pending review. Ctrl-D quits; the session keeps running in the daemon, and
+  `--session ID` attaches to it again.
+  """
+
+  use Mix.Task
+
+  alias Xeito.Client
+  alias Xeito.Client.Render
+
+  @impl true
+  def run(args) do
+    {opts, _, _} =
+      OptionParser.parse(args, strict: [cwd: :string, socket: :string, session: :string])
+
+    socket = opts[:socket] || Xeito.Api.default_socket()
+
+    client =
+      case Client.connect(socket) do
+        {:ok, client} -> client
+        {:error, _} -> Mix.raise("no daemon at #{socket}; start one with `mix xeito.daemon`")
+      end
+
+    session = open(client, opts)
+
+    IO.puts(
+      IO.ANSI.faint() <>
+        "session #{session} · /help · y/n answer a review · Ctrl-D quits" <> IO.ANSI.reset()
+    )
+
+    printer = self()
+    spawn_link(fn -> input_loop(client, session, printer) end)
+    event_loop()
+  end
+
+  defp open(client, opts) do
+    reply =
+      case opts[:session] do
+        nil ->
+          Client.request(client, %{"cmd" => "start", "cwd" => Path.expand(opts[:cwd] || ".")})
+
+        id ->
+          Client.request(client, %{
+            "cmd" => "attach",
+            "session" => id,
+            "cwd" => Path.expand(opts[:cwd] || ".")
+          })
+      end
+
+    case reply do
+      %{"ok" => true, "session" => id} -> id
+      %{"error" => error} -> Mix.raise("could not open a session: #{error}")
+    end
+  end
+
+  defp input_loop(client, session, printer) do
+    case IO.gets("") do
+      :eof ->
+        send(printer, :quit)
+
+      {:error, _} ->
+        send(printer, :quit)
+
+      line ->
+        line = String.trim(line)
+
+        req =
+          case line do
+            "" -> nil
+            "y" -> %{"cmd" => "approve", "session" => session}
+            "n" -> %{"cmd" => "deny", "session" => session}
+            text -> %{"cmd" => "prompt", "session" => session, "text" => text}
+          end
+
+        with %{} <- req,
+             %{"ok" => false, "error" => error} <- Client.request(client, req),
+             do: IO.puts(IO.ANSI.red() <> error <> IO.ANSI.reset())
+
+        input_loop(client, session, printer)
+    end
+  end
+
+  defp event_loop do
+    receive do
+      :quit ->
+        :ok
+
+      {:xeito_event, %{"event" => "disconnected"}} ->
+        IO.puts("daemon disconnected")
+
+      {:xeito_event, event} ->
+        IO.write(Render.line(event))
+        event_loop()
+    end
+  end
+end

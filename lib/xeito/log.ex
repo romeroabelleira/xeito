@@ -29,6 +29,28 @@ defmodule Xeito.Log do
     GenServer.start_link(__MODULE__, path, Keyword.take(opts, [:name]))
   end
 
+  @doc """
+  The log of a workspace, `<cwd>/.xeito/log.sqlite`, started on first use under
+  `Xeito.WorkspaceLogs` and registered by path. Sessions started by the daemon use it, so each
+  project keeps its own log (`docs/architecture/07-harness-frontend.md#context-and-configuration`).
+  """
+  @spec for_workspace(Path.t()) :: server()
+  def for_workspace(cwd) do
+    dir = cwd |> Path.expand() |> Path.join(".xeito")
+    path = Path.join(dir, "log.sqlite")
+
+    # The workspace log is the user's data, never the project's: keep it out of version control.
+    File.mkdir_p!(dir)
+    ignore = Path.join(dir, ".gitignore")
+    unless File.exists?(ignore), do: File.write!(ignore, "*\n")
+    name = {:via, Registry, {Xeito.LogRegistry, path}}
+
+    case DynamicSupervisor.start_child(Xeito.WorkspaceLogs, {__MODULE__, path: path, name: name}) do
+      {:ok, _} -> name
+      {:error, {:already_started, _}} -> name
+    end
+  end
+
   @doc "Appends events for `run_id` in one transaction. Returns their sequence numbers."
   @spec append(server(), String.t(), [Event.t()]) :: {:ok, [pos_integer()]}
   def append(log, run_id, events), do: GenServer.call(log, {:append, run_id, events})

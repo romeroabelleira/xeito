@@ -1,0 +1,575 @@
+defmodule Xeito.Session do
+  @moduledoc """
+  One interactive session: a workspace, a conversation, and the runs started from it. Clients
+  (TUI, CLI, bridge) talk to a session; the session talks to machines.
+
+  For a free-form prompt the session
+
+    1. decides `Xeito.Decisions.Intent` (an escalation child run, logged),
+    2. selects a machine with `Xeito.Session.Router` (rules),
+    3. starts the run as `<session>/t<n>`, related `part_of` the session in the log,
+    4. forwards every event of that run and its children to the session topic, and
+    5. when the run finishes, appends the turn to the conversation history.
+
+  A run waiting in an `ask_human` state (for example a `bash` call the `Risk` decision sent to
+  review) is answered with `approve/1` or `deny/1`.
+
+  Slash commands: `/machine <name> [prompt]`, `/run <command>`, `/approve`, `/deny`, `/why`,
+  `/budget <usd>`, `/help`, and for step mode (`docs/architecture/06-observability.md#2-step`):
+  `/step` (toggle), `/next`, `/decide <value>`, `/continue`, `/break state:<s> | decision:<Type> |
+  conf<<x> | clear`. Debug settings apply to the session's live runs and to every run it starts;
+  escalation runs never pause. See `docs/architecture/07-harness-frontend.md#interaction-model`.
+
+  Clients subscribe with `subscribe/1` and receive `{:xeito, "session:<id>", event}` where
+  `event` is `%{type: type, run: run_id, attrs: map}`. Besides the logged event types, the
+  session emits `prompt`, `intent`, `run_selected`, `human_needed`, `turn_finished`, `notice`
+  and `error`, plus the runs' `delta` stream.
+  """
+
+  use GenServer
+
+  alias Xeito.{Escalation, Events, Log, Run, RunSupervisor}
+  alias Xeito.Machines.{Chat, FixFailingTest, RunTests}
+  alias Xeito.Session.Router
+
+  @max_history 80
+  @agents_max_bytes 16_384
+
+  # --- client API ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a session. Options: `:cwd` (workspace, required), `:id`, `:log` (default: the
+  workspace's own log, `Xeito.Log.for_workspace/1`),
+  `:decider` (escalation options for decisions: `deciders`, `policy`, `tiers`), `:chat`
+  (chat-model overrides), `:test_cmd`, `:system` (replaces the default system prompt).
+  """
+  @spec start(keyword()) :: {:ok, String.t()} | {:error, term()}
+  def start(opts) do
+    id = Keyword.get_lazy(opts, :id, &new_id/0)
+    spec = {__MODULE__, Keyword.put(opts, :id, id)}
+
+    case DynamicSupervisor.start_child(Xeito.SessionSupervisor, spec) do
+      {:ok, _pid} -> {:ok, id}
+      {:error, {:already_started, _}} -> {:ok, id}
+      error -> error
+    end
+  end
+
+  @doc false
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: via(opts[:id]))
+
+  @doc false
+  def child_spec(opts),
+    do: %{
+      id: {__MODULE__, opts[:id]},
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :temporary
+    }
+
+  @doc "Subscribes the caller to the session's events."
+  @spec subscribe(String.t()) :: :ok
+  def subscribe(id), do: Events.subscribe(topic(id))
+
+  @doc "Submits a prompt or slash command. Returns `:ok` or `{:error, :busy}`."
+  @spec prompt(String.t(), String.t()) :: :ok | {:error, term()}
+  def prompt(id, text), do: GenServer.call(via(id), {:prompt, text})
+
+  @doc "Approves the command a run is waiting on."
+  @spec approve(String.t()) :: :ok | {:error, :nothing_to_approve}
+  def approve(id), do: GenServer.call(via(id), {:human, :approved})
+
+  @doc "Denies the command a run is waiting on."
+  @spec deny(String.t()) :: :ok | {:error, :nothing_to_approve}
+  def deny(id), do: GenServer.call(via(id), {:human, :denied})
+
+  @doc "The session's state: workspace, current run and machine, waiting prompt, history size."
+  @spec status(String.t()) :: map()
+  def status(id), do: GenServer.call(via(id), :status)
+
+  @doc "The conversation history (messages without the system prompt)."
+  @spec history(String.t()) :: [map()]
+  def history(id), do: GenServer.call(via(id), :history)
+
+  @doc "The session topic for `Xeito.Events`."
+  @spec topic(String.t()) :: String.t()
+  def topic(id), do: "session:" <> id
+
+  defp via(id), do: {:via, Registry, {Xeito.SessionRegistry, id}}
+
+  # --- server --------------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    cwd = opts |> Keyword.fetch!(:cwd) |> Path.expand()
+    log = Keyword.get_lazy(opts, :log, fn -> Log.for_workspace(cwd) end)
+    id = Keyword.fetch!(opts, :id)
+
+    Log.put_object(log, id, "session", %{cwd: cwd, status: "open"})
+    Events.subscribe(:all)
+
+    state = %{
+      id: id,
+      cwd: cwd,
+      log: log,
+      decider: Keyword.get(opts, :decider, []),
+      chat: Keyword.get(opts, :chat, []),
+      test_cmd: Keyword.get_lazy(opts, :test_cmd, fn -> Router.test_command(cwd) end),
+      system: Keyword.get_lazy(opts, :system, fn -> system_prompt(cwd) end),
+      history: [],
+      decisions: [],
+      debug: %{step: false, breakpoints: []},
+      live: MapSet.new(),
+      paused: nil,
+      turn: 0,
+      root: nil,
+      machine: nil,
+      prompt: nil,
+      waiting: nil
+    }
+
+    {:ok, restore(state)}
+  end
+
+  # A session id that already has turns in the workspace log is resumed: the conversation is
+  # rebuilt from its finished runs. An unfinished run (the daemon stopped mid-turn) is reported,
+  # not re-executed.
+  defp restore(s) do
+    turns =
+      s.log
+      |> Log.query(
+        "SELECT ocel_source_id FROM object_object WHERE ocel_target_id = ?1 AND ocel_qualifier = 'part_of'",
+        [s.id]
+      )
+      |> Enum.flat_map(fn [run] ->
+        case Regex.run(~r{/t(\d+)$}, run) do
+          [_, n] -> [{String.to_integer(n), run}]
+          nil -> []
+        end
+      end)
+      |> Enum.sort()
+
+    Enum.reduce(turns, s, &restore_turn/2)
+  end
+
+  defp restore_turn({n, run}, s) do
+    s = %{s | turn: max(s.turn, n)}
+
+    with [{_, "run_started", {:run_started, machine, _version, input}} | _] <-
+           Log.read_run(s.log, run),
+         {:ok, result} <- Run.result(s.log, run) do
+      s = %{s | machine: machine, prompt: Map.get(input, :request) || Map.get(input, :prompt)}
+      %{s | history: remember(s, result, answer(machine, result)), machine: nil, prompt: nil}
+    else
+      _ ->
+        %{
+          s
+          | history: s.history ++ [%{role: "assistant", content: "(turn #{n} was interrupted)"}]
+        }
+    end
+  end
+
+  # Commands that answer or inspect work while a run is busy; anything that starts a run does not.
+  @impl true
+  def handle_call({:prompt, text}, _from, s) do
+    trimmed = String.trim(text)
+
+    cond do
+      String.match?(
+        trimmed,
+        ~r{^/(approve|deny|why|budget|help|step|next|continue|break|decide)\b}
+      ) ->
+        "/" <> command = trimmed
+        {:reply, :ok, command(command, s)}
+
+      s.root != nil ->
+        {:reply, {:error, :busy}, s}
+
+      true ->
+        s = %{s | turn: s.turn + 1, prompt: text}
+        emit(s, "prompt", nil, %{"text" => text})
+
+        case trimmed do
+          "/" <> command -> {:reply, :ok, command(command, s)}
+          _ -> {:reply, :ok, decide_intent(text, s)}
+        end
+    end
+  end
+
+  def handle_call({:human, _answer}, _from, %{waiting: nil} = s),
+    do: {:reply, {:error, :nothing_to_approve}, s}
+
+  def handle_call({:human, answer}, _from, s) do
+    Run.send_event(s.waiting.run, answer, %{}, :human)
+    {:reply, :ok, %{s | waiting: nil}}
+  end
+
+  def handle_call(:status, _from, s) do
+    {:reply,
+     %{
+       id: s.id,
+       cwd: s.cwd,
+       run: s.root,
+       machine: s.machine && inspect(s.machine),
+       waiting: s.waiting,
+       turns: s.turn,
+       history: length(s.history),
+       test_cmd: s.test_cmd
+     }, s}
+  end
+
+  def handle_call(:history, _from, s), do: {:reply, s.history, s}
+
+  @impl true
+  def handle_info({:intent, text, decision}, s) do
+    s = %{s | decisions: Enum.take([decision | s.decisions], 10)}
+
+    emit(s, "intent", nil, %{
+      "value" => decision.value,
+      "confidence" => decision.confidence,
+      "actor" => decision.actor
+    })
+
+    {machine, reason} = Router.route(decision.value, text)
+    {:noreply, start_machine(machine, input_for(machine, text, s), reason, s)}
+  end
+
+  def handle_info({:xeito, run_id, event}, s) when is_binary(run_id) do
+    if String.starts_with?(run_id, s.id <> "/") do
+      emit(s, event.type, run_id, event.attrs)
+      {:noreply, track(run_id, event, s)}
+    else
+      {:noreply, s}
+    end
+  end
+
+  def handle_info(_msg, s), do: {:noreply, s}
+
+  # --- prompts -------------------------------------------------------------------------------
+
+  defp decide_intent(text, s) do
+    me = self()
+    id = "#{s.id}/t#{s.turn}/intent"
+
+    opts =
+      [log: s.log, parent: s.id, id: id] ++
+        Keyword.take(s.decider, [:deciders, :policy, :tiers, :available?])
+
+    Task.Supervisor.start_child(Xeito.EffectTasks, fn ->
+      decision = Escalation.decide(Xeito.Decisions.Intent, %{message: text}, opts)
+      send(me, {:intent, text, decision})
+    end)
+
+    # Busy until the run starts (and while it runs).
+    %{s | root: :deciding}
+  end
+
+  defp command(command, s),
+    do: command(String.split(command, ~r/\s+/, parts: 2) ++ [""], command, s)
+
+  defp command(["machine", rest | _], _raw, s), do: machine_command(rest, s)
+
+  defp command(["run", cmd | _], _raw, s) when cmd != "",
+    do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
+
+  defp command(["approve" | _], _raw, s), do: human_command(:approved, s)
+  defp command(["deny" | _], _raw, s), do: human_command(:denied, s)
+  defp command(["why" | _], _raw, s), do: why(s)
+  defp command(["budget", usd | _], _raw, s), do: budget(usd, s)
+  defp command(["help" | _], _raw, s), do: notice(s, help())
+  defp command(["step" | _], _raw, s), do: set_debug(%{s.debug | step: not s.debug.step}, s)
+  defp command(["continue" | _], _raw, s), do: set_debug(%{s.debug | step: false}, s)
+  defp command(["next" | _], _raw, s), do: step(:next, s)
+  defp command(["decide", value | _], _raw, s) when value != "", do: step({:decide, value}, s)
+
+  defp command(["break", "clear" | _], _raw, s),
+    do: set_debug(%{s.debug | breakpoints: []}, s)
+
+  defp command(["break", spec | _], _raw, s) when spec != "", do: add_breakpoint(spec, s)
+  defp command(_parts, raw, s), do: error(s, "unknown command /#{raw}; try /help")
+
+  defp machine_command(rest, s) do
+    [name | prompt] = String.split(rest, ~r/\s+/, parts: 2) ++ [""]
+
+    case Router.machines() do
+      %{^name => machine} ->
+        start_machine(machine, input_for(machine, Enum.join(prompt), s), "/machine", s)
+
+      machines ->
+        error(
+          s,
+          "unknown machine #{inspect(name)}; available: #{Enum.join(Map.keys(machines), ", ")}"
+        )
+    end
+  end
+
+  defp human_command(answer, %{waiting: nil} = s),
+    do: error(s, "nothing is waiting for #{answer}")
+
+  defp human_command(answer, s) do
+    Run.send_event(s.waiting.run, answer, %{}, :human)
+    %{s | waiting: nil}
+  end
+
+  defp input_for(Chat, text, s),
+    do: %{cwd: s.cwd, prompt: text, messages: s.history, system: s.system}
+
+  defp input_for(FixFailingTest, _text, s),
+    do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
+
+  defp input_for(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
+
+  defp start_machine(machine, input, reason, s) do
+    run_id = "#{s.id}/t#{s.turn}"
+    runner = {Xeito.Effects.Local, decider: s.decider, chat: s.chat}
+
+    emit(s, "run_selected", run_id, %{"machine" => inspect(machine), "reason" => reason})
+
+    start = [run_id: run_id, log: s.log, runner: runner, debug: s.debug]
+
+    # The request is kept in the run's input, so a resumed session can rebuild its history.
+    input = Map.put_new(input, :request, s.prompt)
+
+    case RunSupervisor.start_run(machine, input, start) do
+      {:ok, ^run_id} ->
+        Log.relate(s.log, run_id, s.id, "part_of")
+        %{s | root: run_id, machine: machine}
+
+      {:error, reason} ->
+        error(%{s | root: nil}, "could not start #{inspect(machine)}: #{inspect(reason)}")
+    end
+  end
+
+  # --- run tracking --------------------------------------------------------------------------
+
+  defp track(run_id, %{type: "state_entered", attrs: %{"state" => :ask_human}}, s) do
+    waiting = %{run: run_id, call: pending_call(run_id)}
+    emit(s, "human_needed", run_id, %{"call" => waiting.call})
+    %{s | waiting: waiting}
+  end
+
+  defp track(run_id, %{type: "state_exited", attrs: %{"state" => :ask_human}}, s) do
+    if s.waiting && s.waiting.run == run_id, do: %{s | waiting: nil}, else: s
+  end
+
+  defp track(run_id, %{type: "run_finished"} = event, %{root: run_id} = s) do
+    {:ok, result} = Run.result(s.log, run_id)
+    answer = answer(s.machine, result)
+    emit(s, "turn_finished", run_id, Map.merge(event.attrs, %{"answer" => answer}))
+
+    %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer)}
+  end
+
+  defp track(run_id, %{type: "paused"}, s), do: %{s | paused: run_id}
+
+  defp track(run_id, %{type: "run_started"}, s) do
+    if internal?(run_id), do: s, else: %{s | live: MapSet.put(s.live, run_id)}
+  end
+
+  defp track(run_id, %{type: "run_finished"}, s),
+    do: %{s | live: MapSet.delete(s.live, run_id), paused: unpause(s.paused, run_id)}
+
+  defp track(run_id, %{type: type}, s) when type != "delta",
+    do: %{s | paused: unpause(s.paused, run_id)}
+
+  defp track(_run_id, _event, s), do: s
+
+  defp unpause(run_id, run_id), do: nil
+  defp unpause(paused, _run_id), do: paused
+
+  defp internal?(run_id),
+    do: String.ends_with?(run_id, "/esc") or String.ends_with?(run_id, "/intent")
+
+  # --- step mode -----------------------------------------------------------------------------
+
+  defp set_debug(debug, s) do
+    Enum.each(s.live, &debug_run(&1, debug))
+    notice(%{s | debug: debug}, debug_text(debug))
+  end
+
+  defp debug_run(run, debug) do
+    Run.debug(run, debug)
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp debug_text(%{step: step, breakpoints: bps}) do
+    "step mode #{if step, do: "on", else: "off"}" <>
+      if(bps == [], do: "", else: " · breakpoints: " <> Enum.map_join(bps, ", ", &inspect/1))
+  end
+
+  defp step(_how, %{paused: nil} = s), do: error(s, "no run is paused")
+
+  defp step({:decide, value}, s) do
+    case existing_atom(value) do
+      {:ok, atom} -> step({:decide_atom, atom}, s)
+      :error -> error(s, "cannot step: invalid_value")
+    end
+  end
+
+  defp step(how, s) do
+    how = with {:decide_atom, atom} <- how, do: {:decide, atom}
+
+    case Run.step(s.paused, how) do
+      :ok -> %{s | paused: nil}
+      {:error, reason} -> error(s, "cannot step: #{reason}")
+    end
+  end
+
+  # User input never creates atoms: decision values and state names already exist.
+  defp existing_atom(text) do
+    {:ok, String.to_existing_atom(text)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp add_breakpoint(spec, s) do
+    case parse_breakpoint(spec) do
+      {:ok, bp} -> set_debug(%{s.debug | breakpoints: Enum.uniq(s.debug.breakpoints ++ [bp])}, s)
+      :error -> error(s, "breakpoints: state:<name>, decision:<Type>, conf<0.6, clear")
+    end
+  end
+
+  @doc false
+  def parse_breakpoint("state:" <> name) do
+    with {:ok, state} <- existing_atom(name), do: {:ok, {:state, state}}
+  end
+
+  def parse_breakpoint("decision:" <> name) do
+    module = Module.concat(Xeito.Decisions, Macro.camelize(name))
+    if Code.ensure_loaded?(module), do: {:ok, {:decision, module}}, else: :error
+  end
+
+  def parse_breakpoint("conf<" <> x) do
+    case Float.parse(x) do
+      {f, ""} -> {:ok, {:confidence_below, f}}
+      _ -> :error
+    end
+  end
+
+  def parse_breakpoint(_spec), do: :error
+
+  defp pending_call(run_id) do
+    case Run.whereis(run_id) && Run.snapshot(run_id) do
+      %{ctx: %{current: %{name: name, arguments: args}}} -> %{"tool" => name, "arguments" => args}
+      _ -> nil
+    end
+  catch
+    :exit, _ -> nil
+  end
+
+  defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || Map.get(ctx, :error) |> to_text()
+
+  defp answer(FixFailingTest, %{state: state, ctx: ctx}) do
+    fix = get_in(ctx, [:fix, :answer])
+    "fix_failing_test ended in #{state}" <> if(fix, do: ": " <> fix, else: "")
+  end
+
+  defp answer(machine, %{state: state}), do: "#{inspect(machine)} ended in #{state}"
+
+  defp to_text(nil), do: ""
+  defp to_text(text) when is_binary(text), do: text
+  defp to_text(other), do: inspect(other)
+
+  # Chat turns keep their full message list; other machines leave a short exchange.
+  defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer),
+    do: Enum.take(messages, -@max_history)
+
+  defp remember(s, _result, answer) do
+    (s.history ++
+       [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
+    |> Enum.take(-@max_history)
+  end
+
+  # --- commands ------------------------------------------------------------------------------
+
+  # The session's own decisions (Intent) plus those its runs logged, newest first.
+  defp why(s) do
+    own =
+      for d <- s.decisions do
+        [inspect(d.type), d.value, d.confidence, d.actor, d.model, d.latency_ms]
+      end
+
+    rows =
+      Log.query(
+        s.log,
+        "SELECT d.decision_type, d.value, d.confidence, d.actor, d.model, d.latency_ms " <>
+          "FROM event_decision_made d JOIN xeito_term t ON t.ocel_id = d.ocel_id " <>
+          "WHERE t.run_id LIKE ?1 ORDER BY t.rowid DESC LIMIT 10",
+        [s.id <> "/%"]
+      )
+
+    lines =
+      for [type, value, conf, actor, model, ms] <- own ++ rows do
+        "#{String.replace_prefix(type, "Xeito.Decisions.", "")}: #{value} by #{actor} " <>
+          "(#{format_conf(conf)}, #{model}, #{ms} ms)"
+      end
+
+    notice(s, if(lines == [], do: "no decisions yet", else: Enum.join(lines, "\n")))
+  end
+
+  defp format_conf(nil), do: "-"
+  defp format_conf(c) when is_number(c), do: :erlang.float_to_binary(c * 1.0, decimals: 2)
+
+  # Attributes read back from the log are text.
+  defp format_conf(c) when is_binary(c) do
+    case Float.parse(c) do
+      {f, _} -> format_conf(f)
+      :error -> c
+    end
+  end
+
+  defp budget(usd, s) do
+    case Float.parse(usd) do
+      {value, _} when value >= 0 ->
+        policy = Keyword.merge(Keyword.get(s.decider, :policy, []), max_usd_per_run: value)
+        s = %{s | decider: Keyword.put(s.decider, :policy, policy)}
+        notice(s, "off-box budget per run: $#{value}")
+
+      _ ->
+        error(s, "usage: /budget <usd>")
+    end
+  end
+
+  defp help do
+    """
+    /machine <name> [prompt]  start a machine directly (#{Enum.join(Map.keys(Router.machines()), ", ")})
+    /run <command>            run a command once
+    /approve · /deny          answer a command waiting for review
+    /why                      the last decisions, with tier and confidence
+    /budget <usd>             off-box spend limit per run
+    /step · /next · /continue step mode: pause before each result, release one, run on
+    /decide <value>           answer a paused decision yourself (logged as a label)
+    /break state:<s> | decision:<Type> | conf<0.6 | clear
+    """
+  end
+
+  defp notice(s, text) do
+    emit(s, "notice", nil, %{"text" => text})
+    s
+  end
+
+  defp error(s, text) do
+    emit(s, "error", nil, %{"text" => text})
+    s
+  end
+
+  defp emit(s, type, run, attrs),
+    do: Events.notify(topic(s.id), %{type: type, run: run, attrs: attrs})
+
+  # --- context -------------------------------------------------------------------------------
+
+  @doc false
+  def system_prompt(cwd) do
+    case File.read(Path.join(cwd, "AGENTS.md")) do
+      {:ok, text} ->
+        text = binary_part(text, 0, min(byte_size(text), @agents_max_bytes))
+        Chat.default_system() <> "\nProject context (AGENTS.md):\n\n" <> text
+
+      {:error, _} ->
+        Chat.default_system()
+    end
+  end
+
+  defp new_id,
+    do: "ses-" <> Base.encode32(:crypto.strong_rand_bytes(8), case: :lower, padding: false)
+end

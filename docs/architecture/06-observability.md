@@ -25,7 +25,9 @@ run 7 · fix_failing_test v0.3.0 · state :triage
 - **Breakpoints** can be set on states, decision types, low confidence (`conf < 0.6`), escalations, or guard rejections.
 - **Manual decision.** The human answers the typed decision. The event is logged with `actor: :human`, which also produces a labelled example for [03](03-typed-decisions.md).
 
-Implementation: step mode is a wrapper in the effect/decision runner. `gen_statem` postpones the next event until a `:step` message arrives. No change to machines is needed.
+Implementation (P4): the run itself holds the next effect result instead of processing it, publishes a transient `paused` event, and processes it on `Xeito.Run.step/2`. That call can also replace a held decision with a human one (`actor: :human`, the model's answer kept as evidence).
+Further results queue behind the held one. Breakpoints are `{:state, s}`, `{:decision, Type}` and `{:confidence_below, x}`.
+Delegated child runs inherit the settings, and escalation runs never pause. No change to machines is needed. Clients use `/step`, `/next`, `/decide <value>`, `/continue` and `/break …`.
 
 ## 3. Replay
 

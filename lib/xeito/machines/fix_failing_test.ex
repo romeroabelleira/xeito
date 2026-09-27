@@ -3,15 +3,20 @@ defmodule Xeito.Machines.FixFailingTest do
   Reproduces a failing test, triages it, and loops plan → edit → verify until the tests pass.
 
   `triage` requests the typed decision `Xeito.Decisions.Triage` over the last failure
-  (`triage_input/1`), and `planning` / `editing` wait for `:planned` / `:edited` events from a
-  model tier or a human. Context: `%{cwd: path, test_cmd: "mix test", max_attempts: 3,
-  max_reruns: 2}`, plus optional `:test_name` and `:diff_stat`.
+  (`triage_input/1`). In `working`, the fix is made either
+
+    * by a human or an external agent, who sends `:planned` and `:edited`, or
+    * with `delegate: true` (the harness), by a child run of `Xeito.Machines.Chat` started on
+      entering `planning`, which gets the failure and the triage and ends with `:child_done`.
+
+  Context: `%{cwd: path, test_cmd: "mix test", max_attempts: 3, max_reruns: 2}`, plus optional
+  `:test_name`, `:diff_stat`, `:delegate`, and for the delegate `:system` and `:max_steps`.
 
   The diagram in `docs/architecture/02-state-machine-core.md` is generated from this module
   (`mix xeito.export`), and a test keeps the two in sync.
   """
 
-  use Xeito.Machine, version: "0.4.0"
+  use Xeito.Machine, version: "0.5.0"
 
   alias Xeito.Effect
 
@@ -28,8 +33,8 @@ defmodule Xeito.Machines.FixFailingTest do
   state :triage do
     decide(Xeito.Decisions.Triage, input: :triage_input)
     on {:decided, :flaky}, to: :rerun
-    on {:decided, :code_bug}, to: :working
-    on {:decided, :test_bug}, to: :working
+    on {:decided, :code_bug}, to: :working, action: :record_triage
+    on {:decided, :test_bug}, to: :working, action: :record_triage
     on {:decided, :env_problem}, to: :ask_human
     on {:decided, :abstain}, to: :ask_human
   end
@@ -43,8 +48,10 @@ defmodule Xeito.Machines.FixFailingTest do
   state :working, initial: :planning do
     on :give_up, to: :failed
 
-    state :planning, timeout: @work_timeout do
+    state :planning, entry: :maybe_delegate, timeout: @work_timeout do
       on :planned, to: :editing
+      on :child_done, to: :verifying, guard: :fixed_by_child?, action: :record_fix
+      on :child_done, to: :ask_human, action: :record_fix
     end
 
     state :editing, timeout: @work_timeout do
@@ -69,6 +76,40 @@ defmodule Xeito.Machines.FixFailingTest do
   @doc false
   def run_tests(ctx),
     do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd, timeout: @tests_timeout)]
+
+  @doc false
+  def maybe_delegate(%{delegate: true} = ctx) do
+    [Effect.machine(Xeito.Machines.Chat, delegate_input(ctx), timeout: @work_timeout)]
+  end
+
+  def maybe_delegate(_ctx), do: []
+
+  defp delegate_input(ctx) do
+    prompt = """
+    The test command `#{Map.get(ctx, :test_cmd, "mix test")}` fails.
+    Triage: #{Map.get(ctx, :triage, "unknown")}. Attempt #{Map.get(ctx, :attempts, 0) + 1}.
+    Fix the cause with the smallest correct change. Do not run the full test suite yourself;
+    it is run after you answer. Answer with one sentence describing the fix.
+
+    Failure output:
+    #{Map.get(ctx, :last_failure, "")}
+    """
+
+    %{cwd: ctx.cwd, prompt: prompt, max_steps: Map.get(ctx, :max_steps, 25)}
+    |> then(&if(ctx[:system], do: Map.put(&1, :system, ctx.system), else: &1))
+  end
+
+  @doc false
+  def fixed_by_child?(_ctx, result), do: result[:state] == :answered
+
+  @doc false
+  def record_fix(ctx, result) do
+    answer = get_in(result, [:ctx, :answer])
+    Map.put(ctx, :fix, %{run_id: result[:run_id], state: result[:state], answer: answer})
+  end
+
+  @doc false
+  def record_triage(ctx, result), do: Map.put(ctx, :triage, result[:value])
 
   @doc false
   def passed?(_ctx, result), do: result.exit_status == 0

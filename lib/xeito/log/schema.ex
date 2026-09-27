@@ -28,7 +28,8 @@ defmodule Xeito.Log.Schema do
   @object_types %{
     "run" => ~w(machine machine_version status),
     "machine" => ~w(name version),
-    "effect" => ~w(kind)
+    "effect" => ~w(kind),
+    "session" => ~w(cwd status)
   }
 
   @doc "Event types and their attribute columns."

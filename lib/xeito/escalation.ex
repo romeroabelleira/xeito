@@ -89,41 +89,7 @@ defmodule Xeito.Escalation do
     end
   end
 
-  @doc "Waits until run `id` has finished. Returns its logged result or `:timeout`."
+  @doc "Waits until run `id` has finished (see `Xeito.Run.await/3`)."
   @spec await(Log.server(), String.t(), timeout()) :: {:ok, map()} | :timeout
-  def await(log, id, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    wait(log, id, deadline)
-  end
-
-  defp wait(log, id, deadline) do
-    case Run.result(log, id) do
-      {:ok, result} ->
-        {:ok, result}
-
-      :running ->
-        remaining = deadline - System.monotonic_time(:millisecond)
-
-        cond do
-          remaining <= 0 ->
-            :timeout
-
-          pid = Run.whereis(id) ->
-            ref = Process.monitor(pid)
-
-            receive do
-              {:DOWN, ^ref, :process, _, _} -> wait(log, id, deadline)
-            after
-              min(remaining, 1_000) ->
-                Process.demonitor(ref, [:flush])
-                wait(log, id, deadline)
-            end
-
-          true ->
-            # Not running and not finished: being restarted by its supervisor.
-            Process.sleep(20)
-            wait(log, id, deadline)
-        end
-    end
-  end
+  defdelegate await(log, id, timeout), to: Run
 end
