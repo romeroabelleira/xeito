@@ -1,0 +1,21 @@
+# Xeito small tier: llama.cpp server on the CPU (grammar-constrained typed decisions).
+# Copy to ~/.config/systemd/user/xeito-llama-small.service, set the two paths, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now xeito-llama-small
+# Create the API key file first (one key per line, mode 600).
+[Unit]
+Description=Xeito small tier (llama-server, CPU)
+After=network.target
+
+[Service]
+Environment=LLAMA_SERVER=/path/to/llama.cpp/build-cpu/bin/llama-server
+Environment=XEITO_SMALL_MODEL=/path/to/models/Qwen3.5-0.8B-Q8_0.gguf
+ExecStart=/bin/sh -c 'exec "$LLAMA_SERVER" -m "$XEITO_SMALL_MODEL" \
+  --host 127.0.0.1 --port 8081 \
+  --threads 6 --ctx-size 16384 --parallel 4 --cache-reuse 256 \
+  --api-key-file %h/.config/xeito/llama_api_key'
+Restart=on-failure
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target

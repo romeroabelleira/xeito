@@ -1,0 +1,7 @@
+# Small-tier model candidates for P0/P2 (GGUF, Q8_0).
+# Format: <sha256>  <file>  <source URL>  <license>
+# Verified against the Hugging Face LFS sha256 on 2026-09-27.
+0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c  Qwen3.5-0.8B-Q8_0.gguf  https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf  apache-2.0
+1b04acba824817554f4ce23639bc8495ff70453b8fcb047900c731521021f2c1  Qwen3.5-2B-Q8_0.gguf  https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q8_0.gguf  apache-2.0
+0ef57d2c838458a1952664260dcba38e5bdda37494f3af732f06e4add24068e3  gemma-3-270m-it-Q8_0.gguf  https://huggingface.co/ggml-org/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-Q8_0.gguf  gemma
+0660c20c3d3d3672b90f0468f62dc128a82a6e3ee2ec05d310d242969be06140  granite-4.0-1b-Q8_0.gguf  https://huggingface.co/ibm-granite/granite-4.0-1b-GGUF/resolve/main/granite-4.0-1b-Q8_0.gguf  apache-2.0

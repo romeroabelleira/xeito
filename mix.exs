@@ -7,11 +7,16 @@ defmodule Xeito.MixProject do
       version: "0.1.0",
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      aliases: aliases(),
+      dialyzer: [plt_local_path: "priv/plts", plt_core_path: "priv/plts"]
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
+  def cli do
+    [preferred_envs: [ci: :test]]
+  end
+
   def application do
     [
       extra_applications: [:logger],
@@ -19,11 +24,21 @@ defmodule Xeito.MixProject do
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      ci: [
+        "format --check-formatted",
+        "compile --warnings-as-errors",
+        "credo --strict",
+        "test"
+      ]
     ]
   end
 end

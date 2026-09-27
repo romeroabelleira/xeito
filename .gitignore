@@ -33,3 +33,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 xeito-*.tar
 
+
+# Dialyzer PLTs
+/priv/plts/
