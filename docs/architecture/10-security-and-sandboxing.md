@@ -23,7 +23,7 @@ pi's stance is honest: the agent runs with your permissions, and you are in cont
 | `contained` | inside a container (Docker/Podman) with the workspace bind-mounted | none, or allowlist proxy | unattended runs, benchmarks |
 | `replay` | no execution; answers come from the log | none | debugging, evaluation |
 
-The `Risk` decision is **never** delegated to the remote tier, and its rule layer runs first. Obvious cases such as `rm -rf /`, `curl | sh` and writes outside the workspace are decided by code.
+The `Risk` decision is **never** delegated to an off-box tier (`openrouter`, `remote`), and its rule layer runs first. Obvious cases such as `rm -rf /`, `curl | sh` and writes outside the workspace are decided by code.
 A small model's `Risk` verdict can only *raise* caution (`:safe` → `:review`), never lower it. Independent tests of small open decision models found prompt-injection and PII catch rates far below what a safety gate needs ([references §7](references.md#7-system-one-decision-models-jev-and-open-clones)).
 
 Local decision servers (`laya-serve`, `llama-server`) are published on `127.0.0.1` only, with an API key file. Inside its container `laya-serve` listens on all interfaces, so the host-side publish address and `LAYA_API_KEY_FILE` are what protect it.
@@ -35,7 +35,8 @@ The worst case is a wrong value from a known enum, and a guard and the escalatio
 
 ## Secrets
 
-- API keys for the remote tier come from the environment or the OS keyring. They are never written to the log.
+- API keys for off-box tiers are read from key files named in the environment (never the key itself in an env file), or the OS keyring. They are never written to the log.
+- **Aggregators add a hop.** A router such as OpenRouter forwards each request to a third-party provider. Xeito asks it for endpoints that neither train on nor retain prompts (`data_collection: "deny"`, `zdr: true`), but that rests on the router's knowledge of provider policies. Treat it as one more processor, not as a guarantee.
 - The event log stores the *names* of environment variables that were passed to effects, not their values.
 
 ## Data protection

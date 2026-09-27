@@ -1,6 +1,6 @@
 defmodule Xeito.Tiers do
   @moduledoc """
-  Decider backends (rules, System One, small, large, remote, human) and the escalation machine.
+  Decider backends (rules, System One, small, large, OpenRouter, remote, human) and the escalation machine.
 
   Every tier implements `decide/3`: given a decision type, a normalised input and the tier's
   configuration, it returns the value, a probability for every option, provenance and cost.
@@ -13,6 +13,7 @@ defmodule Xeito.Tiers do
   | `:system_one` | `Xeito.Tiers.SystemOne`  | Jev-compatible `/v1/systemone` (e.g. laya-serve)        |
   | `:small`      | `Xeito.Tiers.Small`      | llama-server, prefilled value + one-token scoring       |
   | `:large`      | `Xeito.Tiers.Large`      | Ollama `/api/chat`, JSON-schema format + logprobs       |
+  | `:openrouter` | `Xeito.Tiers.OpenRouter` | hosted open-weight models, JSON schema + logprobs, policy-gated |
   | `:remote`     | `Xeito.Tiers.Remote`     | Anthropic Messages API, structured output, policy-gated |
 
   At run time, `Xeito.Machines.Escalation` walks the tiers as a logged state machine under
@@ -40,12 +41,14 @@ defmodule Xeito.Tiers do
     system_one: Xeito.Tiers.SystemOne,
     small: Xeito.Tiers.Small,
     large: Xeito.Tiers.Large,
+    openrouter: Xeito.Tiers.OpenRouter,
     remote: Xeito.Tiers.Remote
   }
 
   # Estimated average power while a tier works (joules = watts × seconds). An estimate, not a
-  # measurement; deployment-specific values belong in `config :xeito, :tier_watts`.
-  @default_watts %{rules: 0, system_one: 45, small: 65, large: 300, remote: 0}
+  # measurement; deployment-specific values belong in `config :xeito, :tier_watts`. Off-box
+  # tiers count 0 here: their energy is spent elsewhere and not measurable from this machine.
+  @default_watts %{rules: 0, system_one: 45, small: 65, large: 300, openrouter: 0, remote: 0}
 
   @doc "The module implementing a tier."
   @spec module(atom()) :: module()

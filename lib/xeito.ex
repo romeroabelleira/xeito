@@ -9,7 +9,7 @@ defmodule Xeito do
     * `Xeito.Machine`  – versioned statechart definitions (02)
     * `Xeito.Run`      – one supervised `gen_statem` per run (02)
     * `Xeito.Decision` – typed decisions with confidence and provenance (03)
-    * `Xeito.Tiers`    – decider backends: rules, small, large, remote, human (04)
+    * `Xeito.Tiers`    – decider backends: rules, small, large, openrouter, remote, human (04)
     * `Xeito.Effects`  – effect descriptions and runners (02, 10)
     * `Xeito.Log`      – the OCEL 2.0 event log (05)
   """

@@ -11,7 +11,7 @@
 | Component | Choice | Confidence |
 |---|---|---|
 | Runtime, machines, supervision | Erlang/OTP 29 `gen_statem` + Elixir 1.20 | high |
-| Model clients, structured output | `Req` directly, plus **ReqLLM** for the remote tier | high |
+| Model clients, structured output | `Req` directly for every tier (ReqLLM optional) | high |
 | Local inference | **Out of process**: `laya-serve` `/v1/systemone` (CPU), `llama-server` (CPU) and Ollama (GPU) over HTTP | high |
 | Embedding classifiers | Nx 1.0 + EXLA (CPU) + Bumblebee 0.8 (ModernBERT etc.) | medium-high |
 | Event log | SQLite via `exqlite` (OCEL 2.0 layout) | high |
@@ -48,7 +48,7 @@ Xeito's core concepts map almost one-to-one onto OTP primitives. On other stacks
 ### Ecosystem status (Sept 2026)
 
 - **Elixir 1.20** (June 2026) is a *gradually typed language*. It infers types without annotations and reports code that is guaranteed to fail. **OTP 29.1** is current.
-- **ReqLLM 1.25** has 21 providers and `generate_object` for structured output. It is actively maintained, and Ash AI is moving to it. Use it for the remote tier, and call llama-server and Ollama directly with `Req` so that Xeito controls grammars and logprobs.
+- **ReqLLM 1.25** has 21 providers and `generate_object` for structured output. It is actively maintained, and Ash AI is moving to it. It was planned for the remote tier; in P3 the remote (Anthropic) and OpenRouter tiers were written directly on `Req` instead, like llama-server and Ollama, so that Xeito controls schemas, logprobs, provider routing and cost fields. ReqLLM remains an option for more providers.
 - **Jido 2.3** (3.0 in beta) is an agent framework. **Xeito does not adopt it**: its value would be the agent loop, which Xeito deliberately replaces with machines. It is worth watching for tool/action conventions.
 - **LangChain (Elixir) 0.14** is still 0.x. It is not needed.
 - **instructor_ex** has not been updated since Feb 2025. **Avoid it.** Xeito's own decision compiler plus ReqLLM covers the need.

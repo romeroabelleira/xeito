@@ -94,8 +94,14 @@ A typed decision is prompt-heavy and output-light. The **target is p50 below 400
 
 ### Tier: remote (optional)
 
-- Anthropic Claude via ReqLLM, using tool-use schemas for typed output. The model ID is kept in config.
+- Anthropic Claude over the Messages API (raw `Req`), with JSON-schema structured output. The model ID is kept in config.
 - Governed by policy ([04](04-delegation.md#guards-on-escalation)): `Risk` never goes remote, `:local_only` inputs never go remote, and each run has a budget.
+
+### Tier: openrouter (optional)
+
+- Hosted open-weight models through OpenRouter, with logprobs, so answers carry a calibrated confidence ([04](04-delegation.md#openrouter)). Useful for models too large for the local GPU, and for trying a model before downloading it.
+- Configured by a key file and a model slug in the environment (`XEITO_OPENROUTER_*`, see `config/runtime.exs`). The key's limits can be checked for free (`GET /api/v1/key`).
+- Off-box: the same policy gate, locality rule and budget as `remote`.
 
 ### Thread budget
 

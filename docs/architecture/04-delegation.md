@@ -42,6 +42,7 @@ stateDiagram-v2
 | `rules` | deterministic decision-table rules ([03](03-typed-decisions.md)) | 5 ms |
 | `small` | CPU decider on the local box: a System One encoder (Laya via `laya-serve`) or a grammar-constrained small LLM ([03](03-typed-decisions.md#three-families-of-small-decider)) | 2 s |
 | `large` | local GPU model (may involve a *model swap*, see below) | 60 s |
+| `openrouter` | hosted open-weight model via OpenRouter, with logprobs ([below](#openrouter)) | 90 s |
 | `remote` | external API (e.g. Claude) | 120 s |
 | `human` | ask in the TUI; the run waits | configurable |
 | `verify` | the guard on the decision's output (file exists, command parses, …) | 1 s |
@@ -53,6 +54,14 @@ stateDiagram-v2
 - **The plan.** Rules first, then the permitted and configured tiers, then optionally a human. It is computed by `Xeito.Policy` before the run starts.
 - **The remote tier** has no calibrated confidence (the API exposes no logprobs). When policy admits it, its result is terminal.
 - **Measured** in [bench 3](../../bench/3-escalation.md).
+
+### OpenRouter
+
+`Xeito.Tiers.OpenRouter` (P3b) adds an **off-box tier with calibrated confidence**: hosted open-weight models through OpenRouter's OpenAI-compatible chat completions, with the decision's JSON Schema as `response_format` and `logprobs`/`top_logprobs`. Its confidence is computed exactly like the local large tier's, so it takes part in thresholds and cascades instead of being terminal.
+- **Routing restrictions in every request.** `provider.require_parameters: true` (only endpoints that honour both the schema and logprobs), `data_collection: "deny"`, and `zdr: true` (zero data retention) by default. Providers can be pinned. Both filters rest on OpenRouter's knowledge of provider policies; they narrow the exposure, they do not make the tier local.
+- **Same gate as `remote`.** `Xeito.Policy` treats `openrouter` and `remote` as *off-box tiers*: one `remote:` switch, the same locality rule (`:local_only` never leaves), the same per-run spend budget. `Risk` never reaches either, and `mix xeito.eval` skips them for types that forbid them.
+- **Why Claude stays on the direct tier.** OpenRouter does offer an Anthropic-compatible Messages endpoint and passes `output_config` (effort, JSON-schema format) through, but not Anthropic's server-side refusal fallback. Claude returns no logprobs either way, and under `zdr: true` Claude requests are routed away from Anthropic's own endpoints to cloud endpoints where structured output is not uniformly supported. The direct Anthropic tier keeps all of this simpler.
+- **Measured** in [bench 3b](../../bench/3b-openrouter.md).
 
 **Placement awareness (Q16, decided).** In `check_loaded`, if the large model is not resident and an earlier small-tier answer has confidence ≥ `policy.unloaded_accept` (default 0.6), that answer is committed instead of paying for a swap. Measured: 0.55 s and ~36 J instead of 3.6 s and ~200 J. The price is accepting an answer the large model might not have endorsed.
 
@@ -67,7 +76,7 @@ policy :default, remote: :ask_first, max_large_swaps_per_run: 3
 ```
 
 - **Data-locality guard: by source, not by classifier.** Inputs carry a provenance tag set when they are read: the workspace path, the tool, the skill. Examples: anything from mail, ticketing or wiki integrations, or from configured private paths, is `:local_only`.
-  Such a decision cannot enter `remote`. Tiny classifiers are **not** used to judge "may this leave the box": independent tests found PII catch rates of ~16–23% for Laya and Kev ([references §7](references.md#7-system-one-decision-models-jev-and-open-clones)). Regex and NER scans only add defence in depth on top of the source tags.
+  Such a decision cannot enter an off-box tier (`openrouter`, `remote`). Tiny classifiers are **not** used to judge "may this leave the box": independent tests found PII catch rates of ~16–23% for Laya and Kev ([references §7](references.md#7-system-one-decision-models-jev-and-open-clones)). Regex and NER scans only add defence in depth on top of the source tags.
 - **Hosted decision APIs are `remote`.** A hosted System One model (Jev) is a remote tier like any other. It is allowed for synthetic, public or private-project data, and **never for `:local_only` data**. For public bodies, sending data to a cloud AI provider typically counts as processing on behalf under data-protection law, and a US provider is additionally subject to the CLOUD Act (see [10](10-security-and-sandboxing.md#data-protection)).
 - **Budget guard.** A run carries a budget (money, wall-clock, GPU swaps). Once it is exhausted, escalation goes to `human`.
 - **Idempotency.** A decision escalates at most once per tier. There are no loops. This is enforced by the machine's structure, not by counters.

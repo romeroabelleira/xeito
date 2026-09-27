@@ -25,6 +25,24 @@ if config_env() != :test do
       url: System.get_env("XEITO_OLLAMA_URL"),
       model: System.get_env("XEITO_LARGE_MODEL", "qwen3.6:27b")
     ],
+    # OpenRouter tier (hosted open-weight models with logprobs). Off-box: gated by Xeito.Policy
+    # like the remote tier. XEITO_OPENROUTER_PROVIDERS optionally pins providers (comma list).
+    openrouter:
+      (if System.get_env("XEITO_OPENROUTER_KEY_FILE") do
+         [
+           url: System.get_env("XEITO_OPENROUTER_URL", "https://openrouter.ai/api"),
+           api_key: key.("XEITO_OPENROUTER_KEY_FILE"),
+           model: System.get_env("XEITO_OPENROUTER_MODEL", "qwen/qwen3.6-35b-a3b"),
+           providers:
+             case System.get_env("XEITO_OPENROUTER_PROVIDERS") do
+               nil -> nil
+               list -> String.split(list, ",", trim: true)
+             end,
+           zdr: System.get_env("XEITO_OPENROUTER_ZDR", "true") == "true"
+         ]
+       else
+         []
+       end),
     # Remote tier (Anthropic Messages API). Unavailable unless an API key file is configured,
     # and even then only used where Xeito.Policy allows it (remote: :allowed, locality: :public).
     remote:

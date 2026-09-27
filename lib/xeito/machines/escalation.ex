@@ -9,6 +9,7 @@ defmodule Xeito.Machines.Escalation do
                 ├─ large ─┬─ check_loaded   (is the model resident?)
                 │         ├─ swapping       (load it: seconds, budgeted per run)
                 │         └─ infer
+                ├─ openrouter
                 ├─ remote
                 └─ human
       committed · abstained · failed
@@ -26,12 +27,12 @@ defmodule Xeito.Machines.Escalation do
   `policy`, `parent` (the requesting run), `base` (a `%Xeito.Decision{}` template), `attempts`.
   """
 
-  use Xeito.Machine, version: "1.0.0"
+  use Xeito.Machine, version: "1.1.0"
 
   alias Xeito.{Decider, Decision, Effect}
   alias Xeito.Decision.Type
 
-  @routable [:system_one, :small, :large, :remote, :human]
+  @routable [:system_one, :small, :large, :openrouter, :remote, :human]
 
   initial :deciding
 
@@ -74,6 +75,7 @@ defmodule Xeito.Machines.Escalation do
       state :infer, entry: :run_large, timeout: 120_000
     end
 
+    state :openrouter, entry: :run_openrouter, timeout: 90_000
     state :remote, entry: :run_remote, timeout: 180_000
 
     state :human, timeout: {600_000, :human_timeout} do
@@ -96,6 +98,8 @@ defmodule Xeito.Machines.Escalation do
   def run_small(ctx), do: [tier_effect(:small, ctx)]
   @doc false
   def run_large(ctx), do: [tier_effect(:large, ctx)]
+  @doc false
+  def run_openrouter(ctx), do: [tier_effect(:openrouter, ctx)]
   @doc false
   def run_remote(ctx), do: [tier_effect(:remote, ctx)]
   @doc false

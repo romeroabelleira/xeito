@@ -3,7 +3,7 @@ defmodule Xeito.TiersTest do
 
   alias Xeito.{Decider, Decision}
   alias Xeito.Decisions.Triage
-  alias Xeito.Tiers.{Large, Remote, Small, SystemOne}
+  alias Xeito.Tiers.{Large, OpenRouter, Remote, Small, SystemOne}
 
   @input %{test: "CheckoutTest", output: "left: 107.0 right: 108.0", diff_stat: "lib/pricing.ex"}
 
@@ -164,6 +164,92 @@ defmodule Xeito.TiersTest do
 
     assert {:error, {:refusal, %{"category" => "cyber"}}} =
              Remote.decide(type(), @input, cfg(:anthropic_refusal))
+  end
+
+  defp openai_logprobs do
+    for t <- [~s({"), "value", ~s(":), ~s( "), "code", "_bug", ~s("})] do
+      tops =
+        if t == "code",
+          do: [
+            %{"token" => "code", "logprob" => :math.log(0.9)},
+            %{"token" => "test", "logprob" => :math.log(0.06)},
+            %{"token" => "fl", "logprob" => :math.log(0.02)}
+          ],
+          else: []
+
+      %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
+    end
+  end
+
+  test "OpenRouter requires schema + logprobs endpoints, denies data collection, scores logprobs" do
+    Req.Test.stub(:openrouter, fn conn ->
+      {req, conn} = body(conn)
+      assert conn.request_path == "/v1/chat/completions"
+      assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer k"]
+      assert req["model"] == "qwen/qwen3.6-35b-a3b"
+      assert req["response_format"]["type"] == "json_schema"
+      assert req["response_format"]["json_schema"]["strict"] == true
+
+      assert req["response_format"]["json_schema"]["schema"]["properties"]["value"]["enum"]
+             |> length() == 4
+
+      assert req["logprobs"] == true and req["top_logprobs"] == 20
+      assert req["temperature"] == 0
+      assert req["reasoning"] == %{"enabled" => false}
+
+      assert req["provider"] == %{
+               "require_parameters" => true,
+               "data_collection" => "deny",
+               "zdr" => true,
+               "only" => ["Parasail"]
+             }
+
+      Req.Test.json(conn, %{
+        "model" => "qwen/qwen3.6-35b-a3b",
+        "provider" => "Parasail",
+        "choices" => [
+          %{
+            "message" => %{"content" => ~s({"value": "code_bug"})},
+            "logprobs" => %{"content" => openai_logprobs()}
+          }
+        ],
+        "usage" => %{"prompt_tokens" => 310, "completion_tokens" => 7, "cost" => 0.0000535}
+      })
+    end)
+
+    cfg = cfg(:openrouter, model: "qwen/qwen3.6-35b-a3b", providers: ["Parasail"])
+
+    assert {:ok, %{value: :code_bug, confidence: c, probabilities: probs, cost: cost} = r} =
+             OpenRouter.decide(type(), @input, cfg)
+
+    assert_in_delta c, 0.9 / 0.98, 1.0e-9
+    assert_in_delta probs[:test_bug], 0.06 / 0.98, 1.0e-9
+    assert r.model == "openrouter:qwen/qwen3.6-35b-a3b@Parasail"
+    refute Map.has_key?(r, :terminal)
+    assert cost == %{tokens_in: 310, tokens_out: 7, usd: 0.0000535}
+  end
+
+  test "OpenRouter without logprobs is terminal; a refusal is an error" do
+    Req.Test.stub(:openrouter_plain, fn conn ->
+      Req.Test.json(conn, %{
+        "model" => "some/model",
+        "choices" => [%{"message" => %{"content" => ~s({"value": "flaky"})}}],
+        "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 3, "cost" => 0.00001}
+      })
+    end)
+
+    assert {:ok,
+            %{value: :flaky, confidence: nil, terminal: true, model: "openrouter:some/model"}} =
+             OpenRouter.decide(type(), @input, cfg(:openrouter_plain, model: "some/model"))
+
+    Req.Test.stub(:openrouter_refusal, fn conn ->
+      Req.Test.json(conn, %{
+        "choices" => [%{"message" => %{"content" => nil, "refusal" => "I can't help with that."}}]
+      })
+    end)
+
+    assert {:error, {:refusal, _}} =
+             OpenRouter.decide(type(), @input, cfg(:openrouter_refusal, model: "some/model"))
   end
 
   describe "Decider" do

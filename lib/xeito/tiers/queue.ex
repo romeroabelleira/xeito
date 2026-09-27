@@ -10,7 +10,7 @@ defmodule Xeito.Tiers.Queue do
 
   use GenServer
 
-  @defaults %{rules: :infinity, system_one: 1, small: 4, large: 1, remote: 4}
+  @defaults %{rules: :infinity, system_one: 1, small: 4, large: 1, openrouter: 4, remote: 4}
 
   @doc false
   def start_link(opts),

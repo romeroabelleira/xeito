@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: draft, 2026-09-27 · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-09-27 (P0–P3b done) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -9,18 +9,33 @@ Status: draft, 2026-09-27 · Architecture: [architecture/00-overview.md](archite
 - **Dogfood from P4.** Xeito's own development tasks become its first machines.
 - **Rough sizing** assumes one developer working part-time, about 10–15 h/week. The durations are calendar weeks at that pace.
 
+## Milestones
+
+The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built with agent assistance and finished well ahead of it, so the chart below re-bases the remaining phases on the actual finish date. Durations for P4 onwards are unchanged.
+
+| Phase | Planned (original) | Effective | Evidence |
+|---|---|---|---|
+| P0 · Toolchain and repository | 2026-10-05 → 2026-10-19 | done 2026-09-27 | [bench 0](../bench/0-baseline.md), CI green |
+| Bench 1 · contention (inserted) | — | done 2026-09-27 | [bench 1](../bench/1-contention.md) |
+| P1 · State-machine core and log | 2026-10-19 → 2026-11-16 | done 2026-09-27 | 34 tests, property test |
+| P2 · Typed decisions | 2026-11-16 → 2026-12-14 | done 2026-09-27 | [bench 2](../bench/2-decisions.md) |
+| P3 · Delegation tiers | 2026-12-14 → 2027-01-04 | done 2026-09-27 | [bench 3](../bench/3-escalation.md) |
+| P3b · OpenRouter tier (inserted) | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
+| P4 · TUI harness | 2027-01-04 → 2027-02-08 | not started | — |
+
 ```mermaid
 gantt
   dateFormat YYYY-MM-DD
   axisFormat %b %y
   section Foundation
-  P0 Toolchain & repo            :p0, 2026-10-05, 2w
-  P1 State-machine core + log    :p1, after p0, 4w
+  P0 Toolchain & repo            :done, p0, 2026-09-27, 1d
+  P1 State-machine core + log    :done, p1, 2026-09-27, 1d
   section Decisions
-  P2 Typed decisions + CPU model :p2, after p1, 4w
-  P3 Delegation tiers            :p3, after p2, 3w
+  P2 Typed decisions + CPU model :done, p2, 2026-09-27, 1d
+  P3 Delegation tiers            :done, p3, 2026-09-27, 1d
+  P3b OpenRouter tier            :done, p3b, 2026-09-27, 1d
   section Harness
-  P4 TUI harness (pi parity)     :p4, after p3, 5w
+  P4 TUI harness (pi parity)     :p4, after p3b, 5w
   section Insight
   P5 OCEL + mining               :p5, after p4, 4w
   P6 Web inspector               :p6, after p5, 5w
@@ -42,7 +57,7 @@ gantt
 6. Download 2–3 small GGUF models, the candidates from [09](architecture/09-reference-deployment.md#tier-small-cpu). Record the SHA256 of each file in `models.lock`.
 7. Write `LICENSE` (Apache-2.0 recommended), `CONTRIBUTING.md` and a code of conduct.
 
-**Status (2026-09-27):** done. CI is green on GitHub; only the optional ROCm benchmark is pending. See [bench 0](../bench/0-baseline.md).
+**Status:** done 2026-09-27 (planned 2026-10-19). CI is green on GitHub; only the optional ROCm benchmark is pending. See [bench 0](../bench/0-baseline.md).
 
 **Exit:** `mix test` is green in CI. `curl localhost:8081/completion` returns grammar-constrained JSON from a CPU model on the reference workstation. `llama-bench` numbers for each candidate are recorded in `bench/0-baseline.md`.
 
@@ -57,7 +72,7 @@ gantt
 7. Add exporters: Mermaid and SCXML from `%Machine{}`.
 8. Write the first two machines, driven by code only with no model: `run_tests` and `fix_failing_test` (with a stubbed triage).
 
-**Status (2026-09-27):** done.
+**Status:** done 2026-09-27 (planned 2026-11-16).
 - The DSL compiles to validated data, and a pure engine is shared by `Xeito.Run` and `Xeito.Run.Recovery`.
 - `Xeito.Log` writes OCEL 2.0 in SQLite. PM4Py reads it natively (`read_ocel2_sqlite`).
 - Local, fake and `:none` effect runners exist; `mix xeito.export` produces Mermaid and SCXML.
@@ -80,7 +95,7 @@ gantt
 8. Run the **three-way gate test** (rule vs calibrated small candidate vs local large model, cost-weighted, with a pre-declared margin). Pick the default small decider per decision type, and delete the losers ([03](architecture/03-typed-decisions.md#the-gate-test)).
 9. Log the large model's verdicts as training data for the local fine-tuning of laya-multilingual in P7.
 
-**Status (2026-09-27):** done, with an honest negative result. See [bench 2](../bench/2-decisions.md).
+**Status:** done 2026-09-27 (planned 2026-12-14), with an honest negative result. See [bench 2](../bench/2-decisions.md).
 - Decision DSL, one-token logprob scoring, three tier clients, the decider ladder, `mix xeito.eval` and the gate are built.
 - The seed sets are synthetic (45–128 per type).
 - No small tier passed the zero-shot gate, so defaults are rules → large. The GPU-resident 27B model decides at ~500 ms with 0.93–0.99 accuracy.
@@ -96,7 +111,7 @@ gantt
 4. Implement cost accounting per decision and per run: tokens, currency, wall-clock and estimated energy.
 5. Batching: queue large-tier decisions per model so that swaps are avoided. Batch System One questions per state into one request, and give each backend a queue with its measured capacity ([bench 1](../bench/1-contention.md)).
 
-**Status (2026-09-27):** done. See [bench 3](../bench/3-escalation.md).
+**Status:** done 2026-09-27 (planned 2027-01-04). See [bench 3](../bench/3-escalation.md).
 - The escalation machine runs as a logged child run, with swaps as states.
 - Policy: remote off by default, local-only data never leaves the box, and Risk can never go remote (tested). Per-run budgets for spend and swaps; per-backend queues.
 - Remote tier (stub-tested; no credentials on the reference box).
@@ -104,6 +119,37 @@ gantt
 - Exit measured: Qwen-2B takes 78% / 53% / 37% of done / intent / triage decisions at unchanged accuracy. `done` meets the <30% large-share target; intent and triage don't yet.
 
 **Exit:** on the eval sets, the cascade (rules → small → large) matches or beats large-only accuracy while calling `large` for fewer than 30% of decisions (target to be confirmed in P2). The remote tier is provably never called for `Risk` (test). The swap state appears in the logs.
+
+## P3b · OpenRouter tier (inserted, ≈1 week)
+
+Inserted after P3. P2 showed that the small tiers need a stronger, calibrated tier behind them, and the local GPU holds one large model at a time. OpenRouter offers hosted open-weight models *with logprobs*, which the remote Claude tier cannot provide.
+
+**Research (2026-09-27): what OpenRouter can and cannot replace.**
+
+| Needed from the remote tier | Direct Anthropic | OpenRouter → Claude | OpenRouter → open-weight |
+|---|---|---|---|
+| JSON-schema output | yes | yes (require the parameter) | yes, per provider endpoint |
+| Logprobs, i.e. calibrated confidence | no | no | yes, on selected endpoints |
+| Effort / thinking off | yes | yes | where supported |
+| Server-side refusal fallback | yes (beta) | no (only error-based model fallback) | same |
+| Cost in the response | tokens only | `usage.cost` (USD) | `usage.cost` (USD) |
+| No training / no retention | org terms | `zdr` routes Claude away from Anthropic's endpoints | `data_collection: "deny"`, `zdr: true` |
+| Free health check | — | `GET /api/v1/key` | `GET /api/v1/key` |
+
+**Decision:** keep Claude on the direct Anthropic tier, and add OpenRouter as a separate tier for open-weight models with logprobs.
+
+1. `Xeito.Tiers.OpenRouter`: chat completions with the decision's JSON Schema (`strict`), temperature 0, reasoning off, `logprobs`. Every request sets `provider.require_parameters`, `data_collection: "deny"` and `zdr` (default on); providers can be pinned.
+2. Confidence from `top_logprobs` at the value, shared with the local large tier. Endpoints without logprobs yield a terminal result. Refusals are errors. Cost from `usage.cost`; provenance names the serving provider.
+3. Policy: `openrouter` and `remote` are *off-box tiers* under one gate (`remote:`), one locality rule and one spend budget. `Risk` never reaches either; `mix xeito.eval` skips them for types that forbid them.
+4. An `openrouter` state in the escalation machine (v1.1.0), so the path is logged and mined like any other tier.
+5. Configuration from the environment (`XEITO_OPENROUTER_KEY_FILE`, `_MODEL`, `_PROVIDERS`, `_ZDR`). A free key check (`key_info/1`).
+6. Evaluation: `mix xeito.eval --deciders small,large,openrouter` reports `small→openrouter` next to `small→large`.
+
+**Status:** done 2026-09-27. See [bench 3b](../bench/3b-openrouter.md).
+- Hosted Qwen3.6-35B-A3B: 0.91–0.97 accuracy against 0.98–1.00 for the local 27B, ~0.45 s median, about $0.00003 per decision. Calibration is worse and does not improve with temperature scaling; pin a provider before fitting thresholds.
+- Live: with public inputs and the large model unloaded, the ladder small → openrouter committed in 1.2–1.4 s without a swap, and the spend was charged to the run. Local-only inputs and Risk never reached it.
+
+**Exit:** on the eval sets, the OpenRouter tier's accuracy and calibration are measured next to the local large model, with cost per decision. Off-box gating is tested for both off-box tiers. At least one live escalation reaches the `openrouter` state and is logged with its cost.
 
 ## P4 · TUI harness at pi parity (≈5 weeks)
 

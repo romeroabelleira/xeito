@@ -15,13 +15,16 @@ defmodule Mix.Tasks.Xeito.Eval do
   per-example verdicts are written to `DIR/<type>.<tier>.jsonl` (input, label, value,
   probabilities): distillation data for fine-tuning smaller deciders (P7).
 
-  When both a small tier and `large` are evaluated, the report includes the selective-prediction
-  cascade for each small tier (`Xeito.Decision.Eval.cascade/3`, tolerance `--epsilon`, default 0.01).
+  When a local first stage (`system_one`, `small`) is evaluated with `large` or `openrouter`, the
+  report includes the selective-prediction cascade for each pair (`"small→large"`, …;
+  `Xeito.Decision.Eval.cascade/3`, tolerance `--epsilon`, default 0.01).
+
+  Off-box tiers (`openrouter`, `remote`) are skipped for types whose policy forbids them (Risk).
   """
 
   use Mix.Task
 
-  alias Xeito.Decision
+  alias Xeito.{Decision, Policy}
   alias Xeito.Decision.{Eval, Type}
   alias Xeito.Log.Codec
 
@@ -51,13 +54,16 @@ defmodule Mix.Tasks.Xeito.Eval do
       print(report)
       if out = opts[:out], do: write(out, report)
 
-      if tier = opts[:predictions],
+      tier = opts[:predictions]
+
+      if tier && Map.has_key?(results, String.to_existing_atom(tier)),
         do: write_predictions(opts[:out] || ".", report.type, tier, results)
     end
   end
 
   defp evaluate(module, deciders, opts) do
     type = Decision.type!(module)
+    deciders = permitted(type, deciders)
     examples = Eval.examples(module) |> maybe_limit(opts[:limit])
 
     results = Map.new(deciders, &{&1, Eval.run(module, &1, examples)})
@@ -106,12 +112,33 @@ defmodule Mix.Tasks.Xeito.Eval do
     Mix.shell().info("  wrote #{path}")
   end
 
+  # Cascades from each local first stage to each stronger tier evaluated alongside it.
   defp cascades(results, epsilon) do
     for small <- [:system_one, :small],
+        target <- [:large, :openrouter],
         Map.has_key?(results, small),
-        Map.has_key?(results, :large),
+        Map.has_key?(results, target),
         into: %{} do
-      {small, Eval.cascade(results[small], results[:large], epsilon)}
+      {"#{small}→#{target}", Eval.cascade(results[small], results[target], epsilon)}
+    end
+  end
+
+  # Evaluation calls tiers directly, outside the escalation policy, so a type that forbids
+  # off-box tiers (Risk) is never sent to them here either. The seed sets are synthetic, but the
+  # rule holds for every input.
+  defp permitted(type, deciders) do
+    if Keyword.get(type.policy, :remote) == :forbidden do
+      {skipped, kept} = Enum.split_with(deciders, &(&1 in Policy.off_box_tiers()))
+
+      if skipped != [],
+        do:
+          Mix.shell().info(
+            "  #{type.name}: skipping #{Enum.join(skipped, ", ")} (policy remote: :forbidden)"
+          )
+
+      kept
+    else
+      deciders
     end
   end
 
@@ -149,10 +176,12 @@ defmodule Mix.Tasks.Xeito.Eval do
       )
     end
 
-    for {tier, c} <- report.cascade do
+    for {path, c} <- report.cascade do
+      [first, target] = String.split(path, "→")
+
       Mix.shell().info(
-        "  cascade #{tier}→large (ε #{c.epsilon}): accuracy #{c.accuracy} vs large #{c.large_accuracy}, " <>
-          "#{tier} answers #{c.small_share} (θ per fold #{inspect(c.thresholds)})"
+        "  cascade #{path} (ε #{c.epsilon}): accuracy #{c.accuracy} vs #{target} #{c.large_accuracy}, " <>
+          "#{first} answers #{c.small_share} (θ per fold #{inspect(c.thresholds)})"
       )
     end
 

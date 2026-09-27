@@ -31,6 +31,20 @@ defmodule Xeito.PolicyTest do
     assert Policy.plan(open, [:remote], run, &all_available/1) == [:rules]
   end
 
+  test "OpenRouter is off-box: it shares the remote gate, locality rule and budget" do
+    type = Decision.type!(Triage)
+    open = Policy.for_type(type, policy: [remote: :allowed, locality: :public])
+
+    assert Policy.plan(open, [:small, :openrouter, :remote], nil, &all_available/1) ==
+             [:rules, :small, :openrouter, :remote]
+
+    local = Policy.for_type(type, policy: [remote: :allowed])
+    assert Policy.plan(local, [:small, :openrouter], nil, &all_available/1) == [:rules, :small]
+
+    risk = Policy.for_type(Decision.type!(Risk), policy: [remote: :allowed, locality: :public])
+    assert Policy.plan(risk, [:openrouter], nil, &all_available/1) == [:rules]
+  end
+
   test "a type-level remote: :forbidden cannot be overridden" do
     policy = Policy.for_type(Decision.type!(Risk), policy: [remote: :allowed, locality: :public])
     assert policy.remote == :forbidden

@@ -90,6 +90,41 @@ defmodule Xeito.EscalationTest do
     [url: "http://remote.test", api_key: "k", plug: {Req.Test, :esc_remote}]
   end
 
+  defp openrouter(test_pid, conf) do
+    Req.Test.stub(:esc_openrouter, fn conn ->
+      send(test_pid, :openrouter_called)
+
+      Req.Test.json(conn, %{
+        "model" => "qwen/qwen3.6-35b-a3b",
+        "provider" => "Parasail",
+        "choices" => [
+          %{
+            "message" => %{"content" => ~s({"value": "code_bug"})},
+            "logprobs" => %{"content" => openai_logprobs(conf)}
+          }
+        ],
+        "usage" => %{"prompt_tokens" => 300, "completion_tokens" => 7, "cost" => 0.00006}
+      })
+    end)
+
+    [url: "http://openrouter.test", api_key: "k", model: "qwen/qwen3.6-35b-a3b"] ++
+      [plug: {Req.Test, :esc_openrouter}]
+  end
+
+  defp openai_logprobs(conf) do
+    for t <- [~s({"), "value", ~s(":), ~s( "), "code", "_bug", ~s("})] do
+      tops =
+        if t == "code",
+          do: [
+            %{"token" => "code", "logprob" => :math.log(conf)},
+            %{"token" => "test", "logprob" => :math.log(1 - conf)}
+          ],
+          else: []
+
+      %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
+    end
+  end
+
   defp decide(type, input, opts) do
     log = Keyword.get_lazy(opts, :log, fn -> start_log!() end)
     parent = Keyword.get(opts, :parent, run_id())
@@ -182,13 +217,13 @@ defmodule Xeito.EscalationTest do
     assert Enum.any?(d.evidence, &match?(%{tier: :large, error: {:skipped, _}}, &1))
   end
 
-  test "the remote tier is never called for local-only inputs or for Risk" do
-    tiers = [small: small(0.4), remote: remote(self())]
+  test "off-box tiers are never called for local-only inputs or for Risk" do
+    tiers = [small: small(0.4), openrouter: openrouter(self(), 0.99), remote: remote(self())]
 
     # Default locality is :local_only.
     {d1, _, _} =
       decide(Triage, @input,
-        deciders: [:small, :remote],
+        deciders: [:small, :openrouter, :remote],
         tiers: tiers,
         policy: [remote: :allowed]
       )
@@ -196,14 +231,57 @@ defmodule Xeito.EscalationTest do
     # Risk forbids the remote tier at type level, whatever the request says.
     {d2, _, _} =
       decide(Risk, %{command: "some-unknown-tool --flag"},
-        deciders: [:remote],
+        deciders: [:openrouter, :remote],
         tiers: tiers,
         policy: [remote: :allowed, locality: :public]
       )
 
     refute_received :remote_called
+    refute_received :openrouter_called
     assert d1.value == :abstain
     assert d2.value == :review
+  end
+
+  test "a confident OpenRouter answer commits, with its state logged and its cost charged" do
+    parent = run_id()
+    tiers = [small: small(0.4), openrouter: openrouter(self(), 0.95), remote: remote(self())]
+
+    {d, log, ^parent} =
+      decide(Triage, @input,
+        deciders: [:small, :openrouter, :remote],
+        tiers: tiers,
+        parent: parent,
+        policy: [remote: :allowed, locality: :public]
+      )
+
+    assert_received :openrouter_called
+    refute_received :remote_called
+
+    assert %{
+             value: :code_bug,
+             actor: :openrouter,
+             model: "openrouter:qwen/qwen3.6-35b-a3b@Parasail"
+           } = d
+
+    assert_in_delta d.confidence, 0.95, 1.0e-9
+    assert :openrouter in states(log, only_run(log, parent))
+    assert_in_delta Budget.get(parent, :usd), 0.00006, 1.0e-12
+  end
+
+  test "an unsure OpenRouter answer escalates to the remote tier" do
+    tiers = [openrouter: openrouter(self(), 0.55), remote: remote(self())]
+
+    {d, _, _} =
+      decide(Triage, @input,
+        deciders: [:openrouter, :remote],
+        tiers: tiers,
+        policy: [remote: :allowed, locality: :public]
+      )
+
+    assert_received :openrouter_called
+    assert_received :remote_called
+    assert %{value: :test_bug, actor: :remote} = d
+    assert Enum.any?(d.evidence, &match?(%{tier: :openrouter, value: :code_bug}, &1))
   end
 
   test "where policy allows it, the remote tier decides terminally and its spend is charged" do

@@ -9,11 +9,14 @@ defmodule Xeito.Policy do
     3. the decision type's `policy` declaration (e.g. `Risk` forbids the remote tier)
     4. per-request options (`Xeito.Decider` / effect options)
 
+  Off-box tiers (`off_box_tiers/0`: `:openrouter`, `:remote`) send the input to a third party.
+  They share one gate, the `:remote` key, one locality rule and one spend budget.
+
   Keys:
-    * `:remote` — `:forbidden` (default) or `:allowed`
+    * `:remote` — `:forbidden` (default) or `:allowed`, for every off-box tier
     * `:locality` — `:local_only` (default) or `:public`. `:local_only` inputs never leave the
       machine, whatever `:remote` says
-    * `:max_usd_per_run` — remote spend limit per parent run (default 0.50)
+    * `:max_usd_per_run` — off-box spend limit per parent run (default 0.50)
     * `:max_swaps_per_run` — large-model loads per parent run (default 3)
     * `:unloaded_accept` — when the large model is not loaded, accept an earlier small-tier
       answer whose confidence is at least this, instead of swapping (default 0.6; `nil` disables)
@@ -24,6 +27,8 @@ defmodule Xeito.Policy do
 
   alias Xeito.{Budget, Tiers}
   alias Xeito.Decision.Type
+
+  @off_box [:openrouter, :remote]
 
   @defaults %{
     remote: :forbidden,
@@ -62,13 +67,17 @@ defmodule Xeito.Policy do
       tiers
       |> Enum.uniq()
       |> Enum.filter(
-        &((&1 != :remote or remote_allowed?(policy, parent_run)) and available?.(&1))
+        &((&1 not in @off_box or remote_allowed?(policy, parent_run)) and available?.(&1))
       )
 
     [:rules] ++ models ++ if(policy.human, do: [:human], else: [])
   end
 
-  @doc "Whether the remote tier may be called now for this policy and run."
+  @doc "The tiers that send inputs off the machine."
+  @spec off_box_tiers() :: [atom()]
+  def off_box_tiers, do: @off_box
+
+  @doc "Whether an off-box tier may be called now for this policy and run."
   @spec remote_allowed?(map(), String.t() | nil) :: boolean()
   def remote_allowed?(policy, parent_run) do
     policy.remote == :allowed and policy.locality == :public and

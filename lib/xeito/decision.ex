@@ -47,7 +47,7 @@ defmodule Xeito.Decision do
     evidence: []
   ]
 
-  @type actor :: :rule | :system_one | :small | :large | :remote | :human | :none
+  @type actor :: :rule | :system_one | :small | :large | :openrouter | :remote | :human | :none
   @type t :: %__MODULE__{
           type: module(),
           type_version: String.t() | nil,
