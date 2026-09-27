@@ -26,7 +26,7 @@ pi's stance is honest: the agent runs with your permissions, and you are in cont
 The `Risk` decision is **never** delegated to the remote tier, and its rule layer runs first. Obvious cases such as `rm -rf /`, `curl | sh` and writes outside the workspace are decided by code.
 A small model's `Risk` verdict can only *raise* caution (`:safe` → `:review`), never lower it. Independent tests of small open decision models found prompt-injection and PII catch rates far below what a safety gate needs ([references §7](references.md#7-system-one-decision-models-jev-and-open-clones)).
 
-Local decision servers (laya-onnx, llama-server) bind to `127.0.0.1` with an API key set. `laya-serve` binds `0.0.0.0` without authentication by default, which must be overridden.
+Local decision servers (`laya-serve`, `llama-server`) are published on `127.0.0.1` only, with an API key file. Inside its container `laya-serve` listens on all interfaces, so the host-side publish address and `LAYA_API_KEY_FILE` are what protect it.
 
 ## Why typed control flow helps against prompt injection
 

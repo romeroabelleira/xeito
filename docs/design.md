@@ -23,7 +23,7 @@ Runs can be stepped, breakpointed, replayed and benchmarked from the TUI or a lo
 
 It runs on one workstation: a desktop CPU with AVX-512, ≥ 64 GB of RAM and a consumer GPU with ~24 GB of VRAM.
 
-- **small:** a System One decision model (laya-multilingual via laya-onnx, speaking Jev's `/v1/systemone` contract) and a ~1–2B grammar-constrained model on llama-server, both on the CPU. They graduate by fine-tuning on logged large-model verdicts.
+- **small:** a System One decision model (laya-multilingual via upstream `laya-serve`, speaking Jev's `/v1/systemone` contract) and a ~1–2B grammar-constrained model on llama-server, both on the CPU. They graduate by fine-tuning on logged large-model verdicts.
 - **large:** `qwen3.6:27b` and `gemma4:31b` through Ollama on the GPU. A model swap is modelled as a costed state.
 - **remote:** Claude, gated by policy and budget.
 

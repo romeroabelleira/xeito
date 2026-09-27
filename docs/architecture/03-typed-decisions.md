@@ -78,6 +78,10 @@ A model's self-reported confidence is poorly calibrated. Xeito combines up to th
 2. **Self-consistency.** Sample k times (k = 3–5) at temperature > 0 and take the agreement ratio. This is cheap on a small CPU model.
 3. **Verbalised confidence.** A last resort, and never used alone.
 
+**Measured caveats (P0, [bench 0](../../bench/0-baseline.md)):**
+- llama-server's `top_logprobs` come from the *unconstrained* distribution, so the top alternatives can be tokens the grammar forbids. Logprob confidence must be renormalised over the grammar-allowed first tokens of each option, or computed by scoring each option explicitly.
+- Generating a rationale costs ~4× the decision itself on the CPU tier. Put `value` first in the schema, and make `rationale` optional and capped (off by default for the small tier).
+
 Calibration is **per decision type and per model**. It is fitted offline against the labelled examples (temperature or isotonic scaling), and the thresholds in `min_confidence` are tuned from the mined logs. See [05](05-event-log-and-process-mining.md).
 
 ## Abstention is a value
@@ -128,7 +132,7 @@ This is external validation of Xeito's thesis. It also changes the design in thr
    - bounded numeric → `Score`,
    - boolean-with-abstain → `Noul`.
 
-   Laya, Kev and laya-onnx accept the same request body, so switching backends is a URL change. Xeito keeps its own richer `%Decision{}` record (actor, provenance, cost) around the call.
+   Laya (`laya-serve`), Kev and other clones accept the same request body, so switching backends is a URL change. Xeito keeps its own richer `%Decision{}` record (actor, provenance, cost) around the call.
 2. **Add a third decider family: non-autoregressive decision models.** These are encoders with option-scoring heads (Laya on ModernBERT/mmBERT, GLiNER2.5-Decide on DeBERTa). They sit between the generative small model and the trained classifier. They run on the CPU, cost tens to a few hundred ms, need no grammar, and score all options in one pass.
 3. **Treat vendor numbers with suspicion, and gate on your own data.**
    - Base encoder checkpoints score *below the majority-class baseline* zero-shot on typed-decision suites (Laya 0.34–0.36).

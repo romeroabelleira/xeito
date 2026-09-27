@@ -21,7 +21,7 @@ Concrete host inventories and site configuration belong in each operator's priva
 flowchart TB
   subgraph cpu[CPU · AVX-512]
     R[rules<br/>in BEAM, µs]
-    S0[small-s1<br/>laya-onnx · /v1/systemone<br/>laya-multilingual, pinned lang]
+    S0[small-s1<br/>laya-serve · /v1/systemone<br/>laya-multilingual, pinned per request]
     S1[small-gen<br/>llama-server<br/>~1–2B GGUF Q8, grammar + logprobs]
     S2[small-cls<br/>Bumblebee/EXLA CPU in BEAM<br/>ModernBERT + logistic head]
   end
@@ -41,12 +41,12 @@ flowchart TB
 
 #### small-s1: a System One decision model
 
-- **What.** laya-multilingual (mmBERT-base, 322M, Apache-2.0), served by the **laya-onnx** container.
-  - It runs on the CPU only, needs no PyTorch, and speaks the Jev-compatible `POST /v1/systemone` contract.
-  - It binds loopback with an API key set.
-  - The reported footprint is ~1.05 GiB of RAM and 237–267 ms per decision on a Raspberry Pi 5. A desktop CPU with AVX-512 should be well under that; P0 measures it.
+- **What.** laya-multilingual (mmBERT-base, 322M, Apache-2.0), served by upstream **`laya-serve`**. It uses Laya's own CPU container (`compose.yaml` + `compose.http.yaml`, CPU PyTorch) and speaks the Jev-compatible `POST /v1/systemone` contract.
+  - It is published on loopback only, with `LAYA_API_KEY_FILE` set, and runs as a non-root container user.
+  - **Measured in P0:** 62–89 ms per warm request on the CPU ([bench 0](../../bench/0-baseline.md)). The first request after a start costs ~23 s for the checkpoint build, so warm it at startup.
+  - The community `laya-onnx` port the research recommended (no PyTorch) was no longer available as of 2026-09-27. Other ONNX runtimes exist (Go, Rust, browser), but they are young. Upstream is the default until one of them proves itself.
 - **Pinning.**
-  - Always send `model="multilingual"` or an explicit `lang`. Laya's router sends ~64% of short German utterances to the English checkpoint, which costs ~20 points on MASSIVE-de.
+  - Always send `"model": "multilingual"` **in every request**. The server-side `LAYA_MODELS` setting does not stop the router from picking the English checkpoint (observed in P0). Laya's router sends ~64% of short German utterances to the English checkpoint, which costs ~20 points on MASSIVE-de.
   - Pin the container and model versions, because Laya shipped ~10 releases in two days.
   - Evaluate every language the deployment actually sees, low-resource ones in particular.
 - **Why the CPU, not the GPU.** The large model already fills the VRAM. A decision model that wants the GPU would compete with it, and you can't load the large model just to decide whether to use the large model.
@@ -101,7 +101,7 @@ All services bind to **loopback only**. Remote access goes through an SSH tunnel
 | Unit (systemd `--user`) | Default bind | Notes |
 |---|---|---|
 | `ollama` | `127.0.0.1:11434` | Make sure Ollama is not bound to all interfaces. |
-| `xeito-laya` (Docker, laya-onnx) | `127.0.0.1:8082` | Pinned image digest, API key set, `model=multilingual` |
+| `xeito-laya` (Docker, upstream `laya-serve`) | `127.0.0.1:8082` | Pinned upstream tag, API key file, `LAYA_PRELOAD=1`, model pinned per request |
 | `xeito-llama-small` | `127.0.0.1:8081` | `llama-server -m <small>.gguf --threads 6 --ctx-size 8192 --parallel 4 --cache-reuse 256` (flags to be confirmed against the build) |
 | `xeitod` | Unix socket under `$XDG_STATE_HOME/xeito/`, inspector on `127.0.0.1:4040` | `mix release`, `Restart=on-failure` |
 | `xeito-mine.timer` | — | Nightly PM4Py batch over the project logs ([05](05-event-log-and-process-mining.md)) |

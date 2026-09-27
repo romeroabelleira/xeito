@@ -40,7 +40,7 @@ stateDiagram-v2
 | State | Meaning | Default timeout |
 |---|---|---|
 | `rules` | deterministic decision-table rules ([03](03-typed-decisions.md)) | 5 ms |
-| `small` | CPU decider on the local box: a System One encoder (laya-onnx) or a grammar-constrained small LLM ([03](03-typed-decisions.md#three-families-of-small-decider)) | 2 s |
+| `small` | CPU decider on the local box: a System One encoder (Laya via `laya-serve`) or a grammar-constrained small LLM ([03](03-typed-decisions.md#three-families-of-small-decider)) | 2 s |
 | `large` | local GPU model (may involve a *model swap*, see below) | 60 s |
 | `remote` | external API (e.g. Claude) | 120 s |
 | `human` | ask in the TUI; the run waits | configurable |

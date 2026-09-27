@@ -12,7 +12,7 @@
 |---|---|---|
 | Runtime, machines, supervision | Erlang/OTP 29 `gen_statem` + Elixir 1.20 | high |
 | Model clients, structured output | `Req` directly, plus **ReqLLM** for the remote tier | high |
-| Local inference | **Out of process**: laya-onnx `/v1/systemone` (CPU), `llama-server` (CPU) and Ollama (GPU) over HTTP | high |
+| Local inference | **Out of process**: `laya-serve` `/v1/systemone` (CPU), `llama-server` (CPU) and Ollama (GPU) over HTTP | high |
 | Embedding classifiers | Nx 1.0 + EXLA (CPU) + Bumblebee 0.8 (ModernBERT etc.) | medium-high |
 | Event log | SQLite via `exqlite` (OCEL 2.0 layout) | high |
 | Mining | PM4Py in a Python sidecar (batch) | high |
@@ -116,7 +116,7 @@ Offer a **pi bridge extension** (a small TS file, the only JS in the project, an
 
 | Component | Language | Reason |
 |---|---|---|
-| laya-onnx (System One decider) | Python + ONNX Runtime, container | CPU-only, Jev-compatible API, no PyTorch. Called over HTTP like every other tier. Ortex could load the ONNX model in-BEAM later, but it is barely maintained, so out of process is safer. |
+| `laya-serve` (System One decider) | Python + PyTorch (CPU), upstream container | Jev-compatible API, ~60–90 ms per warm decision on the CPU. Called over HTTP like every other tier. An ONNX export via Ortex in-BEAM is possible later, but Ortex is barely maintained, so out of process is safer. |
 | `llama-server` | C++ (llama.cpp) | The fastest CPU inference with AVX-512, and grammar/JSON-schema constraints. Out of process for isolation. |
 | Ollama | Go | Mature local serving of the large models. |
 | PM4Py sidecar | Python (`uv`) | The reference process-mining implementation. Batch jobs only. |

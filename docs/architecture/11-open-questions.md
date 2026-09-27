@@ -18,6 +18,7 @@ Each question is tagged with the phase of the [implementation plan](../implement
 | Q10 | Should the event log be shared across machines, so that federated mining becomes possible? | Privacy scrubbing ([05](05-event-log-and-process-mining.md#privacy)) is a prerequisite. This would be interesting for research partners. | after v0.1 |
 | Q11 | Which license, Apache-2.0 or MPL-2.0? | Apache-2.0 is the Elixir ecosystem norm and fits the grant funders. | P0 |
 | Q12 | Should human decisions count toward the determinism budget? | They are explicit but not reproducible. **Lean:** report them separately. | P2 |
+| Q16 | Should tier *placement* be dynamic, running the small generative tier on the GPU while no large model is loaded? | P0 measured 6–9× faster generation on the GPU for 0.8–2B models. Placement would then become a state of the delegation machine, not static config. | P3 |
 | Q13 | Is laya-multilingual good enough for low-resource languages and code-switching? | No public evaluation exists. Add them to the eval set. The fallbacks are GLiNER2.5-multi-Decide or the small generative model. | P2 |
 | Q14 | Should Xeito ship an adapter so its decision types can call hosted Jev, for benchmarking only? | It is useful as an upper bound on synthetic data. It must be impossible to use on `:local_only` sources. | P3 |
 | Q15 | Should Xeito's own decision server also *expose* `/v1/systemone`? | That would let other tools (pi, LiteLLM `/decide`) use Xeito's calibrated cascade as a drop-in Jev replacement. | P3 |
