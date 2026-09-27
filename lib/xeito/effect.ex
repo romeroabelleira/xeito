@@ -50,10 +50,10 @@ defmodule Xeito.Effect do
     }
   end
 
-  @doc "Request the typed decision `name` over `input`. Deciders arrive in P2; P1 runners stub it."
-  @spec decide(atom(), map()) :: t()
-  def decide(name, input \\ %{}) do
-    %__MODULE__{kind: :decide, args: %{decision: name, input: input}, reply: :decided}
+  @doc "Request a typed decision of `type` (a `Xeito.Decision` module) over `input`."
+  @spec decide(module(), map()) :: t()
+  def decide(type, input \\ %{}) do
+    %__MODULE__{kind: :decide, args: %{decision: type, input: input}, reply: :decided}
   end
 
   @doc "Turns a runner result into the `{event_name, event_data}` delivered to the run."

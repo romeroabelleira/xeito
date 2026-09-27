@@ -2,15 +2,16 @@ defmodule Xeito.Machines.FixFailingTest do
   @moduledoc """
   Reproduces a failing test, triages it, and loops plan → edit → verify until the tests pass.
 
-  P1 drives it with code only. `triage` requests a typed decision (stubbed by the runner until
-  P2), and `planning` / `editing` wait for `:planned` / `:edited` events from a model tier or a
-  human. Context: `%{cwd: path, test_cmd: "mix test", max_attempts: 3, max_reruns: 2}`.
+  `triage` requests the typed decision `Xeito.Decisions.Triage` over the last failure
+  (`triage_input/1`), and `planning` / `editing` wait for `:planned` / `:edited` events from a
+  model tier or a human. Context: `%{cwd: path, test_cmd: "mix test", max_attempts: 3,
+  max_reruns: 2}`, plus optional `:test_name` and `:diff_stat`.
 
   The diagram in `docs/architecture/02-state-machine-core.md` is generated from this module
   (`mix xeito.export`), and a test keeps the two in sync.
   """
 
-  use Xeito.Machine, version: "0.3.0"
+  use Xeito.Machine, version: "0.4.0"
 
   alias Xeito.Effect
 
@@ -20,12 +21,12 @@ defmodule Xeito.Machines.FixFailingTest do
   initial :reproduce
 
   state :reproduce, entry: :run_tests, timeout: @tests_timeout do
-    on :ran, to: :triage, guard: :failed?
+    on :ran, to: :triage, guard: :failed?, action: :record_failure
     on :ran, to: :done
   end
 
   state :triage do
-    decide :triage
+    decide(Xeito.Decisions.Triage, input: :triage_input)
     on {:decided, :flaky}, to: :rerun
     on {:decided, :code_bug}, to: :working
     on {:decided, :test_bug}, to: :working
@@ -35,7 +36,7 @@ defmodule Xeito.Machines.FixFailingTest do
 
   state :rerun, entry: :run_tests, timeout: @tests_timeout do
     on :ran, to: :done, guard: :passed?
-    on :ran, to: :triage, guard: :reruns_left?, action: :count_rerun
+    on :ran, to: :triage, guard: :reruns_left?, action: :count_rerun_and_record
     on :ran, to: :failed
   end
 
@@ -84,5 +85,18 @@ defmodule Xeito.Machines.FixFailingTest do
   @doc false
   def reruns_left?(ctx, _result), do: Map.get(ctx, :reruns, 0) < Map.get(ctx, :max_reruns, 2)
   @doc false
-  def count_rerun(ctx, _result), do: Map.update(ctx, :reruns, 1, &(&1 + 1))
+  def count_rerun_and_record(ctx, result),
+    do: ctx |> Map.update(:reruns, 1, &(&1 + 1)) |> record_failure(result)
+
+  @doc false
+  def record_failure(ctx, result), do: Map.put(ctx, :last_failure, Map.get(result, :output, ""))
+
+  @doc false
+  def triage_input(ctx) do
+    %{
+      test: Map.get(ctx, :test_name, Map.get(ctx, :test_cmd, "test suite")),
+      output: Map.get(ctx, :last_failure, ""),
+      diff_stat: Map.get(ctx, :diff_stat, "")
+    }
+  end
 end

@@ -32,8 +32,13 @@ defmodule Xeito.Effects.LocalTest do
              Local.run(Effect.write("/tmp/x", "no", cwd: ws), [])
   end
 
-  test "decide is stubbed until P2" do
-    assert %{value: :abstain} = Local.run(Effect.decide(:triage), [])
-    assert %{value: :code_bug} = Local.run(Effect.decide(:triage), decide: fn _ -> :code_bug end)
+  test "decide runs the decider, or an override" do
+    effect =
+      Effect.decide(Xeito.Decisions.Triage, %{test: "t", output: "sh: esbuild: command not found"})
+
+    assert %{value: :env_problem, decision: %{actor: :rule}} =
+             Local.run(effect, decider: [deciders: []])
+
+    assert %{value: :code_bug} = Local.run(effect, decide: fn _ -> :code_bug end)
   end
 end

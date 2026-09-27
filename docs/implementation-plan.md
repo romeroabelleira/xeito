@@ -80,6 +80,12 @@ gantt
 8. Run the **three-way gate test** (rule vs calibrated small candidate vs local large model, cost-weighted, with a pre-declared margin). Pick the default small decider per decision type, and delete the losers ([03](architecture/03-typed-decisions.md#the-gate-test)).
 9. Log the large model's verdicts as training data for the local fine-tuning of laya-multilingual in P7.
 
+**Status (2026-09-27):** done, with an honest negative result. See [bench 2](../bench/2-decisions.md).
+- Decision DSL, one-token logprob scoring, three tier clients, the decider ladder, `mix xeito.eval` and the gate are built.
+- The seed sets are synthetic (45–128 per type).
+- No small tier passed the zero-shot gate, so defaults are rules → large. The GPU-resident 27B model decides at ~500 ms with 0.93–0.99 accuracy.
+- **Consequence for P3:** swap- and placement-aware routing (Q16) matters more than a fixed small→large cascade.
+
 **Exit:** `fix_failing_test` runs end-to-end on a seeded failing repo, with `Triage` decided by the CPU model and logged with its confidence. The eval report for all four decision types is committed. `Risk` rules block the dangerous-command test set 100% of the time.
 
 ## P3 · Delegation tiers (≈3 weeks)

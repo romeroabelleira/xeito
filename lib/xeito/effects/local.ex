@@ -6,8 +6,8 @@ defmodule Xeito.Effects.Local do
       truncated to `opts[:max_output]` bytes (default 64 KiB). On timeout the result is
       `exit_status: 124`.
     * `read` / `write` resolve paths relative to the workspace and refuse anything outside it.
-    * `decide` is answered by `opts[:decide]` (`fun(effect) -> value`) until the deciders of
-      P2 exist. Without it, the decision is `:abstain`.
+    * `decide` runs `Xeito.Decider.decide/3` (rules, then the model tiers). `opts[:decider]`
+      passes decider options, and `opts[:decide]` (`fun(effect) -> value`) overrides it (tests).
   """
 
   @behaviour Xeito.Effects.Runner
@@ -48,10 +48,16 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :decide} = effect, opts) do
+  def run(%Effect{kind: :decide, args: args} = effect, opts) do
     case opts[:decide] do
-      nil -> %{value: :abstain}
-      fun -> %{value: fun.(effect)}
+      nil ->
+        decision =
+          Xeito.Decider.decide(args.decision, args.input, Keyword.get(opts, :decider, []))
+
+        %{value: decision.value, decision: Xeito.Decision.to_map(decision)}
+
+      fun ->
+        %{value: fun.(effect)}
     end
   end
 

@@ -10,10 +10,11 @@ defmodule Xeito.Machine.Validator do
     * every state is reachable from the initial state (`:failed` always is, via timeouts)
     * a final state is reachable from every state through *declared* transitions
       (the implicit timeout → `:failed` safety net does not count)
-    * states with `decide` handle at least one `{:decided, _}` event
+    * states with `decide` name a decision type and handle every value, including `:abstain`
     * entry functions (arity 1), guards and actions (arity 2) are public functions
   """
 
+  alias Xeito.Decision.Type
   alias Xeito.Machine
 
   @type defines? :: ({atom(), arity()} -> boolean())
@@ -108,20 +109,42 @@ defmodule Xeito.Machine.Validator do
     |> Enum.reject(fn {fun, _, _} -> is_nil(fun) end)
   end
 
-  defp check_decisions(machine, _) do
-    for name <- machine.order,
-        decision <- [machine.states[name].decision],
-        decision != nil,
-        not handles_decided?(machine, name) do
-      "#{inspect(name)} decides #{inspect(decision)} but handles no {:decided, _} event"
+  defp check_decisions(machine, defines?) do
+    Enum.flat_map(machine.order, fn name ->
+      case machine.states[name] do
+        %{decision: nil} -> []
+        state -> decision_errors(machine, state, defines?)
+      end
+    end)
+  end
+
+  defp decision_errors(machine, state, defines?) do
+    type = state.decision
+
+    cond do
+      not (match?({:module, _}, Code.ensure_compiled(type)) and
+               function_exported?(type, :__decision__, 0)) ->
+        ["#{inspect(state.name)}: #{inspect(type)} is not a decision type (use Xeito.Decision)"]
+
+      state.decision_input && not defines?.({state.decision_input, 1}) ->
+        [
+          "#{inspect(state.name)}: decision input #{state.decision_input}/1 must be a public function"
+        ]
+
+      true ->
+        handled = handled_decisions(machine, state.name)
+
+        for value <- Type.values(type.__decision__()) ++ [:abstain], value not in handled do
+          "#{inspect(state.name)} decides #{inspect(type)} but does not handle {:decided, #{inspect(value)}}"
+        end
     end
   end
 
-  defp handles_decided?(machine, name) do
-    machine
-    |> Machine.lineage(name)
-    |> Enum.flat_map(&machine.states[&1].transitions)
-    |> Enum.any?(&match?({:decided, _}, &1.event))
+  defp handled_decisions(machine, name) do
+    for s <- Machine.lineage(machine, name),
+        t <- machine.states[s].transitions,
+        {:decided, v} <- [t.event],
+        do: v
   end
 
   defp check_graph(machine, _) do

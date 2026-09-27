@@ -78,6 +78,13 @@ A model's self-reported confidence is poorly calibrated. Xeito combines up to th
 2. **Self-consistency.** Sample k times (k = 3–5) at temperature > 0 and take the agreement ratio. This is cheap on a small CPU model.
 3. **Verbalised confidence.** A last resort, and never used alone.
 
+**How the tiers compute confidence (P2):**
+- *System One* returns a probability per option.
+- *Small (llama-server)* uses **one-token scoring**. It renders the chat prompt, prefills `{"value": "`, requests one token with the top-50 logprobs, and renormalises the mass of tokens that start each option. If a token starts several options, it descends one token further.
+- *Large (Ollama)* generates under the JSON schema and reads the logprobs at the first value token, renormalised the same way.
+
+No tier asks the model for its confidence in words. Measured results: [bench 2](../../bench/2-decisions.md).
+
 **Measured caveats (P0, [bench 0](../../bench/0-baseline.md)):**
 - llama-server's `top_logprobs` come from the *unconstrained* distribution, so the top alternatives can be tokens the grammar forbids. Logprob confidence must be renormalised over the grammar-allowed first tokens of each option, or computed by scoring each option explicitly.
 - Generating a rationale costs ~4× the decision itself on the CPU tier. Put `value` first in the schema, and make `rationale` optional and capped (off by default for the small tier).

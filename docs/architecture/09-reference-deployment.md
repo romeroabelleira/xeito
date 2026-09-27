@@ -65,7 +65,9 @@ flowchart TB
 **Serving.** llama.cpp `llama-server`, built for the CPU with AVX-512 (`-DGGML_NATIVE=ON`). It runs as a systemd user unit pinned to most of the physical cores (for example 6 of 8), which leaves headroom for the BEAM, the TUI and the OS.
 Its endpoints are `/completion` with `json_schema` or `grammar` plus `n_probs` for confidence ([03](03-typed-decisions.md#where-confidence-comes-from)). Where supported, `--parallel` with 2–4 slots handles concurrent decisions from parallel runs.
 
-**Candidate models** (all selected by the P2 eval, none fixed in advance):
+**P2 result:** the default CPU model is **Qwen3.5-2B-Q8_0** (intent 0.86, done 0.96 zero-shot, ~550–700 ms per decision). No small tier passed the gate, and with the large model loaded, the GPU tier is both more accurate and about as fast (~500 ms). The CPU tiers matter when the large model is not loaded, and after fine-tuning ([bench 2](../../bench/2-decisions.md)).
+
+**Candidate models** (as evaluated in P2):
 
 | Model | Size | Why a candidate |
 |---|---|---|

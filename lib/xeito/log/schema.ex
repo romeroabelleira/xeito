@@ -20,6 +20,8 @@ defmodule Xeito.Log.Schema do
     "state_entered" => ~w(state),
     "effect_requested" => ~w(effect_id kind args),
     "effect_completed" => ~w(effect_id kind result),
+    "decision_made" =>
+      ~w(effect_id decision_type value confidence actor model latency_ms input_hash),
     "run_finished" => ~w(status final_state)
   }
 

@@ -39,11 +39,12 @@ defmodule Xeito.Machine.DSL do
   end
 
   @doc """
-  Declares that the state requests the typed decision `name` on entry. The decision's result
-  arrives as the event `{:decided, value}`.
+  Declares that the state requests a typed decision on entry: `decide Xeito.Decisions.Triage`.
+  The decision's input is the run context, or `fun(ctx)` with `input: :fun`. The result arrives
+  as the event `{:decided, value}`, and every value of the type (plus `:abstain`) must be handled.
   """
-  defmacro decide(name) do
-    quote do: unquote(__MODULE__).__set_decision__(__MODULE__, unquote(name))
+  defmacro decide(type, opts \\ []) do
+    quote do: unquote(__MODULE__).__set_decision__(__MODULE__, unquote(type), unquote(opts))
   end
 
   defp build_state(name, opts, block) do
@@ -103,8 +104,8 @@ defmodule Xeito.Machine.DSL do
   end
 
   @doc false
-  def __set_decision__(module, name) do
-    update_current(module, "decide", &%{&1 | decision: name})
+  def __set_decision__(module, type, opts) do
+    update_current(module, "decide", &%{&1 | decision: type, decision_input: opts[:input]})
   end
 
   defp update_current(module, macro, fun) do

@@ -1,0 +1,103 @@
+{"input": {"message": "Where is the Checkout module defined?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Which Elixir version does this project require?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "What port does the dev server listen on?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Is there already a function that parses ISO dates in this repo?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Which tests cover the pricing logic?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "What does the config key :max_retries default to?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "How many migrations are there in priv/repo?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Who calls Accounts.get_user!/1?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Do we have a CI workflow for pull requests?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "What license is this project under?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Wo ist die Funktion calculate_total definiert?"}, "label": "question", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Welche Datenbank verwendet das Projekt?"}, "label": "question", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Gibt es schon Tests für den Login?"}, "label": "question", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Welche Version von Phoenix ist eingebunden?"}, "label": "question", "lang": "de", "source": "synthetic"}
+{"input": {"message": "¿Dónde se define el módulo de facturación?"}, "label": "question", "lang": "es", "source": "synthetic"}
+{"input": {"message": "¿Qué versión de Node usa este proyecto?"}, "label": "question", "lang": "es", "source": "synthetic"}
+{"input": {"message": "¿Hay alguna variable de entorno para la URL de la base de datos?"}, "label": "question", "lang": "es", "source": "synthetic"}
+{"input": {"message": "¿Qué archivos importan el cliente HTTP?"}, "label": "question", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Onde está definida a función de login?"}, "label": "question", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Que versión de Elixir precisa este proxecto?"}, "label": "question", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Fix the rounding bug in the tax calculation."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Rename get_usr to get_user everywhere."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Add a --verbose flag to the CLI."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Remove the unused dependency on poison."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Refactor the payment module to use a behaviour."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Change the default timeout to 30 seconds."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Add input validation to the signup form."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Delete the deprecated v1 endpoints."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Make the logger include the request id."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Update the README with the new install steps."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Write a test for the empty cart case."}, "label": "edit", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Behebe den Fehler bei der Datumsberechnung."}, "label": "edit", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Füge einen Test für den leeren Warenkorb hinzu."}, "label": "edit", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Benenne die Variable tmp in buffer um."}, "label": "edit", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Entferne den auskommentierten Code in der Config."}, "label": "edit", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Corrige el error de redondeo en el total."}, "label": "edit", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Añade un campo email al esquema de usuario."}, "label": "edit", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Elimina la función obsoleta parse_legacy."}, "label": "edit", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Cambia el nombre del módulo Utils a Helpers."}, "label": "edit", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Engade un test para o caso do carro baleiro."}, "label": "edit", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Corrixe o erro de redondeo no total."}, "label": "edit", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Run the test suite."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Can you run mix test for the accounts context?"}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Start the dev server."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Build the release."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Run the linter and show me the warnings."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Execute the seeds script."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Run the benchmarks again."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Deploy to staging."}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "/run mix format --check-formatted"}, "label": "run", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Führe die Tests aus."}, "label": "run", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Starte bitte den Server neu."}, "label": "run", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Lass mal den Linter laufen."}, "label": "run", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Ejecuta los tests."}, "label": "run", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Arranca el servidor de desarrollo."}, "label": "run", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Lanza el build de producción."}, "label": "run", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Executa os tests, por favor."}, "label": "run", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Arrinca o servidor."}, "label": "run", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Explain how the retry logic in the HTTP client works."}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Why does this function return nil for empty lists?"}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "What does this error mean: ** (FunctionClauseError) no function clause matching?"}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "How does GenServer.call handle timeouts?"}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Explain the difference between Task.async and Task.start."}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Why is the test flaky on CI but not locally?"}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Walk me through what the supervision tree looks like."}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Can you explain this regex?"}, "label": "explain", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Erkläre mir, wie die Authentifizierung funktioniert."}, "label": "explain", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Warum schlägt dieser Test manchmal fehl?"}, "label": "explain", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Was bedeutet diese Fehlermeldung?"}, "label": "explain", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Explícame cómo funciona el sistema de colas."}, "label": "explain", "lang": "es", "source": "synthetic"}
+{"input": {"message": "¿Por qué este código lanza una excepción?"}, "label": "explain", "lang": "es", "source": "synthetic"}
+{"input": {"message": "¿Qué significa este error de compilación?"}, "label": "explain", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Explícame como funciona a caché."}, "label": "explain", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Por que falla este test?"}, "label": "explain", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "How should we approach migrating from REST to GraphQL? Don't change anything yet."}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Break down the work to add multi-tenancy."}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Propose a plan to split the monolith into two services."}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "What steps would we need to support SSO?"}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Design the database schema for invoices before we write code."}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Outline how to add rate limiting, then wait for my go."}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Make a plan for upgrading to Elixir 1.20."}, "label": "plan", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Wie sollten wir die Migration auf Postgres 17 angehen? Noch nichts ändern."}, "label": "plan", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Erstelle einen Plan für die Einführung von Feature-Flags."}, "label": "plan", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Skizziere die Schritte für ein Offline-Modus."}, "label": "plan", "lang": "de", "source": "synthetic"}
+{"input": {"message": "¿Cómo planteamos la migración a la nueva API? Primero el plan."}, "label": "plan", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Divide en tareas la implementación del módulo de pagos."}, "label": "plan", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Propón un plan para añadir internacionalización."}, "label": "plan", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Fai un plan para engadir autenticación con dous factores."}, "label": "plan", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Como abordamos a migración? Aínda non cambies nada."}, "label": "plan", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Thanks, that was helpful!"}, "label": "other", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Good morning"}, "label": "other", "lang": "en", "source": "synthetic"}
+{"input": {"message": "What's the weather like today?"}, "label": "other", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Tell me a joke."}, "label": "other", "lang": "en", "source": "synthetic"}
+{"input": {"message": "ok"}, "label": "other", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Never mind."}, "label": "other", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Danke dir!"}, "label": "other", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Guten Morgen"}, "label": "other", "lang": "de", "source": "synthetic"}
+{"input": {"message": "Wer hat gestern das Spiel gewonnen?"}, "label": "other", "lang": "de", "source": "synthetic"}
+{"input": {"message": "¡Gracias!"}, "label": "other", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Buenas tardes"}, "label": "other", "lang": "es", "source": "synthetic"}
+{"input": {"message": "¿Qué me recomiendas para cenar?"}, "label": "other", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Grazas!"}, "label": "other", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Bos días"}, "label": "other", "lang": "gl", "source": "synthetic"}

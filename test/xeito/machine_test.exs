@@ -19,12 +19,12 @@ defmodule Xeito.MachineTest do
     machine = Machine.fetch!(FixFailingTest)
 
     assert machine.name == "fix_failing_test"
-    assert machine.version == "0.3.0"
+    assert machine.version == "0.4.0"
     assert machine.initial == :reproduce
     assert Machine.children(machine, :working) == [:planning, :editing, :verifying]
     assert Machine.leaf(machine, :working) == :planning
     assert Machine.lineage(machine, :verifying) == [:verifying, :working]
-    assert Machine.state!(machine, :triage).decision == :triage
+    assert Machine.state!(machine, :triage).decision == Xeito.Decisions.Triage
     assert Machine.timeout(machine, :reproduce) == {900_000, :timeout}
     assert Machine.timeout(machine, :done) == nil
   end
@@ -95,16 +95,33 @@ defmodule Xeito.MachineTest do
     end
   end
 
-  test "requires decide states to handle {:decided, _}" do
-    assert_raise CompileError, ~r/decides :triage but handles no/, fn ->
+  test "requires decide states to name a decision type and handle all of its values" do
+    assert_raise CompileError, ~r/:not_a_type is not a decision type/, fn ->
       compile("""
       initial :a
       state :a do
-        decide :triage
+        decide :not_a_type
         on :go, to: :failed
       end
       final :failed
       """)
     end
+
+    error =
+      assert_raise CompileError, fn ->
+        compile("""
+        initial :a
+        state :a do
+          decide Xeito.Decisions.Done
+          on {:decided, :done}, to: :finished
+          on :go, to: :failed
+        end
+        final :finished
+        final :failed
+        """)
+      end
+
+    assert error.description =~ "does not handle {:decided, :continue}"
+    assert error.description =~ "does not handle {:decided, :abstain}"
   end
 end

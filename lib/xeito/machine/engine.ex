@@ -66,10 +66,18 @@ defmodule Xeito.Machine.Engine do
     Enum.flat_map(states, fn name ->
       state = Machine.state!(machine, name)
       entry = if state.entry, do: apply(machine.module, state.entry, [ctx]), else: []
-      decision = if state.decision, do: [Effect.decide(state.decision, ctx)], else: []
+
+      decision =
+        if state.decision,
+          do: [Effect.decide(state.decision, decision_input(machine, state, ctx))],
+          else: []
+
       List.wrap(entry) ++ decision
     end)
   end
+
+  defp decision_input(_machine, %{decision_input: nil}, ctx), do: ctx
+  defp decision_input(machine, %{decision_input: fun}, ctx), do: apply(machine.module, fun, [ctx])
 
   defp select(machine, leaf, ctx, event, data) do
     machine

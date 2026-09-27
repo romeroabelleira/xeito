@@ -57,7 +57,8 @@ defmodule Xeito.Machine do
 
   defmacro __using__(opts) do
     quote do
-      import Xeito.Machine.DSL, only: [initial: 1, state: 2, state: 3, final: 1, on: 2, decide: 1]
+      import Xeito.Machine.DSL,
+        only: [initial: 1, state: 2, state: 3, final: 1, on: 2, decide: 1, decide: 2]
 
       @xeito_opts unquote(opts)
       @xeito_stack []

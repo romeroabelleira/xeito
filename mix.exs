@@ -35,6 +35,8 @@ defmodule Xeito.MixProject do
   defp deps do
     [
       {:exqlite, "~> 0.41"},
+      {:req, "~> 0.7"},
+      {:plug, "~> 1.20", only: :test},
       {:stream_data, "~> 1.4", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}

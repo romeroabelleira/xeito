@@ -24,7 +24,7 @@ The runtime is Erlang/OTP's `gen_statem` in `handle_event_function` mode. One ge
 
 ```elixir
 defmodule Xeito.Machines.FixFailingTest do
-  use Xeito.Machine, version: "0.3.0"
+  use Xeito.Machine, version: "0.4.0"
 
   alias Xeito.Effect
 
@@ -34,12 +34,12 @@ defmodule Xeito.Machines.FixFailingTest do
   initial :reproduce
 
   state :reproduce, entry: :run_tests, timeout: @tests_timeout do
-    on :ran, to: :triage, guard: :failed?
+    on :ran, to: :triage, guard: :failed?, action: :record_failure
     on :ran, to: :done
   end
 
   state :triage do
-    decide :triage
+    decide Xeito.Decisions.Triage, input: :triage_input
     on {:decided, :flaky}, to: :rerun
     on {:decided, :code_bug}, to: :working
     on {:decided, :test_bug}, to: :working
@@ -49,7 +49,7 @@ defmodule Xeito.Machines.FixFailingTest do
 
   state :rerun, entry: :run_tests, timeout: @tests_timeout do
     on :ran, to: :done, guard: :passed?
-    on :ran, to: :triage, guard: :reruns_left?, action: :count_rerun
+    on :ran, to: :triage, guard: :reruns_left?, action: :count_rerun_and_record
     on :ran, to: :failed
   end
 
@@ -79,9 +79,10 @@ defmodule Xeito.Machines.FixFailingTest do
   final :done
   final :failed
 
-  # Guards, actions and entry functions are ordinary public functions:
+  # Guards, actions, entry functions and decision inputs are ordinary public functions:
   def run_tests(ctx), do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd)]
   def failed?(_ctx, result), do: result.exit_status != 0
+  def triage_input(ctx), do: %{test: ctx.test_name, output: ctx.last_failure, diff_stat: ctx.diff_stat}
   # …
 end
 ```

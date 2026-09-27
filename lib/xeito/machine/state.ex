@@ -4,7 +4,17 @@ defmodule Xeito.Machine.State do
   alias Xeito.Machine.Transition
 
   @enforce_keys [:name]
-  defstruct [:name, :parent, :initial, :timeout, :entry, :decision, final: false, transitions: []]
+  defstruct [
+    :name,
+    :parent,
+    :initial,
+    :timeout,
+    :entry,
+    :decision,
+    :decision_input,
+    final: false,
+    transitions: []
+  ]
 
   @type t :: %__MODULE__{
           name: atom(),
@@ -12,7 +22,8 @@ defmodule Xeito.Machine.State do
           initial: atom() | nil,
           timeout: {pos_integer(), term()} | nil,
           entry: atom() | nil,
-          decision: atom() | nil,
+          decision: module() | nil,
+          decision_input: atom() | nil,
           final: boolean(),
           transitions: [Transition.t()]
         }

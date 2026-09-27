@@ -192,7 +192,8 @@ defmodule Xeito.Run do
           )
 
         {name, event_data} = Effect.to_event(effect, result)
-        process(leaf, %{data | effects: effects}, name, event_data, :code, [completed], nil)
+        prefix = [completed | decision_events(effect, result)]
+        process(leaf, %{data | effects: effects}, name, event_data, actor(result), prefix, nil)
     end
   end
 
@@ -286,6 +287,32 @@ defmodule Xeito.Run do
 
     {numbered, %{data | effect_count: data.effect_count + length(effects)}}
   end
+
+  defp decision_events(%Effect{kind: :decide, id: id}, %{decision: d}) do
+    [
+      Event.new(
+        "decision_made",
+        {:decision_made, id, d},
+        %{
+          "effect_id" => id,
+          "decision_type" => inspect(d.type),
+          "value" => d.value,
+          "confidence" => d.confidence,
+          "actor" => d.actor,
+          "model" => d.model,
+          "latency_ms" => d.latency_ms,
+          "input_hash" => d.input_hash
+        },
+        [{id, "effect", "of"}]
+      )
+    ]
+  end
+
+  defp decision_events(_effect, _result), do: []
+
+  # The actor of an event produced by an effect: the decider for decisions, else code.
+  defp actor(%{decision: %{actor: actor}}) when actor not in [nil, :none], do: actor
+  defp actor(_result), do: :code
 
   defp entered_event(state),
     do: Event.new("state_entered", {:state_entered, state}, %{"state" => state})

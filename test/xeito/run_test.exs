@@ -158,4 +158,36 @@ defmodule Xeito.RunTest do
 
     assert Run.whereis(id) == nil
   end
+
+  test "a decide effect is answered by the decider and logged as decision_made" do
+    log = start_log!()
+    dir = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    # The failure output matches Triage's missing-environment rule, so no model tier is needed.
+    input = %{cwd: dir, test_cmd: "echo '** (Mix) The task x could not be found'; exit 1"}
+    id = start(FixFailingTest, {Xeito.Effects.Local, decider: [deciders: []]}, log, input)
+
+    wait_for_leaf(id, :ask_human)
+
+    assert [{:decision_made, _effect, decision}] =
+             for({_, "decision_made", term} <- Log.read_run(log, id), do: term)
+
+    assert %{value: :env_problem, actor: :rule, confidence: 1.0} = decision
+
+    assert [["env_problem", "rule", "1.0"]] =
+             Log.query(log, "SELECT value, actor, confidence FROM event_decision_made")
+
+    assert Enum.any?(
+             Log.read_run(log, id),
+             &match?(
+               {_, "transition",
+                {:transition, :triage, :ask_human, {:decided, :env_problem}, :rule}},
+               &1
+             )
+           )
+
+    Run.send_event(id, :abort)
+  end
 end
