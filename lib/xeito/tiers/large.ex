@@ -37,7 +37,8 @@ defmodule Xeito.Tiers.Large do
     case Req.request(opts) do
       {:ok, %{status: 200, body: %{"message" => %{"content" => content}} = resp}} ->
         probs = probabilities(content, Map.get(resp, "logprobs") || [], type)
-        Tiers.result(type, probs, model, started)
+        cost = %{tokens_in: resp["prompt_eval_count"] || 0, tokens_out: resp["eval_count"] || 0}
+        Tiers.result(type, probs, model, started, cost)
 
       {:ok, %{status: status, body: body}} ->
         {:error, {:http, status, body}}

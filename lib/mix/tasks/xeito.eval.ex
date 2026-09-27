@@ -6,6 +6,7 @@ defmodule Mix.Tasks.Xeito.Eval do
       mix xeito.eval triage risk --deciders baseline,rules,system_one,small,large,pipeline
       mix xeito.eval intent --limit 20 --out bench/decisions
       mix xeito.eval triage --deciders large --predictions large
+      mix xeito.eval done --deciders system_one,small,large --epsilon 0.01
 
 
   Decision types: intent, triage, risk, done.
@@ -13,6 +14,9 @@ defmodule Mix.Tasks.Xeito.Eval do
   report per type is written to `DIR/<type>.json`. With `--predictions TIER`, that tier's
   per-example verdicts are written to `DIR/<type>.<tier>.jsonl` (input, label, value,
   probabilities): distillation data for fine-tuning smaller deciders (P7).
+
+  When both a small tier and `large` are evaluated, the report includes the selective-prediction
+  cascade for each small tier (`Xeito.Decision.Eval.cascade/3`, tolerance `--epsilon`, default 0.01).
   """
 
   use Mix.Task
@@ -26,7 +30,8 @@ defmodule Mix.Tasks.Xeito.Eval do
     limit: :integer,
     out: :string,
     margin: :float,
-    predictions: :string
+    predictions: :string,
+    epsilon: :float
   ]
 
   @impl true
@@ -66,6 +71,7 @@ defmodule Mix.Tasks.Xeito.Eval do
       labels: Enum.frequencies_by(examples, & &1.label),
       metrics: metrics,
       gate: Eval.gate(metrics, Keyword.get(opts, :margin, 0.02)),
+      cascade: cascades(results, Keyword.get(opts, :epsilon, 0.01)),
       dangerous_missed:
         for(
           {_, rs} <- Map.take(results, [:rules]),
@@ -100,6 +106,15 @@ defmodule Mix.Tasks.Xeito.Eval do
     Mix.shell().info("  wrote #{path}")
   end
 
+  defp cascades(results, epsilon) do
+    for small <- [:system_one, :small],
+        Map.has_key?(results, small),
+        Map.has_key?(results, :large),
+        into: %{} do
+      {small, Eval.cascade(results[small], results[:large], epsilon)}
+    end
+  end
+
   defp maybe_limit(examples, nil), do: examples
   defp maybe_limit(examples, n), do: examples |> Enum.shuffle() |> Enum.take(n)
 
@@ -131,6 +146,13 @@ defmodule Mix.Tasks.Xeito.Eval do
             " ",
             fn {v, w} -> v |> format() |> String.pad_trailing(w) end
           )
+      )
+    end
+
+    for {tier, c} <- report.cascade do
+      Mix.shell().info(
+        "  cascade #{tier}→large (ε #{c.epsilon}): accuracy #{c.accuracy} vs large #{c.large_accuracy}, " <>
+          "#{tier} answers #{c.small_share} (θ per fold #{inspect(c.thresholds)})"
       )
     end
 

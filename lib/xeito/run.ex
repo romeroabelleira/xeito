@@ -81,6 +81,32 @@ defmodule Xeito.Run do
     end)
   end
 
+  @doc """
+  Totals of the decisions a run made: count, latency, tokens, USD and estimated joules, summed
+  from its `decision_made` events.
+  """
+  @spec cost(Log.server(), run_id()) :: map()
+  def cost(log, run_id) do
+    [[n, ms, tin, tout, usd, joules]] =
+      Log.query(
+        log,
+        "SELECT COUNT(*), COALESCE(SUM(d.latency_ms), 0), COALESCE(SUM(d.tokens_in), 0), " <>
+          "COALESCE(SUM(d.tokens_out), 0), COALESCE(SUM(d.usd), 0), COALESCE(SUM(d.joules_est), 0) " <>
+          "FROM event_decision_made d JOIN event_object eo ON eo.ocel_event_id = d.ocel_id " <>
+          "WHERE eo.ocel_object_id = ?1 AND eo.ocel_qualifier = 'within'",
+        [run_id]
+      )
+
+    %{
+      decisions: n,
+      latency_ms: ms,
+      tokens_in: tin,
+      tokens_out: tout,
+      usd: usd,
+      joules_est: joules
+    }
+  end
+
   defp via(run_id), do: {:via, Registry, {Xeito.RunRegistry, run_id}}
 
   # --- gen_statem --------------------------------------------------------------------------
@@ -245,7 +271,11 @@ defmodule Xeito.Run do
     if Machine.final?(machine, leaf) do
       finish(leaf, data, from)
     else
-      Enum.each(effects, &Effects.dispatch(data.runner, &1, self()))
+      Enum.each(
+        effects,
+        &Effects.dispatch(data.runner, &1, self(), log: data.log, run_id: data.run_id)
+      )
+
       data = %{data | effects: Map.merge(data.effects, Map.new(effects, &{&1.id, &1}))}
       {ms, timeout_event} = Machine.timeout(machine, leaf)
       actions = [{:state_timeout, ms, timeout_event} | reply(from, {:ok, leaf})]
@@ -301,7 +331,11 @@ defmodule Xeito.Run do
           "actor" => d.actor,
           "model" => d.model,
           "latency_ms" => d.latency_ms,
-          "input_hash" => d.input_hash
+          "input_hash" => d.input_hash,
+          "tokens_in" => Map.get(d.cost || %{}, :tokens_in),
+          "tokens_out" => Map.get(d.cost || %{}, :tokens_out),
+          "usd" => Map.get(d.cost || %{}, :usd),
+          "joules_est" => Map.get(d.cost || %{}, :joules_est)
         },
         [{id, "effect", "of"}]
       )

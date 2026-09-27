@@ -3,26 +3,26 @@ defmodule Xeito.Decisions.Intent do
 
   use Xeito.Decision, version: "1"
 
-  instructions("What does the user want the coding assistant to do with this message?")
+  instructions "What does the user want the coding assistant to do with this message?"
 
-  input(:message, max_bytes: 2_000)
+  input :message, max_bytes: 2_000
 
   value(
     :question,
     "a factual question about the code, project or tools, answerable by looking things up"
   )
 
-  value(:edit, "change, add, fix, refactor or delete code or files")
-  value(:run, "execute a command, script, test suite, build or deployment")
-  value(:explain, "explain how or why code, an error or a concept works")
-  value(:plan, "design an approach, break down work or propose steps before changing anything")
-  value(:other, "greeting, thanks, chit-chat or anything unrelated to the project")
+  value :edit, "change, add, fix, refactor or delete code or files"
+  value :run, "execute a command, script, test suite, build or deployment"
+  value :explain, "explain how or why code, an error or a concept works"
+  value :plan, "design an approach, break down work or propose steps before changing anything"
+  value :other, "greeting, thanks, chit-chat or anything unrelated to the project"
 
-  rule(:slash_run?, then: :run)
+  rule :slash_run?, then: :run
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders([:large])
-  min_confidence(0.75)
+  deciders [:large]
+  min_confidence 0.75
 
   @doc false
   def slash_run?(%{message: message}),

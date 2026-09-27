@@ -46,6 +46,16 @@ stateDiagram-v2
 | `human` | ask in the TUI; the run waits | configurable |
 | `verify` | the guard on the decision's output (file exists, command parses, …) | 1 s |
 
+### As implemented (P3)
+
+`Xeito.Machines.Escalation` implements this as a regular machine: one child run per decision, logged in the same OCEL log with a `part_of` relation to the requesting run.
+- **Routing.** The transitions live on the parent `deciding` state. Every tier's result bubbles up to one set of guarded transitions: commit, move to the next tier in the plan, or abstain.
+- **The plan.** Rules first, then the permitted and configured tiers, then optionally a human. It is computed by `Xeito.Policy` before the run starts.
+- **The remote tier** has no calibrated confidence (the API exposes no logprobs). When policy admits it, its result is terminal.
+- **Measured** in [bench 3](../../bench/3-escalation.md).
+
+**Placement awareness (Q16, decided).** In `check_loaded`, if the large model is not resident and an earlier small-tier answer has confidence ≥ `policy.unloaded_accept` (default 0.6), that answer is committed instead of paying for a swap. Measured: 0.55 s and ~36 J instead of 3.6 s and ~200 J. The price is accepting an answer the large model might not have endorsed.
+
 ## Guards on escalation
 
 Escalation is guarded by **policy**, which is data and never a prompt:
@@ -103,6 +113,9 @@ That is exactly what [05](05-event-log-and-process-mining.md) needs to answer:
 - What does each type cost end-to-end? → a per-decision-type **cost-of-certainty** curve.
 
 ## Tuning thresholds from the log
+
+P3 implements the held-out version of this: `Xeito.Decision.Eval.cascade/3` picks the lowest θ that keeps cascade accuracy within ε of large-only. On the P2 seed sets, Qwen-2B then decides 78% (done), 53% (intent) and 37% (triage) of cases without the large model, at unchanged accuracy ([bench 3](../../bench/3-escalation.md)). Writing tuned thresholds back into the types is P7.
+
 
 The thresholds θs and θl are not constants. For each decision type, the tuner reads logged pairs (small's answer and confidence, the eventual committed answer) and picks θ to minimise:
 

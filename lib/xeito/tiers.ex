@@ -2,46 +2,61 @@ defmodule Xeito.Tiers do
   @moduledoc """
   Decider backends (rules, System One, small, large, remote, human) and the escalation machine.
 
-  Every model tier implements `decide/3`: given a decision type, a normalised input and the
-  tier's configuration, it returns the value, a probability for every option, and provenance.
-  Configuration comes from `config :xeito, :tiers` (see `config/runtime.exs`); a tier without
-  a `:url` is unavailable.
+  Every tier implements `decide/3`: given a decision type, a normalised input and the tier's
+  configuration, it returns the value, a probability for every option, provenance and cost.
+  Configuration comes from `config :xeito, :tiers` (see `config/runtime.exs`); a model tier
+  without a `:url` is unavailable.
 
-  | tier          | module                   | backend                                        |
-  |---------------|--------------------------|------------------------------------------------|
-  | `:system_one` | `Xeito.Tiers.SystemOne`  | Jev-compatible `/v1/systemone` (e.g. laya-serve) |
-  | `:small`      | `Xeito.Tiers.Small`      | llama-server, prefilled value + logprob scoring |
-  | `:large`      | `Xeito.Tiers.Large`      | Ollama `/api/chat`, JSON-schema format + logprobs |
+  | tier          | module                   | backend                                                 |
+  |---------------|--------------------------|---------------------------------------------------------|
+  | `:rules`      | `Xeito.Tiers.Rules`      | the type's deterministic rules                          |
+  | `:system_one` | `Xeito.Tiers.SystemOne`  | Jev-compatible `/v1/systemone` (e.g. laya-serve)        |
+  | `:small`      | `Xeito.Tiers.Small`      | llama-server, prefilled value + one-token scoring       |
+  | `:large`      | `Xeito.Tiers.Large`      | Ollama `/api/chat`, JSON-schema format + logprobs       |
+  | `:remote`     | `Xeito.Tiers.Remote`     | Anthropic Messages API, structured output, policy-gated |
 
-  P2 tries tiers in order (`Xeito.Decider`). The escalation machine with policies and budgets
-  arrives in P3. See `docs/architecture/04-delegation.md`.
+  At run time, `Xeito.Machines.Escalation` walks the tiers as a logged state machine under
+  `Xeito.Policy`. `Xeito.Decider` is the same ladder in-process, used by evaluation.
+  See `docs/architecture/04-delegation.md`.
   """
 
   alias Xeito.Decision.{Scoring, Type}
+  alias Xeito.Tiers.Queue
 
   @type result :: %{
-          value: atom(),
-          probabilities: %{atom() => float()},
-          confidence: float(),
-          model: String.t(),
-          latency_ms: non_neg_integer()
+          required(:value) => atom(),
+          required(:probabilities) => %{atom() => float()},
+          required(:confidence) => float() | nil,
+          required(:model) => String.t(),
+          required(:latency_ms) => non_neg_integer(),
+          optional(:cost) => map(),
+          optional(:terminal) => boolean()
         }
 
   @callback decide(Type.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
 
   @modules %{
+    rules: Xeito.Tiers.Rules,
     system_one: Xeito.Tiers.SystemOne,
     small: Xeito.Tiers.Small,
-    large: Xeito.Tiers.Large
+    large: Xeito.Tiers.Large,
+    remote: Xeito.Tiers.Remote
   }
+
+  # Estimated average power while a tier works (joules = watts × seconds). An estimate, not a
+  # measurement; deployment-specific values belong in `config :xeito, :tier_watts`.
+  @default_watts %{rules: 0, system_one: 45, small: 65, large: 300, remote: 0}
 
   @doc "The module implementing a tier."
   @spec module(atom()) :: module()
   def module(tier), do: Map.fetch!(@modules, tier)
 
-  @doc "The configuration of a tier, merged with overrides; `nil` if the tier has no URL."
+  @doc "The configuration of a tier, merged with overrides; `nil` if a model tier has no URL."
   @spec config(atom(), keyword()) :: keyword() | nil
-  def config(tier, overrides \\ []) do
+  def config(tier, overrides \\ [])
+  def config(:rules, overrides), do: overrides
+
+  def config(tier, overrides) do
     cfg =
       :xeito
       |> Application.get_env(:tiers, [])
@@ -51,10 +66,39 @@ defmodule Xeito.Tiers do
     if cfg[:url], do: cfg, else: nil
   end
 
+  @doc """
+  Runs one tier for a decision: resolves its configuration, waits for a capacity slot
+  (`Xeito.Tiers.Queue`), calls the backend, and completes the cost with an energy estimate.
+  """
+  @spec run(atom(), Type.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
+  def run(tier, type, input, overrides \\ []) do
+    case config(tier, overrides) do
+      nil ->
+        {:error, :tier_unavailable}
+
+      cfg ->
+        tier
+        |> Queue.run(fn -> module(tier).decide(type, input, cfg) end)
+        |> add_energy(tier)
+    end
+  end
+
+  defp add_energy({:ok, result}, tier) do
+    watts =
+      :xeito
+      |> Application.get_env(:tier_watts, %{})
+      |> Map.get(tier, Map.fetch!(@default_watts, tier))
+
+    joules = Float.round(watts * result.latency_ms / 1000, 3)
+    {:ok, Map.update(result, :cost, %{joules_est: joules}, &Map.put(&1, :joules_est, joules))}
+  end
+
+  defp add_energy(error, _tier), do: error
+
   @doc "Builds a tier result from string-keyed option probabilities."
-  @spec result(Type.t(), %{String.t() => float()}, String.t(), integer()) ::
+  @spec result(Type.t(), %{String.t() => float()}, String.t(), integer(), map()) ::
           {:ok, result()} | {:error, term()}
-  def result(type, string_probs, model, started_at) do
+  def result(type, string_probs, model, started_at, cost \\ %{}) do
     probs =
       for {k, p} <- string_probs, {:ok, atom} <- [Type.cast(type, k)], into: %{}, do: {atom, p}
 
@@ -69,7 +113,8 @@ defmodule Xeito.Tiers do
            probabilities: probs,
            confidence: confidence,
            model: model,
-           latency_ms: System.monotonic_time(:millisecond) - started_at
+           latency_ms: System.monotonic_time(:millisecond) - started_at,
+           cost: cost
          }}
     end
   end

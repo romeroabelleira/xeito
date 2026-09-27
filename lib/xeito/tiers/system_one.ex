@@ -24,7 +24,8 @@ defmodule Xeito.Tiers.SystemOne do
       {:ok, %{status: 200, body: %{"answers" => %{^name => answer}} = resp}} ->
         probs = Map.get(answer, "probabilities") || %{answer["choice"] => 1.0}
         routed = get_in(resp, ["routing", "model"]) || model
-        Tiers.result(type, probs, "laya-" <> routed, started)
+        cost = %{tokens_in: get_in(resp, ["usage", "input_tokens"]) || 0, tokens_out: 0}
+        Tiers.result(type, probs, "laya-" <> routed, started, cost)
 
       {:ok, %{status: status, body: body}} ->
         {:error, {:http, status, body}}

@@ -48,7 +48,7 @@ defmodule Xeito.Decider do
           }
 
         :none ->
-          type |> try_tiers(normalized, opts) |> to_decision(base) |> apply_floor(type)
+          finalize(type, base, try_tiers(type, normalized, opts))
       end
 
     %{decision | latency_ms: System.monotonic_time(:millisecond) - started}
@@ -74,10 +74,7 @@ defmodule Xeito.Decider do
   @doc "Runs one tier directly (for evaluation). Returns the tier result or an error."
   @spec run_tier(Type.t(), atom(), map(), keyword()) :: {:ok, Tiers.result()} | {:error, term()}
   def run_tier(type, tier, normalized, overrides \\ []) do
-    case Tiers.config(tier, overrides) do
-      nil -> {:error, :tier_unavailable}
-      cfg -> Tiers.module(tier).decide(type, normalized, cfg)
-    end
+    Tiers.run(tier, type, normalized, overrides)
   end
 
   defp try_tiers(type, normalized, opts) do
@@ -91,10 +88,48 @@ defmodule Xeito.Decider do
           {:error, reason} -> %{tier: tier, error: reason}
         end
 
-      if Map.get(attempt, :confidence, 0) >= Type.threshold(type, tier),
+      if accept?(type, attempt),
         do: {:halt, [{:decided, attempt} | attempts]},
         else: {:cont, [attempt | attempts]}
     end)
+  end
+
+  @doc """
+  Whether a tier attempt decides: a value whose confidence reaches the tier's threshold, or a
+  terminal result (a tier without calibrated confidence that policy has already admitted).
+  """
+  @spec accept?(Type.t(), map()) :: boolean()
+  def accept?(type, %{tier: tier} = attempt) do
+    case attempt do
+      %{error: _} -> false
+      %{terminal: true, value: _} -> true
+      %{confidence: c} when is_number(c) -> c >= Type.threshold(type, tier)
+      _ -> false
+    end
+  end
+
+  @doc """
+  Builds the decision from the attempts (most recent first; a `{:decided, attempt}` head marks
+  the winner), sums their costs, and applies the type's severity floor.
+  """
+  @spec finalize(Type.t(), Decision.t(), list()) :: Decision.t()
+  def finalize(type, base, attempts) do
+    all =
+      Enum.map(attempts, fn
+        {:decided, a} -> a
+        a -> a
+      end)
+
+    attempts
+    |> to_decision(base)
+    |> Map.put(:cost, total_cost(all))
+    |> apply_floor(type)
+  end
+
+  defp total_cost(attempts) do
+    attempts
+    |> Enum.map(&Map.get(&1, :cost, %{}))
+    |> Enum.reduce(%{}, fn cost, acc -> Map.merge(acc, cost, fn _k, a, b -> a + b end) end)
   end
 
   defp to_decision([{:decided, winner} | rest], base) do
@@ -103,9 +138,9 @@ defmodule Xeito.Decider do
       | value: winner.value,
         confidence: winner.confidence,
         probabilities: winner.probabilities,
-        actor: winner.tier,
+        actor: actor(winner.tier),
         model: winner.model,
-        evidence: Enum.reverse(rest) |> Enum.map(&evidence/1)
+        evidence: rest |> Enum.reverse() |> Enum.map(&evidence/1)
     }
   end
 
@@ -117,6 +152,10 @@ defmodule Xeito.Decider do
         evidence: attempts |> Enum.reverse() |> Enum.map(&evidence/1)
     }
   end
+
+  # Tiers are named after their backend; the decision's actor names who decided.
+  defp actor(:rules), do: :rule
+  defp actor(tier), do: tier
 
   defp evidence(%{error: _} = attempt), do: attempt
   defp evidence(attempt), do: Map.take(attempt, [:tier, :value, :confidence, :model, :latency_ms])

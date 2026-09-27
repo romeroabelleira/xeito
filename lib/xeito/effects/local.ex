@@ -6,13 +6,19 @@ defmodule Xeito.Effects.Local do
       truncated to `opts[:max_output]` bytes (default 64 KiB). On timeout the result is
       `exit_status: 124`.
     * `read` / `write` resolve paths relative to the workspace and refuse anything outside it.
-    * `decide` runs `Xeito.Decider.decide/3` (rules, then the model tiers). `opts[:decider]`
-      passes decider options, and `opts[:decide]` (`fun(effect) -> value`) overrides it (tests).
+    * `decide` runs the decision as an escalation machine (`Xeito.Escalation`), a child run in
+      the same log, when the runner was dispatched by a run (`opts[:log]`). Without a log it
+      falls back to the in-process `Xeito.Decider`. `opts[:decider]` passes options (deciders,
+      policy, tier overrides), and `opts[:decide]` (`fun(effect) -> value`) overrides both (tests).
+    * `tier`, `probe` and `swap` are the escalation machine's own effects: one tier call through
+      its capacity queue, a residency check, and a model load. Remote spend and swaps are
+      charged to the parent run's `Xeito.Budget`.
   """
 
   @behaviour Xeito.Effects.Runner
 
-  alias Xeito.Effect
+  alias Xeito.{Budget, Decider, Decision, Effect, Escalation, Policy, Tiers}
+  alias Xeito.Tiers.Ollama
 
   @max_output 65_536
 
@@ -49,15 +55,81 @@ defmodule Xeito.Effects.Local do
   end
 
   def run(%Effect{kind: :decide, args: args} = effect, opts) do
-    case opts[:decide] do
-      nil ->
-        decision =
-          Xeito.Decider.decide(args.decision, args.input, Keyword.get(opts, :decider, []))
+    decider = Keyword.get(opts, :decider, [])
 
-        %{value: decision.value, decision: Xeito.Decision.to_map(decision)}
-
-      fun ->
+    cond do
+      fun = opts[:decide] ->
         %{value: fun.(effect)}
+
+      log = opts[:log] ->
+        escalation =
+          [log: log, parent: opts[:run_id], effect_id: effect.id] ++
+            Keyword.take(decider, [:deciders, :policy, :tiers, :available?])
+
+        decision = Escalation.decide(args.decision, args.input, escalation)
+        %{value: decision.value, decision: Decision.to_map(decision)}
+
+      true ->
+        decision = Decider.decide(args.decision, args.input, decider)
+        %{value: decision.value, decision: Decision.to_map(decision)}
+    end
+  end
+
+  def run(%Effect{kind: :tier, args: %{tier: tier} = args}, opts) do
+    type = Decision.type!(args.decision)
+
+    case Tiers.run(tier, type, args.input, get_in(opts, [:tiers, tier]) || []) do
+      {:ok, result} ->
+        charge(opts[:parent_run] || parent_of(opts[:run_id]), result)
+        Map.put(result, :tier, tier)
+
+      {:error, reason} ->
+        %{tier: tier, error: reason}
+    end
+  end
+
+  def run(%Effect{kind: :probe, args: %{tier: tier} = args}, opts) do
+    case Tiers.config(tier, get_in(opts, [:tiers, tier]) || []) do
+      nil ->
+        %{loaded: false, swap_allowed: false, error: :tier_unavailable}
+
+      cfg ->
+        case Ollama.loaded?(cfg) do
+          {:ok, loaded} ->
+            %{loaded: loaded, swap_allowed: Policy.swap_allowed?(args.policy, args.parent)}
+
+          {:error, reason} ->
+            %{loaded: false, swap_allowed: false, error: reason}
+        end
+    end
+  end
+
+  def run(%Effect{kind: :swap, args: %{tier: tier} = args}, opts) do
+    with cfg when cfg != nil <- Tiers.config(tier, get_in(opts, [:tiers, tier]) || []),
+         {:ok, ms} <- Ollama.load(cfg) do
+      if args.parent, do: Budget.add(args.parent, :swaps, 1)
+      %{ok: true, ms: ms}
+    else
+      nil -> %{ok: false, error: :tier_unavailable}
+      {:error, reason} -> %{ok: false, error: reason}
+    end
+  end
+
+  # Remote spend counts against the run that asked for the decision.
+  defp charge(nil, _result), do: :ok
+
+  defp charge(parent, %{cost: %{usd: usd}}) when is_number(usd) and usd > 0,
+    do: Budget.add(parent, :usd, usd)
+
+  defp charge(_parent, _result), do: :ok
+
+  # Escalation runs are named "<parent effect>/esc"; the parent run is the prefix before "/e".
+  defp parent_of(nil), do: nil
+
+  defp parent_of(run_id) do
+    case String.split(run_id, "/e", parts: 2) do
+      [parent, _] -> parent
+      _ -> nil
     end
   end
 

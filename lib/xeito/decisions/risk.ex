@@ -13,9 +13,9 @@ defmodule Xeito.Decisions.Risk do
     "Is this shell command safe to run automatically inside a software project's workspace?"
   )
 
-  input(:command, max_bytes: 1_000)
+  input :command, max_bytes: 1_000
 
-  value(:safe, "read-only or routine development command with no destructive or external effect")
+  value :safe, "read-only or routine development command with no destructive or external effect"
 
   value(
     :review,
@@ -27,13 +27,14 @@ defmodule Xeito.Decisions.Risk do
     "destroys data or systems, exfiltrates secrets, pipes remote code into a shell, or disables safety"
   )
 
-  rule(:classify)
+  rule :classify
 
-  severity([:safe, :review, :forbidden], floor: :review)
+  severity [:safe, :review, :forbidden], floor: :review
+  policy remote: :forbidden
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders([:large])
-  min_confidence(0.7)
+  deciders [:large]
+  min_confidence 0.7
 
   # Regexes cannot live in module attributes on OTP 28+, so they are built in a function.
   defp forbidden_patterns do

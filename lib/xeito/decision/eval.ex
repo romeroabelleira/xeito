@@ -238,6 +238,59 @@ defmodule Xeito.Decision.Eval do
     end
   end
 
+  @doc """
+  Selective-prediction cascade: answer with the small tier when its confidence ≥ θ, otherwise
+  ask the large tier (`docs/architecture/04-delegation.md#tuning-thresholds-from-the-log`).
+
+  θ is chosen as the lowest threshold whose cascade accuracy stays within `epsilon` of
+  large-only accuracy, i.e. the one that sends the most decisions to the small tier. It is fitted
+  on one half of the examples and measured on the other (2-fold), so the reported accuracy and
+  small-tier share are held out. `small` and `large` are `run/4` results over the same examples.
+  """
+  @spec cascade([map()], [map()], float()) :: map()
+  def cascade(small, large, epsilon \\ 0.01) do
+    pairs = Enum.zip(small, large)
+    {a, b} = pairs |> Enum.with_index() |> Enum.split_with(fn {_, i} -> rem(i, 2) == 0 end)
+    {a, b} = {Enum.map(a, &elem(&1, 0)), Enum.map(b, &elem(&1, 0))}
+
+    folds = [{fit_threshold(a, epsilon), b}, {fit_threshold(b, epsilon), a}]
+    held_out = Enum.map(folds, fn {theta, test} -> cascade_at(test, theta) end)
+    n = length(pairs)
+
+    %{
+      epsilon: epsilon,
+      thresholds: Enum.map(folds, &elem(&1, 0)),
+      threshold_all: fit_threshold(pairs, epsilon),
+      accuracy: held_out |> Enum.map(& &1.correct) |> Enum.sum() |> ratio(n),
+      small_share: held_out |> Enum.map(& &1.small) |> Enum.sum() |> ratio(n),
+      large_accuracy: pairs |> Enum.count(fn {_, l} -> l.predicted == l.label end) |> ratio(n),
+      small_accuracy: pairs |> Enum.count(fn {s, _} -> s.predicted == s.label end) |> ratio(n)
+    }
+  end
+
+  @thresholds [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99, 0.999, 1.01]
+
+  defp fit_threshold(pairs, epsilon) do
+    large_acc = Enum.count(pairs, fn {_, l} -> l.predicted == l.label end) / max(length(pairs), 1)
+
+    Enum.find(@thresholds, 1.01, fn theta ->
+      %{correct: c} = cascade_at(pairs, theta)
+      c / max(length(pairs), 1) >= large_acc - epsilon
+    end)
+  end
+
+  defp cascade_at(pairs, theta) do
+    Enum.reduce(pairs, %{correct: 0, small: 0}, fn {s, l}, acc ->
+      use_small = is_number(s.confidence) and s.confidence >= theta and s.predicted != :abstain
+      prediction = if use_small, do: s, else: l
+
+      %{
+        correct: acc.correct + if(prediction.predicted == prediction.label, do: 1, else: 0),
+        small: acc.small + if(use_small, do: 1, else: 0)
+      }
+    end)
+  end
+
   defp ratio(_a, 0), do: nil
   defp ratio(a, b), do: Float.round(a / b, 4)
 

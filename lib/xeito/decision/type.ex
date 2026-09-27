@@ -11,6 +11,7 @@ defmodule Xeito.Decision.Type do
     :version,
     :instructions,
     :severity,
+    policy: [],
     values: [],
     inputs: [],
     rules: [],
@@ -35,7 +36,8 @@ defmodule Xeito.Decision.Type do
           rules: [rule_spec()],
           deciders: [atom()],
           min_confidence: float() | %{atom() => float()},
-          severity: %{order: [atom()], floor: atom()} | nil
+          severity: %{order: [atom()], floor: atom()} | nil,
+          policy: keyword()
         }
 
   @doc "The value atoms, in declaration order (without the implicit `:abstain`)."

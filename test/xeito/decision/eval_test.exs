@@ -56,4 +56,21 @@ defmodule Xeito.Decision.EvalTest do
       assert length(examples) >= 40, "#{inspect(type)} has #{length(examples)} examples"
     end
   end
+
+  test "the cascade picks the lowest threshold that keeps accuracy within epsilon, held out" do
+    # Small is right when confident (>= 0.9) and wrong otherwise; large is always right.
+    small =
+      for i <- 1..40 do
+        # Confident and unconfident answers alternate in pairs, so both folds see both kinds.
+        conf = if rem(div(i, 2), 2) == 0, do: 0.95, else: 0.6
+        r(:a, if(conf >= 0.9, do: :a, else: :b), conf)
+      end
+
+    large = for _ <- 1..40, do: r(:a, :a, 0.99)
+    c = Eval.cascade(small, large, 0.0)
+
+    assert c.accuracy == 1.0
+    assert c.small_share == 0.5
+    assert Enum.all?(c.thresholds, &(&1 > 0.6 and &1 <= 0.95))
+  end
 end

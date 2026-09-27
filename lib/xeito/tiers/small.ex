@@ -26,7 +26,9 @@ defmodule Xeito.Tiers.Small do
 
     with {:ok, prompt} <- template(type, input, cfg),
          {:ok, probs} <- score(prompt <> @prefill, options(type), cfg, 0) do
-      Tiers.result(type, probs, Keyword.get(cfg, :model, "small"), started)
+      # One forward pass over the prompt; no generated tokens are kept (~4 bytes per token).
+      cost = %{tokens_in: div(byte_size(prompt), 4), tokens_out: 0}
+      Tiers.result(type, probs, Keyword.get(cfg, :model, "small"), started, cost)
     end
   end
 

@@ -24,5 +24,17 @@ if config_env() != :test do
     large: [
       url: System.get_env("XEITO_OLLAMA_URL"),
       model: System.get_env("XEITO_LARGE_MODEL", "qwen3.6:27b")
-    ]
+    ],
+    # Remote tier (Anthropic Messages API). Unavailable unless an API key file is configured,
+    # and even then only used where Xeito.Policy allows it (remote: :allowed, locality: :public).
+    remote:
+      (if System.get_env("XEITO_ANTHROPIC_KEY_FILE") do
+         [
+           url: System.get_env("XEITO_ANTHROPIC_URL", "https://api.anthropic.com"),
+           api_key: key.("XEITO_ANTHROPIC_KEY_FILE"),
+           model: System.get_env("XEITO_REMOTE_MODEL", "claude-opus-5")
+         ]
+       else
+         []
+       end)
 end

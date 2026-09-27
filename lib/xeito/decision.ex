@@ -42,6 +42,7 @@ defmodule Xeito.Decision do
     :model,
     :input_hash,
     :latency_ms,
+    cost: %{},
     probabilities: %{},
     evidence: []
   ]
@@ -56,6 +57,7 @@ defmodule Xeito.Decision do
           model: String.t() | nil,
           input_hash: String.t() | nil,
           latency_ms: non_neg_integer() | nil,
+          cost: map(),
           probabilities: %{atom() => float()},
           evidence: [map()]
         }
@@ -72,7 +74,8 @@ defmodule Xeito.Decision do
           rule: 2,
           deciders: 1,
           min_confidence: 1,
-          severity: 2
+          severity: 2,
+          policy: 1
         ]
 
       @xeito_decision_opts unquote(opts)
@@ -83,6 +86,7 @@ defmodule Xeito.Decision do
       @xeito_decision_deciders [:system_one, :small]
       @xeito_decision_min_confidence 0.8
       @xeito_decision_severity nil
+      @xeito_decision_policy []
       @before_compile Xeito.Decision.DSL
     end
   end

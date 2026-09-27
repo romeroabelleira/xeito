@@ -3,27 +3,27 @@ defmodule Xeito.Decisions.Triage do
 
   use Xeito.Decision, version: "1"
 
-  instructions("Why is this test failing?")
+  instructions "Why is this test failing?"
 
-  input(:test, max_bytes: 300)
-  input(:output, max_bytes: 3_000, keep: :tail)
-  input(:diff_stat, max_bytes: 500, required: false)
+  input :test, max_bytes: 300
+  input :output, max_bytes: 3_000, keep: :tail
+  input :diff_stat, max_bytes: 500, required: false
 
-  value(:flaky, "timing, randomness or ordering: an intermittent failure with no code cause")
-  value(:code_bug, "the code under test computes a wrong result or crashes")
-  value(:test_bug, "the test's own expectation, setup or fixture is wrong")
+  value :flaky, "timing, randomness or ordering: an intermittent failure with no code cause"
+  value :code_bug, "the code under test computes a wrong result or crashes"
+  value :test_bug, "the test's own expectation, setup or fixture is wrong"
 
   value(
     :env_problem,
     "missing dependency, service, file, permission or configuration in the environment"
   )
 
-  rule(:missing_environment?, then: :env_problem)
-  rule(:timeout_only?, then: :flaky)
+  rule :missing_environment?, then: :env_problem
+  rule :timeout_only?, then: :flaky
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders([:large])
-  min_confidence(0.8)
+  deciders [:large]
+  min_confidence 0.8
 
   defp env_pattern,
     do:

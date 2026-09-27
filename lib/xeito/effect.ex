@@ -9,6 +9,9 @@ defmodule Xeito.Effect do
   | `:read`   | `:read`               | `%{ok: true, content: binary}` or `%{ok: false, error: term}` |
   | `:write`  | `:written`            | `%{ok: true}` or `%{ok: false, error: term}` |
   | `:decide` | `{:decided, value}`   | `%{value: term}`                         |
+  | `:tier`   | `:tier_done`          | a tier result, or `%{tier: t, error: reason}` (escalation) |
+  | `:probe`  | `:probed`             | `%{loaded: boolean, swap_allowed: boolean}` (escalation) |
+  | `:swap`   | `:swapped`            | `%{ok: boolean, ms: integer}` (escalation) |
 
   Effects are plain data, so they can be logged, replayed from the log, and policy-checked
   at one choke point.
@@ -17,7 +20,7 @@ defmodule Xeito.Effect do
   @enforce_keys [:kind, :args, :reply]
   defstruct [:id, :kind, :args, :reply]
 
-  @type kind :: :bash | :read | :write | :decide
+  @type kind :: :bash | :read | :write | :decide | :tier | :probe | :swap
   @type t :: %__MODULE__{id: String.t() | nil, kind: kind(), args: map(), reply: term()}
 
   @doc "Run a shell command. Options: `:cwd`, `:timeout` (ms, default 60 000), `:reply`."
@@ -55,6 +58,22 @@ defmodule Xeito.Effect do
   def decide(type, input \\ %{}) do
     %__MODULE__{kind: :decide, args: %{decision: type, input: input}, reply: :decided}
   end
+
+  @doc "Run one decider tier for a decision (used by `Xeito.Machines.Escalation`)."
+  @spec tier(atom(), module(), map()) :: t()
+  def tier(tier, type, input) do
+    %__MODULE__{kind: :tier, args: %{tier: tier, decision: type, input: input}, reply: :tier_done}
+  end
+
+  @doc "Ask whether a tier's model is resident (large tier)."
+  @spec probe(atom(), map()) :: t()
+  def probe(tier, args),
+    do: %__MODULE__{kind: :probe, args: Map.put(args, :tier, tier), reply: :probed}
+
+  @doc "Load a tier's model (large tier): a swap."
+  @spec swap(atom(), map()) :: t()
+  def swap(tier, args),
+    do: %__MODULE__{kind: :swap, args: Map.put(args, :tier, tier), reply: :swapped}
 
   @doc "Turns a runner result into the `{event_name, event_data}` delivered to the run."
   @spec to_event(t(), term()) :: {term(), term()}

@@ -54,9 +54,9 @@ defmodule Xeito.TestMachines.AmbiguousType do
   @moduledoc "A decision type whose values share first tokens (scoring tests)."
   use Xeito.Decision, version: "1", name: "ambiguous"
 
-  instructions("Ambiguous prefixes")
-  input(:output)
-  value(:test_bug, "a")
-  value(:test_flaky, "b")
-  value(:env_problem, "c")
+  instructions "Ambiguous prefixes"
+  input :output
+  value :test_bug, "a"
+  value :test_flaky, "b"
+  value :env_problem, "c"
 end

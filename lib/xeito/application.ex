@@ -8,7 +8,9 @@ defmodule Xeito.Application do
     children =
       [
         {Registry, keys: :unique, name: Xeito.RunRegistry},
-        {Task.Supervisor, name: Xeito.EffectTasks}
+        {Task.Supervisor, name: Xeito.EffectTasks},
+        Xeito.Budget,
+        Xeito.Tiers.Queue
       ] ++ log_children() ++ [Xeito.RunSupervisor]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Xeito.Supervisor)

@@ -3,7 +3,7 @@ defmodule Xeito.TiersTest do
 
   alias Xeito.{Decider, Decision}
   alias Xeito.Decisions.Triage
-  alias Xeito.Tiers.{Large, Small, SystemOne}
+  alias Xeito.Tiers.{Large, Remote, Small, SystemOne}
 
   @input %{test: "CheckoutTest", output: "left: 107.0 right: 108.0", diff_stat: "lib/pricing.ex"}
 
@@ -118,6 +118,52 @@ defmodule Xeito.TiersTest do
 
     assert_in_delta c, 0.9 / 0.98, 1.0e-9
     assert_in_delta probs[:test_bug], 0.08 / 0.98, 1.0e-9
+  end
+
+  test "Remote sends structured output with refusal fallback and prices usage" do
+    Req.Test.stub(:anthropic, fn conn ->
+      {req, conn} = body(conn)
+      assert conn.request_path == "/v1/messages"
+      assert Plug.Conn.get_req_header(conn, "x-api-key") == ["k"]
+      assert Plug.Conn.get_req_header(conn, "anthropic-version") == ["2023-06-01"]
+
+      assert Plug.Conn.get_req_header(conn, "anthropic-beta") == [
+               "server-side-fallback-2026-07-01"
+             ]
+
+      assert req["model"] == "claude-opus-5"
+      assert req["fallbacks"] == "default"
+      assert req["output_config"]["effort"] == "low"
+      assert req["output_config"]["format"]["type"] == "json_schema"
+
+      assert req["output_config"]["format"]["schema"]["properties"]["value"]["enum"] |> length() ==
+               4
+
+      Req.Test.json(conn, %{
+        "model" => "claude-opus-5",
+        "stop_reason" => "end_turn",
+        "content" => [%{"type" => "text", "text" => ~s({"value": "code_bug"})}],
+        "usage" => %{"input_tokens" => 1_000, "output_tokens" => 100}
+      })
+    end)
+
+    assert {:ok, %{value: :code_bug, confidence: nil, terminal: true, cost: cost}} =
+             Remote.decide(type(), @input, cfg(:anthropic))
+
+    assert cost == %{tokens_in: 1_000, tokens_out: 100, usd: 0.0075}
+  end
+
+  test "Remote treats a refusal as an error, not a value" do
+    Req.Test.stub(:anthropic_refusal, fn conn ->
+      Req.Test.json(conn, %{
+        "stop_reason" => "refusal",
+        "stop_details" => %{"category" => "cyber"},
+        "content" => []
+      })
+    end)
+
+    assert {:error, {:refusal, %{"category" => "cyber"}}} =
+             Remote.decide(type(), @input, cfg(:anthropic_refusal))
   end
 
   describe "Decider" do

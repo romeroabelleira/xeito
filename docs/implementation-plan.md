@@ -96,6 +96,13 @@ gantt
 4. Implement cost accounting per decision and per run: tokens, currency, wall-clock and estimated energy.
 5. Batching: queue large-tier decisions per model so that swaps are avoided. Batch System One questions per state into one request, and give each backend a queue with its measured capacity ([bench 1](../bench/1-contention.md)).
 
+**Status (2026-09-27):** done. See [bench 3](../bench/3-escalation.md).
+- The escalation machine runs as a logged child run, with swaps as states.
+- Policy: remote off by default, local-only data never leaves the box, and Risk can never go remote (tested). Per-run budgets for spend and swaps; per-backend queues.
+- Remote tier (stub-tested; no credentials on the reference box).
+- Cost and estimated energy per decision and per run. Held-out threshold tuning.
+- Exit measured: Qwen-2B takes 78% / 53% / 37% of done / intent / triage decisions at unchanged accuracy. `done` meets the <30% large-share target; intent and triage don't yet.
+
 **Exit:** on the eval sets, the cascade (rules → small → large) matches or beats large-only accuracy while calling `large` for fewer than 30% of decisions (target to be confirmed in P2). The remote tier is provably never called for `Risk` (test). The swap state appears in the logs.
 
 ## P4 · TUI harness at pi parity (≈5 weeks)

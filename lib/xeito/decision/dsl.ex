@@ -39,6 +39,9 @@ defmodule Xeito.Decision.DSL do
     end
   end
 
+  @doc "Type-level escalation policy, e.g. `policy remote: :forbidden` (see `Xeito.Policy`)."
+  defmacro policy(opts), do: put(:xeito_decision_policy, opts)
+
   @doc "The model tiers to try, in order, when no rule fires."
   defmacro deciders(list), do: put(:xeito_decision_deciders, list)
 
@@ -78,7 +81,8 @@ defmodule Xeito.Decision.DSL do
       rules: get.(:xeito_decision_rules),
       deciders: get.(:xeito_decision_deciders),
       min_confidence: get.(:xeito_decision_min_confidence),
-      severity: get.(:xeito_decision_severity)
+      severity: get.(:xeito_decision_severity),
+      policy: get.(:xeito_decision_policy)
     }
 
     case validate(type, &Module.defines?(module, &1, :def)) do

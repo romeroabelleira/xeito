@@ -21,11 +21,18 @@ defmodule Xeito.Effects do
 
   @type runner_spec :: {module(), keyword()} | :none
 
-  @doc "Executes `effect` asynchronously and sends `{:xeito_effect, id, result}` to `reply_to`."
-  @spec dispatch(runner_spec(), Effect.t(), pid()) :: :ok
-  def dispatch(:none, _effect, _reply_to), do: :ok
+  @doc """
+  Executes `effect` asynchronously and sends `{:xeito_effect, id, result}` to `reply_to`.
+  `context` (the requesting run's `:log` and `:run_id`) is added to the runner options unless
+  the runner spec sets them itself.
+  """
+  @spec dispatch(runner_spec(), Effect.t(), pid(), keyword()) :: :ok
+  def dispatch(runner, effect, reply_to, context \\ [])
+  def dispatch(:none, _effect, _reply_to, _context), do: :ok
 
-  def dispatch({runner, opts}, %Effect{} = effect, reply_to) do
+  def dispatch({runner, opts}, %Effect{} = effect, reply_to, context) do
+    opts = Keyword.merge(context, opts)
+
     {:ok, _pid} =
       Task.Supervisor.start_child(Xeito.EffectTasks, fn ->
         send(reply_to, {:xeito_effect, effect.id, safe_run(runner, effect, opts)})
