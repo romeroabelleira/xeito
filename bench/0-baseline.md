@@ -60,6 +60,6 @@ The ROCm/HIP comparison is **pending**. The prebuilt HIP backend loads, but it f
 
 | Criterion | Status |
 |---|---|
-| `mix test` green in CI | Local `mix ci` + `mix dialyzer` green on the reference workstation. The GitHub Actions run is pending the first push of this commit to GitHub |
+| `mix test` green in CI | ✅ GitHub Actions: format, warnings-as-errors, credo, tests, dialyzer |
 | `curl localhost:8081/completion` returns grammar-constrained JSON from a CPU model | ✅ (via `/v1/chat/completions` with `response_format: json_schema`) |
 | `llama-bench` numbers for each candidate recorded | ✅ CPU for all four candidates, Vulkan for the Qwen models. ROCm pending |
