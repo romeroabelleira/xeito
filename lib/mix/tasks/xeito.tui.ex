@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Xeito.Tui do
   @moduledoc """
   Opens the terminal UI (`Xeito.Tui`) on a session of the running daemon.
 
-      mix xeito.tui [--cwd DIR] [--socket PATH] [--session ID]
+      mix xeito.tui [--cwd DIR] [--socket PATH] [--session ID] [--no-status-bar]
 
   Needs a running daemon (`mix xeito.daemon`) and a real terminal. The TUI is a thin client:
   closing it leaves the session and its runs in the daemon, and `--session ID` reattaches.
@@ -15,7 +15,9 @@ defmodule Mix.Tasks.Xeito.Tui do
   @impl true
   def run(args) do
     {opts, _, _} =
-      OptionParser.parse(args, strict: [cwd: :string, socket: :string, session: :string])
+      OptionParser.parse(args,
+        strict: [cwd: :string, socket: :string, session: :string, status_bar: :boolean]
+      )
 
     socket = opts[:socket] || Xeito.Api.default_socket()
 
@@ -25,7 +27,8 @@ defmodule Mix.Tasks.Xeito.Tui do
     Application.put_env(:xeito, :tui,
       socket: socket,
       cwd: Path.expand(opts[:cwd] || "."),
-      session: opts[:session]
+      session: opts[:session],
+      status_bar: Keyword.get(opts, :status_bar, true)
     )
 
     {:ok, _} = Application.ensure_all_started(:term_ui)

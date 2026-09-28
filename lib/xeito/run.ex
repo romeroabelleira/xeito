@@ -320,7 +320,16 @@ defmodule Xeito.Run do
 
         {name, event_data} = Effect.to_event(effect, result)
         prefix = [completed | decision_events(effect, result)]
-        process(leaf, %{data | effects: effects}, name, event_data, actor(result), prefix, nil)
+
+        process(
+          leaf,
+          %{data | effects: effects},
+          name,
+          event_data,
+          actor(effect, result),
+          prefix,
+          nil
+        )
     end
   end
 
@@ -544,8 +553,13 @@ defmodule Xeito.Run do
   defp decision_events(_effect, _result), do: []
 
   # The actor of an event produced by an effect: the decider for decisions, else code.
-  defp actor(%{decision: %{actor: actor}}) when actor not in [nil, :none], do: actor
-  defp actor(_result), do: :code
+  # The actor of an event produced by an effect: the decider for decisions, the chat model's tier
+  # for a chat turn (its output chooses the next transition), else code. This is what the
+  # determinism budget counts (docs/architecture/01-principles.md#2-the-determinism-budget).
+  defp actor(_effect, %{decision: %{actor: actor}}) when actor not in [nil, :none], do: actor
+  defp actor(%Effect{kind: :chat}, %{error: _}), do: :code
+  defp actor(%Effect{kind: :chat}, _result), do: :large
+  defp actor(_effect, _result), do: :code
 
   defp entered_event(state),
     do: Event.new("state_entered", {:state_entered, state}, %{"state" => state})

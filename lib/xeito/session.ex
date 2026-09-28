@@ -198,7 +198,7 @@ defmodule Xeito.Session do
     cond do
       String.match?(
         trimmed,
-        ~r{^/(approve|deny|why|budget|help|step|next|continue|break|decide)\b}
+        ~r{^/(approve|deny|why|budget|help|machines|step|next|continue|break|decide)\b}
       ) ->
         "/" <> command = trimmed
         {:reply, :ok, command(command, s)}
@@ -247,10 +247,16 @@ defmodule Xeito.Session do
   def handle_info({:intent, text, decision}, s) do
     s = %{s | decisions: Enum.take([decision | s.decisions], 10)}
 
+    cost = decision.cost || %{}
+
     emit(s, "intent", nil, %{
       "value" => decision.value,
       "confidence" => decision.confidence,
-      "actor" => decision.actor
+      "actor" => decision.actor,
+      "tokens_in" => cost[:tokens_in],
+      "tokens_out" => cost[:tokens_out],
+      "usd" => cost[:usd],
+      "joules_est" => cost[:joules_est]
     })
 
     {machine, reason} = Router.route(decision.value, text)
@@ -321,6 +327,7 @@ defmodule Xeito.Session do
   defp command(["why" | _], _raw, s), do: why(s)
   defp command(["budget", usd | _], _raw, s), do: budget(usd, s)
   defp command(["help" | _], _raw, s), do: notice(s, help())
+  defp command(["machines" | _], _raw, s), do: notice(s, machines_text(s))
   defp command(["step" | _], _raw, s), do: set_debug(%{s.debug | step: not s.debug.step}, s)
   defp command(["continue" | _], _raw, s), do: set_debug(%{s.debug | step: false}, s)
   defp command(["next" | _], _raw, s), do: step(:next, s)
@@ -636,8 +643,36 @@ defmodule Xeito.Session do
     end
   end
 
+  defp machines_text(s) do
+    rows = Router.describe(s.cwd, s.log)
+
+    header =
+      String.pad_trailing("machine", 18) <>
+        String.pad_trailing("version", 9) <> "runs  done  failed  last run (UTC)"
+
+    lines =
+      for m <- rows do
+        u = m.usage
+
+        last =
+          if u.last,
+            do: u.last |> to_string() |> String.slice(0, 16) |> String.replace("T", " "),
+            else: "-"
+
+        String.pad_trailing(m.name, 18) <>
+          String.pad_trailing(m.version, 9) <>
+          String.pad_trailing("#{u.runs}", 6) <>
+          String.pad_trailing("#{u.done}", 6) <>
+          String.pad_trailing("#{u.failed}", 8) <>
+          last <> "\n    #{m.summary}\n    routed from: #{m.routed_from} · /machine #{m.name}"
+      end
+
+    Enum.join([header | lines], "\n")
+  end
+
   defp help do
     """
+    /machines                 list the machines: what they do, how they are routed, usage
     /machine <name> [prompt]  start a machine directly (#{Enum.join(Map.keys(Router.machines()), ", ")})
     /skill:<name> [request]   run a skill (pi / Agent Skills format)
     /run <command>            run a command once

@@ -4,7 +4,8 @@ defmodule Xeito.Api.Connection do
   use GenServer, restart: :temporary
 
   alias Xeito.Log.Codec
-  alias Xeito.Session
+  alias Xeito.{Monitor, Session}
+  alias Xeito.Session.Router
 
   @max_line 4_194_304
 
@@ -38,6 +39,11 @@ defmodule Xeito.Api.Connection do
 
   def handle_info({:xeito, "session:" <> session, event}, s) do
     send_line(s, %{event: event.type, session: session, run: event.run, attrs: event.attrs})
+    {:noreply, s}
+  end
+
+  def handle_info({:xeito_monitor, snapshot}, s) do
+    send_line(s, %{event: "monitor", attrs: snapshot})
     {:noreply, s}
   end
 
@@ -102,6 +108,20 @@ defmodule Xeito.Api.Connection do
       {:error, reason} ->
         {%{ok: false, error: inspect(reason)}, s}
     end
+  end
+
+  # Status-bar data: the connection receives monitor snapshots while it is subscribed.
+  defp handle("monitor", req, s) do
+    if req["on"] == false,
+      do: Monitor.unsubscribe(self()),
+      else: Monitor.subscribe(self())
+
+    {%{ok: true}, s}
+  end
+
+  defp handle("machines", req, s) do
+    cwd = req["cwd"] || (req["session"] && s.sessions[req["session"]]) || File.cwd!()
+    {%{ok: true, machines: Router.describe(cwd)}, s}
   end
 
   defp handle("sessions", _req, s) do

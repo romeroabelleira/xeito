@@ -11,7 +11,8 @@ defmodule Xeito.Application do
         Xeito.Events,
         {Task.Supervisor, name: Xeito.EffectTasks},
         Xeito.Budget,
-        Xeito.Tiers.Queue
+        Xeito.Tiers.Queue,
+        Xeito.Monitor
       ] ++
         log_children() ++
         [

@@ -14,6 +14,8 @@ defmodule Xeito.Api do
                                      the workspace log)
       {"id": 5, "cmd": "status", "session": "ses-…"}        (also "history")
       {"id": 6, "cmd": "sessions"}
+      {"id": 7, "cmd": "machines", "cwd": "/path"}           (machines, routing, usage in that log)
+      {"id": 8, "cmd": "monitor", "on": true}               (status snapshots every 2 s; "on": false stops)
 
   Events of attached sessions arrive unsolicited:
 

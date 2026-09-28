@@ -17,17 +17,76 @@ defmodule Xeito.Session.Router do
 
   alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
 
-  @machines %{
-    "chat" => Chat,
-    "run_tests" => RunTests,
-    "fix_failing_test" => FixFailingTest,
-    "commit" => Commit,
-    "check" => Check
-  }
+  # The registry: name, module, what it does, and how requests reach it (besides /machine).
+  @registry [
+    {"fix_failing_test", FixFailingTest,
+     "reproduce a failing test, triage it, delegate the fix to chat, verify",
+     "intent edit + a failing, red or broken test"},
+    {"check", Check, "run the project checks; delegate failures to chat until they pass",
+     "intent run/edit + lint, format, warnings, CI or checks"},
+    {"commit", Commit, "draft a commit message, ask for approval, commit",
+     "intent run/edit + commit"},
+    {"run_tests", RunTests, "run the test command once", "intent run + tests"},
+    {"chat", Chat, "free chat: read/write/edit/bash as effects, bash behind Risk",
+     "anything else"}
+  ]
 
   @doc "Registered machines by name."
   @spec machines() :: %{String.t() => module()}
-  def machines, do: @machines
+  def machines, do: Map.new(@registry, fn {name, module, _, _} -> {name, module} end)
+
+  @doc """
+  The registered machines with their version, summary, routing and states, plus their usage in
+  the workspace log (runs by final status and the last run), when that log exists. Delegated
+  runs count for the machine that ran (a chat run inside `check` counts as `chat`).
+  """
+  @spec describe(Path.t(), Xeito.Log.server() | nil) :: [map()]
+  def describe(cwd, log \\ nil) do
+    usage = usage(log || existing_log(cwd))
+
+    for {name, module, summary, routed} <- @registry do
+      machine = Xeito.Machine.fetch!(module)
+
+      %{
+        name: name,
+        version: machine.version,
+        summary: summary,
+        routed_from: routed,
+        states: machine.states |> Map.values() |> Enum.count(&(not &1.final)),
+        usage: Map.get(usage, name, %{runs: 0, done: 0, failed: 0, last: nil})
+      }
+    end
+  end
+
+  defp existing_log(cwd) do
+    if File.exists?(Path.join([cwd, ".xeito", "log.sqlite"])),
+      do: Xeito.Log.for_workspace(cwd),
+      else: nil
+  end
+
+  defp usage(nil), do: %{}
+
+  defp usage(log) do
+    sql = """
+    SELECT r.machine, COUNT(*),
+      SUM(CASE WHEN st.status = 'done' THEN 1 ELSE 0 END),
+      SUM(CASE WHEN st.status = 'failed' THEN 1 ELSE 0 END),
+      MAX(r.ocel_time)
+    FROM object_run r
+    LEFT JOIN (
+      SELECT s.ocel_id, s.status FROM object_run s
+      WHERE s.status IS NOT NULL AND s.ocel_time = (
+        SELECT MAX(s2.ocel_time) FROM object_run s2
+        WHERE s2.ocel_id = s.ocel_id AND s2.status IS NOT NULL)
+    ) st ON st.ocel_id = r.ocel_id
+    WHERE r.machine IS NOT NULL AND r.ocel_id NOT LIKE '%/esc' AND r.ocel_id NOT LIKE '%/intent'
+    GROUP BY r.machine
+    """
+
+    for [name, runs, done, failed, last] <- Xeito.Log.query(log, sql), into: %{} do
+      {name, %{runs: runs, done: done || 0, failed: failed || 0, last: last}}
+    end
+  end
 
   @doc "The machine for an intent value and message: `{module, reason}`."
   @spec route(atom(), String.t()) :: {module(), String.t()}

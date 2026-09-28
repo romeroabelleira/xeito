@@ -107,6 +107,29 @@ The module computes gross prices …
 
 Each `◆` line is a **typed decision**. It shows its value, the tier that decided and its confidence. Everything the model does goes through a small set of tools (`read`, `write`, `edit`, `bash`), and each tool call is a logged effect.
 
+### The status bar
+
+Above the status line, the TUI shows two more lines. Toggle them with **Ctrl-T** or `/statusbar`, or start without them using `--no-status-bar`:
+
+```
+ GPU 20.8/24.0 GiB 94% 289 W 73°C │ large qwen3.6:27b unload 4:58 │ small ✓ 0/4 │ S1 ✓ │ CPU 39% load 0.34 RAM 15.9/62.0 GiB
+ chat 2 · large 1 · rule 1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ det 50% │ $0.0000 · ~157 J │ queue large 1
+```
+
+| Part | Meaning |
+|---|---|
+| `GPU` | the discrete GPU: VRAM used/total, utilisation, power, hottest temperature (Linux, AMD via sysfs) |
+| `large …` | the model resident in Ollama, and how long until the keep-alive unloads it (`idle (not loaded)` after that) |
+| `small ✓ 0/4` | the CPU `llama-server` is up, with busy/total slots; `S1` is the System One service |
+| `CPU … RAM …` | processor utilisation and load, memory in use |
+| `chat 2 · large 1 · rule 1` | calls in this session: chat turns, and decisions by who made them |
+| `tok`, `ctx` | tokens in → out, and the last chat prompt against the model's context window |
+| `det` | the determinism budget: the share of transitions taken by code or rules rather than a model or a human |
+| `$ · J` | spend on off-box tiers, and estimated energy of local decisions |
+| `queue` | tiers with calls in flight (+ waiting) |
+
+The hardware and model line comes from the daemon, which only polls (every 2 s) while a client shows the bar. Hidden or closed, it costs nothing.
+
 **Quit** with Ctrl-D or Ctrl-C. The session keeps running in the daemon. Reattach with the id printed at the top:
 
 ```bash
@@ -241,6 +264,19 @@ description: List every Python function with a one-line summary. Use when asked 
 - Skills are re-read on every turn, so edits apply immediately.
 - A skill's commands still pass the Risk decision like any other.
 
+### List the machines
+
+```
+> /machines
+machine           version  runs  done  failed  last run (UTC)
+fix_failing_test  0.5.0    3     3     0       2026-09-28 10:12
+    reproduce a failing test, triage it, delegate the fix to chat, verify
+    routed from: intent edit + a failing, red or broken test · /machine fix_failing_test
+…
+```
+
+Every machine is listed with what it does and how requests reach it. The usage counts come from this project's log. Clients can get the same data as JSON with the API's `machines` command.
+
 ### Start a machine directly
 
 ```
@@ -257,6 +293,7 @@ description: List every Python function with a one-line summary. Use when asked 
 |---|---|
 | `/why` | the last decisions of the session: type, value, who decided (rule, small, large, human), confidence, model, latency |
 | `/help` | every command |
+| `/machines` | the machines, their routing, and their use in this project |
 | status line | current state, tier of the last decision, number of decisions, spend on off-box tiers |
 
 ### Step mode and breakpoints

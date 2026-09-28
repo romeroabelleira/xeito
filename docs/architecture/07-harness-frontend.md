@@ -65,6 +65,8 @@ flowchart LR
   - Both use `Xeito.Client.Render`, which folds escalation runs into their decision and indents delegated runs.
 - **Delegation.** `fix_failing_test` with `delegate: true`, and `check`, hand the fix to a child run of the free chat machine (the `machine` effect). Machines compose without a second agent loop.
 - **Skills** in pi's Agent Skills format are listed for the model and loaded on demand through a `skill` tool confined to the skill's directory. `/skill:name` forces one (`Xeito.Skills`).
+- **Status bar** (TUI, Ctrl-T): hardware and model services from `Xeito.Monitor`, which polls only while a client subscribes (the API's `monitor` command), plus session usage, the determinism budget, spend and queues, counted by the client from events (`Xeito.Client.StatusBar`). Transitions after a chat turn are attributed to the chat model's tier, so the budget reflects model-chosen paths.
+- **`/machines`** and the API's `machines` command list the registered machines with version, summary, routing and usage in the workspace log (`Xeito.Session.Router.describe/2`).
 - **Machines routed from `Intent`:** `fix_failing_test`, `commit`, `check`, `run_tests`, and otherwise free chat (`Xeito.Session.Router`).
 
 ## Interaction model

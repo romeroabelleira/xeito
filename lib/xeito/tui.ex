@@ -10,6 +10,10 @@ defmodule Xeito.Tui do
       │ state verifying · 14.2 s · 3 decisions · review: y/n              │
       └───────────────────────────────────────────────────────────────────┘
 
+  A toggleable **status bar** (Ctrl-T, or `/statusbar`) adds two lines: GPU, model services and
+  CPU from the daemon's `Xeito.Monitor`, and the session's usage, determinism budget, spend and
+  queues (`Xeito.Client.StatusBar`). While it is hidden, the daemon does not poll for it.
+
   Keys: Enter sends (and steps a paused run when the prompt is empty); `y` / `n` answer a
   pending review when the prompt is empty; PgUp / PgDn
   scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
@@ -25,7 +29,7 @@ defmodule Xeito.Tui do
   alias TermUI.Renderer.Style
   alias TermUI.Widgets.TextInput
   alias Xeito.Client
-  alias Xeito.Client.Render
+  alias Xeito.Client.{Render, StatusBar}
 
   @max_lines 5_000
 
@@ -58,8 +62,12 @@ defmodule Xeito.Tui do
       tier: nil,
       usd: 0.0,
       waiting: false,
-      paused: false
+      paused: false,
+      bar: Keyword.get(opts, :status_bar, true),
+      monitor: nil,
+      usage: StatusBar.new()
     }
+    |> tap(&if(&1.bar, do: Client.request(client, %{"cmd" => "monitor", "on" => true})))
   end
 
   defp open(client, opts) do
@@ -97,8 +105,12 @@ defmodule Xeito.Tui do
 
   @impl true
   def event_to_msg(%Event.Key{key: key, modifiers: mods}, _state)
-      when key in [:c, "c", :d, "d"] and is_list(mods) and mods != [] do
-    if :ctrl in mods, do: {:msg, :quit}, else: :ignore
+      when key in [:c, "c", :d, "d", :t, "t"] and is_list(mods) and mods != [] do
+    cond do
+      :ctrl not in mods -> :ignore
+      key in [:t, "t"] -> {:msg, :toggle_bar}
+      true -> {:msg, :quit}
+    end
   end
 
   def event_to_msg(%Event.Key{key: :enter}, _state), do: {:msg, :submit}
@@ -116,6 +128,9 @@ defmodule Xeito.Tui do
   def event_to_msg(_event, _state), do: :ignore
 
   # Daemon events and request replies arrive as plain process messages.
+  def handle_info({:xeito_event, %{"event" => "monitor", "attrs" => snapshot}}, state),
+    do: {%{state | monitor: snapshot}, []}
+
   def handle_info({:xeito_event, event}, state), do: {apply_event(state, event), []}
 
   def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state),
@@ -137,6 +152,9 @@ defmodule Xeito.Tui do
       "" ->
         {state, []}
 
+      "/statusbar" ->
+        update(:toggle_bar, %{state | input: TextInput.clear(state.input)})
+
       text ->
         request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
         {%{state | input: TextInput.clear(state.input), scroll: 0} |> append("> #{text}\n"), []}
@@ -149,6 +167,12 @@ defmodule Xeito.Tui do
 
     {%{state | waiting: false}
      |> append("  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
+  end
+
+  def update(:toggle_bar, state) do
+    bar = not state.bar
+    request(state, %{"cmd" => "monitor", "on" => bar})
+    {%{state | bar: bar, monitor: if(bar, do: state.monitor, else: nil)}, []}
   end
 
   def update({:input, event}, state) do
@@ -173,7 +197,7 @@ defmodule Xeito.Tui do
 
   @doc false
   def apply_event(state, %{"event" => type} = event) do
-    state
+    %{state | usage: StatusBar.count(state.usage, event)}
     |> track(type, event)
     |> append(Render.line(event))
   end
@@ -225,7 +249,8 @@ defmodule Xeito.Tui do
 
   @impl true
   def view(state) do
-    body_height = max(state.height - 3, 1)
+    bar = if state.bar, do: StatusBar.lines(state.usage, state.monitor), else: []
+    body_height = max(state.height - 3 - length(bar), 1)
 
     stack(:vertical, [
       text(
@@ -237,6 +262,7 @@ defmodule Xeito.Tui do
         text("> "),
         TextInput.render(state.input, %{width: state.width - 2, height: 1})
       ]),
+      stack(:vertical, Enum.map(bar, &text(pad(" " <> &1, state.width), bar_style()))),
       text(pad(status_line(state), state.width), status_style(state))
     ])
   end
@@ -285,6 +311,7 @@ defmodule Xeito.Tui do
   defp pad(text, width), do: text |> String.slice(0, width) |> String.pad_trailing(width)
 
   defp header_style, do: Style.new(attrs: [:reverse])
+  defp bar_style, do: Style.new(fg: :cyan)
 
   defp status_style(%{waiting: true}), do: Style.new(fg: :black, bg: :yellow)
   defp status_style(_state), do: Style.new(attrs: [:dim])
