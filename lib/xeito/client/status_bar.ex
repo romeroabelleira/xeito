@@ -4,11 +4,13 @@ defmodule Xeito.Client.StatusBar do
   client already receives, and hardware and model status come from `Xeito.Monitor` snapshots.
 
       GPU 18.5/24.0 GiB 97% 290 W 61°C │ large qwen3.6:27b unload 4:12 │ small ✓ 1/4 │ S1 ✓ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB
-      large 12 · small 3 · rule 9 · human 1 │ 18.4k→1.2k tok · ctx 3.2k/81.9k │ det 45% │ $0.0000 · ~2.1 kJ │ queue large 1+2
+      large 12 · small 3 · rule 9 · human 1 │ 18.4k→1.2k tok · ctx 3.2k/81.9k │ triage large 512 ms │ reply 2.1 s (first 0.4 s) │ det 45% │ $0.0000 · ~2.1 kJ │ queue large 1+2
 
   * **Calls** per actor: decisions (`decision_made`, `intent`) and chat turns (`chat`).
   * **Tokens** in → out over the session, and **ctx**: the prompt size of the last chat turn
     against the resident model's context window, i.e. how full the context is.
+  * **decision** and **reply**: the latest decision (type, who decided, how long it took) and
+    the latest model reply (total time, and time to its first chunk).
   * **det**: the determinism budget, the share of transitions taken by code or rules rather than
     models or humans (`docs/architecture/01-principles.md#2-the-determinism-budget`).
   * **Spend** on off-box tiers and the estimated energy of local decisions.
@@ -20,6 +22,8 @@ defmodule Xeito.Client.StatusBar do
           tokens_in: non_neg_integer(),
           tokens_out: non_neg_integer(),
           ctx: non_neg_integer() | nil,
+          last_decision: map() | nil,
+          last_reply: map() | nil,
           usd: float(),
           joules: float(),
           det: {non_neg_integer(), non_neg_integer()}
@@ -28,7 +32,17 @@ defmodule Xeito.Client.StatusBar do
   @doc "Empty usage counters."
   @spec new() :: usage()
   def new,
-    do: %{calls: %{}, tokens_in: 0, tokens_out: 0, ctx: nil, usd: 0.0, joules: 0.0, det: {0, 0}}
+    do: %{
+      calls: %{},
+      tokens_in: 0,
+      tokens_out: 0,
+      ctx: nil,
+      usd: 0.0,
+      joules: 0.0,
+      det: {0, 0},
+      last_decision: nil,
+      last_reply: nil
+    }
 
   @doc "Counts one daemon event (string keys, as decoded from the API)."
   @spec count(usage(), map()) :: usage()
@@ -39,9 +53,16 @@ defmodule Xeito.Client.StatusBar do
   def count(usage, %{"event" => event} = e), do: count_event(usage, event, e)
 
   defp count_event(usage, type, %{"attrs" => a}) when type in ["decision_made", "intent"] do
+    decision = %{
+      type: if(type == "intent", do: "intent", else: short_type(a["decision_type"])),
+      actor: to_string(a["actor"] || "none"),
+      ms: a["latency_ms"]
+    }
+
     usage
-    |> call(to_string(a["actor"] || "none"))
+    |> call(decision.actor)
     |> add_cost(a)
+    |> Map.put(:last_decision, decision)
   end
 
   defp count_event(usage, "effect_completed", %{"attrs" => %{"kind" => kind, "result" => r}})
@@ -50,6 +71,7 @@ defmodule Xeito.Client.StatusBar do
     |> call("chat")
     |> add_cost(r)
     |> Map.put(:ctx, r["tokens_in"] || usage.ctx)
+    |> Map.put(:last_reply, %{ms: r["latency_ms"], first_ms: r["first_token_ms"]})
   end
 
   defp count_event(usage, "transition", %{"attrs" => %{"actor" => actor}}) do
@@ -59,6 +81,11 @@ defmodule Xeito.Client.StatusBar do
   end
 
   defp count_event(usage, _type, _event), do: usage
+
+  defp short_type(nil), do: "decision"
+
+  defp short_type(type),
+    do: type |> to_string() |> String.split(".") |> List.last() |> Macro.underscore()
 
   defp call(usage, actor), do: %{usage | calls: Map.update(usage.calls, actor, 1, &(&1 + 1))}
 
@@ -87,6 +114,8 @@ defmodule Xeito.Client.StatusBar do
     git: 1,
     calls: 2,
     tokens: 2,
+    decision: 2,
+    reply: 2,
     det: 2,
     cost: 2,
     budget: 2,
@@ -130,6 +159,8 @@ defmodule Xeito.Client.StatusBar do
   defp segment(:calls, u, _m, _w), do: calls(u)
   defp segment(:tokens, u, m, _w), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)
   defp segment(:det, u, _m, _w), do: det(u.det)
+  defp segment(:decision, u, _m, _w), do: last_decision(u.last_decision)
+  defp segment(:reply, u, _m, _w), do: last_reply(u.last_reply)
 
   defp segment(:cost, u, _m, _w),
     do: "$#{:erlang.float_to_binary(u.usd * 1.0, decimals: 4)} · ~#{energy(u.joules)}"
@@ -151,6 +182,20 @@ defmodule Xeito.Client.StatusBar do
       parts -> Enum.join(parts, " · ")
     end
   end
+
+  defp last_decision(%{ms: ms} = d) when is_number(ms),
+    do: "#{d.type} #{d.actor} #{duration(ms)}"
+
+  defp last_decision(_), do: ""
+
+  defp last_reply(%{ms: ms, first_ms: first}) when is_number(ms),
+    do:
+      "reply #{duration(ms)}" <> if(is_number(first), do: " (first #{duration(first)})", else: "")
+
+  defp last_reply(_), do: ""
+
+  defp duration(ms) when ms < 1000, do: "#{round(ms)} ms"
+  defp duration(ms), do: "#{:erlang.float_to_binary(ms / 1000, decimals: 1)} s"
 
   defp det({_code, 0}), do: "det -"
   defp det({code, total}), do: "det #{round(100 * code / total)}%"

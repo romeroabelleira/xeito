@@ -343,4 +343,43 @@ defmodule Xeito.MonitorTest do
     File.write!(file, "not json")
     assert %{"status_bar" => %{"visible" => true}} = Config.load(file)
   end
+
+  test "status bar: latency of the last decision and the last model reply" do
+    usage =
+      [
+        %{"event" => "intent", "attrs" => %{"actor" => "large", "latency_ms" => 833}},
+        %{
+          "event" => "effect_completed",
+          "run" => "s/t1",
+          "attrs" => %{
+            "kind" => "chat",
+            "result" => %{"latency_ms" => 2140, "first_token_ms" => 410}
+          }
+        },
+        %{
+          "event" => "decision_made",
+          "run" => "s/t1",
+          "attrs" => %{
+            "decision_type" => "Xeito.Decisions.Risk",
+            "actor" => "rule",
+            "latency_ms" => 3
+          }
+        }
+      ]
+      |> Enum.reduce(StatusBar.new(), &StatusBar.count(&2, &1))
+
+    hidden = ~w(gpu models cpu git calls tokens det cost budget queue)
+
+    assert StatusBar.lines(usage, nil, nil, hidden) == [
+             "risk rule 3 ms │ reply 2.1 s (first 410 ms)"
+           ]
+
+    only_intent =
+      StatusBar.count(StatusBar.new(), %{
+        "event" => "intent",
+        "attrs" => %{"actor" => "large", "latency_ms" => 1250}
+      })
+
+    assert StatusBar.lines(only_intent, nil, nil, hidden) == ["intent large 1.3 s"]
+  end
 end

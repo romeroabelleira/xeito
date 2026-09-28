@@ -11,7 +11,8 @@ defmodule Xeito.Chat do
   `Xeito.Events`), and the call returns the complete assistant message:
 
       {:ok, %{content: "...", tool_calls: [%{name: "bash", arguments: %{...}}],
-              model: "...", tokens_in: 812, tokens_out: 64, latency_ms: 2140}}
+              model: "...", tokens_in: 812, tokens_out: 64, latency_ms: 2140,
+              first_token_ms: 410}}
 
   Thinking is off by default (`cfg[:think]`), because the harness wants short turns; the
   statechart, not a long hidden monologue, carries the plan.
@@ -46,7 +47,14 @@ defmodule Xeito.Chat do
       keep_alive: Keyword.get(cfg, :keep_alive, "10m")
     }
 
-    Process.put(:xeito_chat, %{buffer: "", content: [], tool_calls: [], final: %{}})
+    Process.put(:xeito_chat, %{
+      buffer: "",
+      content: [],
+      tool_calls: [],
+      final: %{},
+      started: started,
+      first_ms: nil
+    })
 
     opts =
       [method: :post, url: "/api/chat", json: body, into: &into(&1, &2, on_delta)] ++
@@ -63,7 +71,8 @@ defmodule Xeito.Chat do
            model: model,
            tokens_in: acc.final["prompt_eval_count"] || 0,
            tokens_out: acc.final["eval_count"] || 0,
-           latency_ms: System.monotonic_time(:millisecond) - started
+           latency_ms: System.monotonic_time(:millisecond) - started,
+           first_token_ms: acc.first_ms
          }}
 
       {:ok, %{status: status, body: body}} ->
@@ -115,8 +124,20 @@ defmodule Xeito.Chat do
 
     content = if text == "", do: acc.content, else: [text | acc.content]
     final = if chunk["done"], do: chunk, else: acc.final
-    %{acc | content: content, tool_calls: Enum.reverse(calls) ++ acc.tool_calls, final: final}
+    first = acc.first_ms || first_ms(acc.started, text, calls)
+
+    %{
+      acc
+      | content: content,
+        tool_calls: Enum.reverse(calls) ++ acc.tool_calls,
+        final: final,
+        first_ms: first
+    }
   end
+
+  # Time to the first chunk that carries text or a tool call (what the user starts to see).
+  defp first_ms(_started, "", []), do: nil
+  defp first_ms(started, _text, _calls), do: System.monotonic_time(:millisecond) - started
 
   defp decode(""), do: nil
 

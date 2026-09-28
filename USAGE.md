@@ -113,7 +113,7 @@ Above the status line, the TUI shows two more lines. Toggle them with **Ctrl-T**
 
 ```
  GPU 20.8/24.0 GiB 94% 289 W 73°C │ large qwen3.6:27b unload 4:58 │ small ✓ 0/4 │ S1 ✓ │ CPU 39% load 0.34 RAM 15.9/62.0 GiB │ git main 2 changed ↑1
- chat 2 · large 1 · rule 1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ det 50% │ $0.0000 · ~157 J │ budget $0.50/0.50 │ queue large 1
+ chat 2 · large 1 · rule 1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ risk rule 3 ms │ reply 1.1 s (first 291 ms) │ det 50% │ $0.0000 · ~157 J │ budget $0.50/0.50 │ queue large 1
 ```
 
 | Part | Meaning |
@@ -124,6 +124,8 @@ Above the status line, the TUI shows two more lines. Toggle them with **Ctrl-T**
 | `CPU … RAM …` | processor utilisation and load, memory in use |
 | `chat 2 · large 1 · rule 1` | calls in this session: chat turns, and decisions by who made them |
 | `tok`, `ctx` | tokens in → out, and the last chat prompt against the model's context window |
+| `risk rule 3 ms` | the latest decision: its type, who decided, and how long it took (including escalation) |
+| `reply` | the latest model reply: total time, and time to its first chunk (what you wait for before text appears) |
 | `det` | the determinism budget: the share of transitions taken by code or rules rather than a model or a human |
 | `$ · J` | spend on off-box tiers, and estimated energy of local decisions |
 | `git` | the project's branch, uncommitted entries, and commits ahead/behind its upstream |
@@ -141,9 +143,9 @@ The hardware and model line comes from the daemon, which only polls (every 2 s) 
 > /statusbar off                   (or on, or reset)
 ```
 
-The choice is saved in `~/.config/xeito/tui.json` (or `$XDG_CONFIG_HOME/xeito/tui.json`; set `XEITO_TUI_CONFIG` to use another file), so the next TUI starts the same way. The segments are `gpu models cpu git calls tokens det cost budget queue`.
+The choice is saved in `~/.config/xeito/tui.json` (or `$XDG_CONFIG_HOME/xeito/tui.json`; set `XEITO_TUI_CONFIG` to use another file), so the next TUI starts the same way. The segments are `gpu models cpu git calls tokens decision reply det cost budget queue`.
 
-**Quit** with Ctrl-D or Ctrl-C. The session keeps running in the daemon. Reattach with the id printed at the top:
+**Quit** with `/quit` (or `/exit`, Ctrl-D, Ctrl-C). The session keeps running in the daemon. Reattach with the id printed at the top:
 
 ```bash
 mix xeito.tui --cwd ~/src/my-project --session ses-abc123
@@ -307,6 +309,7 @@ Every machine is listed with what it does and how requests reach it. The usage c
 | `/why` | the last decisions of the session: type, value, who decided (rule, small, large, human), confidence, model, latency |
 | `/help` | every command |
 | `/machines` | the machines, their routing, and their use in this project |
+| `/quit` | close the client; the session keeps running in the daemon |
 | status line | current state, tier of the last decision, number of decisions, spend on off-box tiers |
 
 ### Step mode and breakpoints

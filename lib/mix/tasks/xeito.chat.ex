@@ -8,8 +8,8 @@ defmodule Mix.Tasks.Xeito.Chat do
       mix xeito.chat [--cwd DIR] [--socket PATH] [--session ID]
 
   Needs a running daemon (`mix xeito.daemon`). Slash commands are passed through (`/help`).
-  `y` / `n` answer a pending review. Ctrl-D quits; the session keeps running in the daemon, and
-  `--session ID` attaches to it again.
+  `y` / `n` answer a pending review. `/quit` (or Ctrl-D) quits; the session keeps running in the
+  daemon, and `--session ID` attaches to it again.
   """
 
   use Mix.Task
@@ -34,7 +34,7 @@ defmodule Mix.Tasks.Xeito.Chat do
 
     IO.puts(
       IO.ANSI.faint() <>
-        "session #{session} · /help · y/n answer a review · Ctrl-D quits" <> IO.ANSI.reset()
+        "session #{session} · /help · y/n answer a review · /quit" <> IO.ANSI.reset()
     )
 
     printer = self()
@@ -71,22 +71,27 @@ defmodule Mix.Tasks.Xeito.Chat do
         send(printer, :quit)
 
       line ->
-        line = String.trim(line)
-
-        req =
-          case line do
-            "" -> nil
-            "y" -> %{"cmd" => "approve", "session" => session}
-            "n" -> %{"cmd" => "deny", "session" => session}
-            text -> %{"cmd" => "prompt", "session" => session, "text" => text}
-          end
-
-        with %{} <- req,
-             %{"ok" => false, "error" => error} <- Client.request(client, req),
-             do: IO.puts(IO.ANSI.red() <> error <> IO.ANSI.reset())
-
-        input_loop(client, session, printer)
+        case String.trim(line) do
+          quit when quit in ["/quit", "/exit"] -> send(printer, :quit)
+          text -> send_line(client, session, printer, text)
+        end
     end
+  end
+
+  defp send_line(client, session, printer, line) do
+    req =
+      case line do
+        "" -> nil
+        "y" -> %{"cmd" => "approve", "session" => session}
+        "n" -> %{"cmd" => "deny", "session" => session}
+        text -> %{"cmd" => "prompt", "session" => session, "text" => text}
+      end
+
+    with %{} <- req,
+         %{"ok" => false, "error" => error} <- Client.request(client, req),
+         do: IO.puts(IO.ANSI.red() <> error <> IO.ANSI.reset())
+
+    input_loop(client, session, printer)
   end
 
   defp event_loop do

@@ -15,6 +15,8 @@ defmodule Xeito.Tui do
   CPU from the daemon's `Xeito.Monitor`, and the session's usage, determinism budget, spend and
   queues (`Xeito.Client.StatusBar`). While it is hidden, the daemon does not poll for it.
 
+  `/quit` (or `/exit`, Ctrl-D, Ctrl-C) closes the TUI; the session keeps running in the daemon.
+
   Keys: Enter sends (and steps a paused run when the prompt is empty); `y` / `n` answer a
   pending review when the prompt is empty; PgUp / PgDn
   scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
@@ -52,7 +54,7 @@ defmodule Xeito.Tui do
       client: client,
       session: session,
       cwd: status["cwd"] || opts[:cwd],
-      lines: earlier ++ ["session #{session} · /help · y/n answer a review · Ctrl-D quits"],
+      lines: earlier ++ ["session #{session} · /help · y/n answer a review · /quit"],
       partial: "",
       input: TextInput.set_focused(input, true),
       width: cols,
@@ -169,6 +171,9 @@ defmodule Xeito.Tui do
         {state, []}
 
       # Handled here: it changes how this client shows things, never what runs.
+      quit when quit in ["/quit", "/exit"] ->
+        update(:quit, state)
+
       "/statusbar" <> args ->
         update({:statusbar, args}, state)
 

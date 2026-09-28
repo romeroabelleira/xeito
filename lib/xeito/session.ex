@@ -270,7 +270,9 @@ defmodule Xeito.Session do
       "tokens_in" => cost[:tokens_in],
       "tokens_out" => cost[:tokens_out],
       "usd" => cost[:usd],
-      "joules_est" => cost[:joules_est]
+      "joules_est" => cost[:joules_est],
+      "latency_ms" => decision.latency_ms,
+      "model" => decision.model
     })
 
     {machine, reason} = Router.route(decision.value, text)
@@ -709,6 +711,8 @@ defmodule Xeito.Session do
     /approve · /deny          answer a command waiting for review
     /why                      the last decisions, with tier and confidence
     /budget <usd>             off-box spend limit per run
+    /quit                     close the client (the session keeps running; attach with --session)
+    /statusbar …              TUI only: on|off|reset|segments|show|hide <segment>
     /step · /next · /continue step mode: pause before each result, release one, run on
     /decide <value>           answer a paused decision yourself (logged as a label)
     /break state:<s> | decision:<Type> | conf<0.6 | clear

@@ -170,6 +170,15 @@ defmodule Xeito.HarnessTest do
     assert ctx.answer == "There is hello.txt."
     assert kinds(log, id) == [:chat, :decide, :bash, :chat]
 
+    # Chat results carry their time to the first chunk (the status bar's reply latency).
+    [first_chat | _] =
+      for {_, "effect_completed", {:effect_completed, _, %{content: _} = r}} <-
+            Log.read_run(log, id),
+          do: r
+
+    assert is_integer(first_chat.first_token_ms) and
+             first_chat.first_token_ms <= first_chat.latency_ms
+
     assert_received {:chat_request, first}
 
     assert [%{"role" => "system"}, %{"role" => "user", "content" => "What is here?"}] =
