@@ -115,7 +115,8 @@ defmodule Xeito.Log do
     :ok = Sqlite3.execute(db, "PRAGMA journal_mode=WAL")
     :ok = Sqlite3.execute(db, "PRAGMA synchronous=NORMAL")
     :ok = Sqlite3.set_busy_timeout(db, 5_000)
-    Enum.each(Schema.statements() ++ Store.statements(), &(:ok = Sqlite3.execute(db, &1)))
+    Enum.each(Schema.statements(), &(:ok = Sqlite3.execute(db, &1)))
+    :ok = Store.prepare(db)
     if opts[:reconcile], do: reconcile_sessions(db)
 
     state = %{

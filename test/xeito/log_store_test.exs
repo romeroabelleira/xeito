@@ -2,7 +2,7 @@ defmodule Xeito.LogStoreTest do
   use Xeito.Case, async: true
 
   alias Xeito.{Effect, Log, Machine}
-  alias Xeito.Log.{Event, Store}
+  alias Xeito.Log.{Event, Sql, Store}
   alias Xeito.Machines.Chat
   alias Xeito.Run.Recovery
 
@@ -128,5 +128,72 @@ defmodule Xeito.LogStoreTest do
 
     tampered = put_in(effect.args.messages, [msg("system", "s"), msg("user", "something else")])
     assert {:ok, %{desync: "r/e1"}} = Recovery.rebuild(Chat, entries.(tampered))
+  end
+
+  test "messages are stored as JSON that SQL can read; the term only when JSON is not exact" do
+    log = start_log!()
+
+    call = %{function: %{name: "bash", arguments: %{"command" => "ls"}}}
+
+    chain = [
+      msg("system", "s"),
+      %{role: "assistant", content: "", tool_calls: [call]},
+      %{role: "tool", tool_name: "bash", content: "a.txt"},
+      # Not representable in JSON exactly: kept as an Erlang term as well.
+      %{role: "user", content: "x", meta: {:tuple, 1}}
+    ]
+
+    Log.append(log, "r", [chat_requested("r/e1", chain)])
+    assert [{1, _, {:effect_requested, effect}}] = Log.read_run(log, "r")
+    assert effect.args.messages == chain
+
+    assert Log.query(
+             log,
+             "SELECT json_extract(json, '$.role'), json_extract(json, '$.tool_calls[0].function.arguments.command'), " <>
+               "term IS NULL FROM xeito_message ORDER BY depth"
+           ) == [["system", nil, 1], ["assistant", "ls", 1], ["tool", nil, 1], ["user", nil, 0]]
+  end
+
+  test "a message table from before JSON storage is migrated on open" do
+    dir = Path.join(System.tmp_dir!(), "xeito-mig-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+    path = Path.join(dir, "log.sqlite")
+    chain = [msg("system", "s"), msg("user", "hi")]
+
+    {:ok, db} = Exqlite.Sqlite3.open(path)
+
+    :ok =
+      Exqlite.Sqlite3.execute(
+        db,
+        "CREATE TABLE xeito_message (id TEXT PRIMARY KEY, parent TEXT, depth INTEGER NOT NULL, term BLOB NOT NULL)"
+      )
+
+    Enum.each(Enum.with_index(chain, 1), fn {m, depth} ->
+      id = Store.chain_id(Enum.take(chain, depth))
+      parent = if depth > 1, do: Store.chain_id(Enum.take(chain, depth - 1))
+
+      Sql.exec(db, "INSERT INTO xeito_message VALUES (?1, ?2, ?3, ?4)", [
+        id,
+        parent,
+        depth,
+        {:blob, Store.pack(m)}
+      ])
+    end)
+
+    Exqlite.Sqlite3.close(db)
+
+    log = start_supervised!({Log, path: path}, id: make_ref())
+    head = Store.chain_id(chain)
+
+    assert Log.query(
+             log,
+             "SELECT json_extract(json, '$.content') FROM xeito_message ORDER BY depth"
+           ) ==
+             [["s"], ["hi"]]
+
+    {:ok, db} = Exqlite.Sqlite3.open(path)
+    assert Store.read_chain(db, head) == chain
+    Exqlite.Sqlite3.close(db)
   end
 end

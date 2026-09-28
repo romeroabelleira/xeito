@@ -51,6 +51,8 @@ defmodule Mix.Tasks.Xeito.Log do
 
     {:ok, db} = Sqlite3.open(path)
     :ok = Sqlite3.set_busy_timeout(db, 10_000)
+    # The same idempotent setup (and migration) the daemon runs when it opens a log.
+    :ok = Store.prepare(db)
 
     try do
       dispatch(command, db, path, opts)
@@ -138,12 +140,13 @@ defmodule Mix.Tasks.Xeito.Log do
       )
     end
 
-    if table?(db, "xeito_message") do
-      [[n, bytes]] =
-        Sql.select(db, "SELECT COUNT(*), COALESCE(SUM(length(term)), 0) FROM xeito_message")
+    [[n, bytes]] =
+      Sql.select(
+        db,
+        "SELECT COUNT(*), COALESCE(SUM(length(json)), 0) + COALESCE(SUM(length(term)), 0) FROM xeito_message"
+      )
 
-      Mix.shell().info("\nstored messages: #{n} (#{kib(bytes)} KiB)")
-    end
+    Mix.shell().info("\nstored messages: #{n} (#{kib(bytes)} KiB)")
   end
 
   # --- verify --------------------------------------------------------------------------------
@@ -201,7 +204,6 @@ defmodule Mix.Tasks.Xeito.Log do
   }
 
   defp compact(db, path) do
-    Enum.each(Store.statements(), &(:ok = Sqlite3.execute(db, &1)))
     before = File.stat!(path).size
     runs = runs(db)
     Enum.each(runs, &compact_run(db, &1))
@@ -276,11 +278,6 @@ defmodule Mix.Tasks.Xeito.Log do
       ])
     )
   end
-
-  defp table?(db, name),
-    do:
-      Sql.select(db, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1", [name]) !=
-        []
 
   defp kib(bytes), do: "#{div(bytes || 0, 1024)}"
 

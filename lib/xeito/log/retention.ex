@@ -93,7 +93,7 @@ defmodule Xeito.Log.Retention do
   @spec prune(Sqlite3.db(), [session()]) :: {:ok, map()}
   def prune(db, sessions) do
     # A log last written before the message store existed gets its (empty) tables first.
-    Enum.each(Store.statements(), &(:ok = Sqlite3.execute(db, &1)))
+    :ok = Store.prepare(db)
     Enum.each(sessions, &delete_session(db, &1.id))
     messages = if sessions == [], do: 0, else: Store.sweep(db)
     # In WAL mode the compacted pages land in the WAL file; the checkpoint moves them into the

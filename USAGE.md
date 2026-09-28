@@ -433,6 +433,20 @@ mix xeito.log verify --cwd ~/src/my-project    # replay every run and check it m
 mix xeito.log compact --cwd ~/src/my-project   # rewrite a log written by an older Xeito (stop the daemon first)
 ```
 
+Conversations are plain JSON in the `xeito_message` table, one row per message, each pointing to its parent. Any SQLite tool can read them. For example, this prints the longest conversation a turn's run recorded:
+
+```sql
+-- sqlite3 .xeito/log.sqlite < this file; replace the run id (see `mix xeito.log sessions`)
+WITH RECURSIVE c AS (
+  SELECT * FROM xeito_message WHERE id = (
+    SELECT r.head FROM xeito_term_chain r JOIN xeito_message m ON m.id = r.head
+    WHERE r.ocel_id LIKE 'ses-abc123/t3:%' ORDER BY m.depth DESC LIMIT 1)
+  UNION ALL
+  SELECT m.* FROM xeito_message m JOIN c ON m.id = c.parent)
+SELECT json_extract(json, '$.role'), substr(json_extract(json, '$.content'), 1, 120)
+FROM c ORDER BY depth;
+```
+
 ## 9. Evaluating deciders
 
 Every decision type has labelled examples in `priv/decisions/<type>/examples.jsonl`, one JSON object per line:

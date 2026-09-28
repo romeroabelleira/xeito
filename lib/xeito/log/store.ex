@@ -10,7 +10,9 @@ defmodule Xeito.Log.Store do
       `xeito_message`, each row pointing to its parent. A message's id hashes its parent's id and
       its own content, so the id of a chain's last message is a checksum of the whole
       conversation up to it, and shared prefixes (system prompt, earlier turns, other sessions)
-      are stored once. In the event it becomes `{:xeito_chain, head_id, count}`; in the OCEL
+      are stored once. Messages are stored as JSON (`json`), so any SQLite tool can read a
+      conversation; a message JSON cannot reproduce exactly also keeps its Erlang term (`term`,
+      otherwise `NULL`). In the event it becomes `{:xeito_chain, head_id, count}`; in the OCEL
       attributes `%{"chain" => head_id, "messages" => count}`. `xeito_term_chain` records which
       event refers to which chain, so pruning can sweep unreferenced messages.
     * **Results once.** The event an effect's result produces carries the same payload as the
@@ -22,20 +24,104 @@ defmodule Xeito.Log.Store do
   Logs written before this layout have plain terms and read as they are.
   """
 
-  alias Xeito.Log.{Event, Sql}
+  alias Xeito.Log.{Codec, Event, Sql}
 
   @type db :: Exqlite.Sqlite3.db()
 
-  @doc "DDL for the store's tables, idempotent."
-  @spec statements() :: [String.t()]
-  def statements do
+  @doc """
+  Creates the store's tables (idempotent) and migrates a message table from before messages were
+  stored as JSON. Call it once per connection before using the store.
+  """
+  @spec prepare(db()) :: :ok
+  def prepare(db) do
+    Enum.each(statements(), &Sql.exec(db, &1))
+    if not column?(db, "xeito_message", "json"), do: migrate_messages(db)
+    :ok
+  end
+
+  defp statements do
     [
       "CREATE TABLE IF NOT EXISTS xeito_message (id TEXT PRIMARY KEY, parent TEXT, " <>
-        "depth INTEGER NOT NULL, term BLOB NOT NULL)",
+        "depth INTEGER NOT NULL, json TEXT NOT NULL, term BLOB)",
       "CREATE TABLE IF NOT EXISTS xeito_term_chain (ocel_id TEXT NOT NULL, head TEXT NOT NULL, " <>
         "PRIMARY KEY (ocel_id, head))"
     ]
   end
+
+  defp column?(db, table, column),
+    do:
+      Sql.select(db, "SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2", [table, column]) != []
+
+  # The first layout kept only the Erlang term. Ids do not change (they hash the term).
+  defp migrate_messages(db) do
+    Sql.transaction(db, fn ->
+      Sql.exec(db, "ALTER TABLE xeito_message RENAME TO xeito_message_etf")
+      Enum.each(statements(), &Sql.exec(db, &1))
+
+      for [id, parent, depth, blob] <-
+            Sql.select(db, "SELECT id, parent, depth, term FROM xeito_message_etf") do
+        insert_message(db, id, parent, depth, :erlang.binary_to_term(blob))
+      end
+
+      Sql.exec(db, "DROP TABLE xeito_message_etf")
+    end)
+  end
+
+  defp insert_message(db, id, parent, depth, message) do
+    {json, term} = message_row(message)
+
+    Sql.exec(
+      db,
+      "INSERT OR IGNORE INTO xeito_message (id, parent, depth, json, term) VALUES (?1, ?2, ?3, ?4, ?5)",
+      [id, parent, depth, json, term]
+    )
+  end
+
+  @doc """
+  How a message is stored: `{json, term}`, where `term` is `nil` when the JSON reads back to
+  exactly the same message (`from_json/1`), and the packed term otherwise.
+  """
+  @spec message_row(map()) :: {String.t(), {:blob, binary()} | nil}
+  def message_row(message) do
+    json = Codec.encode(message)
+    exact? = from_json(JSON.decode!(json)) == message
+    {json, if(exact?, do: nil, else: {:blob, pack(message)})}
+  end
+
+  # Chat messages have atom keys (`role`, `content`, `tool_calls`, `tool_name`, and `function`,
+  # `name`, `arguments` inside a call); a call's arguments keep the model's string keys.
+  @message_keys %{
+    "role" => :role,
+    "content" => :content,
+    "tool_calls" => :tool_calls,
+    "tool_name" => :tool_name
+  }
+  @call_keys %{"function" => :function}
+  @function_keys %{"name" => :name, "arguments" => :arguments}
+
+  @doc "Reads a stored message JSON (decoded) back into a chat message."
+  @spec from_json(map()) :: map()
+  def from_json(%{} = message) do
+    message
+    |> atomize(@message_keys)
+    |> Map.replace_lazy(:tool_calls, fn
+      calls when is_list(calls) -> Enum.map(calls, &call_from_json/1)
+      other -> other
+    end)
+  end
+
+  defp call_from_json(%{} = call),
+    do:
+      call
+      |> atomize(@call_keys)
+      |> Map.replace_lazy(:function, fn
+        %{} = f -> atomize(f, @function_keys)
+        other -> other
+      end)
+
+  defp call_from_json(other), do: other
+
+  defp atomize(map, keys), do: Map.new(map, fn {k, v} -> {Map.get(keys, k, k), v} end)
 
   # --- writing -------------------------------------------------------------------------------
 
@@ -144,13 +230,8 @@ defmodule Xeito.Log.Store do
 
     # Ids are content hashes of the whole prefix: if the head exists, so does every ancestor.
     if Sql.select(db, "SELECT 1 FROM xeito_message WHERE id = ?1", [head]) == [] do
-      for {id, parent, depth, message} <- nodes do
-        Sql.exec(
-          db,
-          "INSERT OR IGNORE INTO xeito_message (id, parent, depth, term) VALUES (?1, ?2, ?3, ?4)",
-          [id, parent, depth, {:blob, pack(message)}]
-        )
-      end
+      for {id, parent, depth, message} <- nodes,
+          do: insert_message(db, id, parent, depth, message)
     end
 
     head
@@ -232,15 +313,18 @@ defmodule Xeito.Log.Store do
     Sql.select(
       db,
       """
-      WITH RECURSIVE c(id, parent, depth, term) AS (
-        SELECT id, parent, depth, term FROM xeito_message WHERE id = ?1
+      WITH RECURSIVE c(id, parent, depth, json, term) AS (
+        SELECT id, parent, depth, json, term FROM xeito_message WHERE id = ?1
         UNION ALL
-        SELECT m.id, m.parent, m.depth, m.term FROM xeito_message m JOIN c ON m.id = c.parent)
-      SELECT term FROM c ORDER BY depth
+        SELECT m.id, m.parent, m.depth, m.json, m.term FROM xeito_message m JOIN c ON m.id = c.parent)
+      SELECT json, term FROM c ORDER BY depth
       """,
       [head]
     )
-    |> Enum.map(fn [blob] -> :erlang.binary_to_term(blob) end)
+    |> Enum.map(fn
+      [json, nil] -> json |> JSON.decode!() |> from_json()
+      [_json, blob] -> :erlang.binary_to_term(blob)
+    end)
   end
 
   # --- retention -----------------------------------------------------------------------------
