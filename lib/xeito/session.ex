@@ -36,6 +36,7 @@ defmodule Xeito.Session do
   alias Xeito.{Budget, Escalation, Events, Log, Policy, Run, RunSupervisor, Skills}
   alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
   alias Xeito.Session.{Git, Router}
+  alias Xeito.Source.RepoMap
 
   # The history window trims with slack: past 80 messages it drops back to 60, so its first
   # message changes once every ~20 messages rather than every turn. The log stores a conversation
@@ -445,7 +446,7 @@ defmodule Xeito.Session do
       # A turn that edits files is checked before it answers (`Xeito.Machines.Chat`): the quick
       # check (does it still build), not the full suite, which is the `check` machine's job.
       verify: Router.quick_check_command(s.cwd),
-      system: s.system <> Skills.prompt_section(skills),
+      system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(skills),
       skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
     }
   end
@@ -459,6 +460,15 @@ defmodule Xeito.Session do
     do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
 
   defp input_for(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
+
+  # Built each turn (tens of milliseconds): its text changes only when modules or public
+  # functions do, so the model's prompt cache survives ordinary edits.
+  defp repo_map(cwd) do
+    case RepoMap.build(cwd) do
+      nil -> ""
+      map -> "\n\n" <> map <> "\n"
+    end
+  end
 
   defp start_machine(machine, input, reason, s) do
     run_id = "#{s.id}/t#{s.turn}"
@@ -527,6 +537,7 @@ defmodule Xeito.Session do
     spent = if is_binary(s.root), do: Budget.get(s.root, :usd), else: 0
 
     %{
+      "missing" => not File.dir?(s.cwd),
       "git" => Git.status(s.cwd),
       "budget" => %{
         "off_box" => policy.remote == :allowed and policy.locality == :public,

@@ -7,9 +7,16 @@ defmodule Xeito.Session.Git do
 
   @timeout 2_000
 
-  @doc "`%{branch, dirty, ahead, behind}`, or `nil` outside a repository (or on timeout)."
+  @doc """
+  `%{branch, dirty, ahead, behind}`, or `nil` outside a repository, on timeout, or when the
+  workspace directory no longer exists (git is then not started at all).
+  """
   @spec status(Path.t()) :: map() | nil
   def status(cwd) do
+    if File.dir?(cwd), do: run_status(cwd)
+  end
+
+  defp run_status(cwd) do
     task =
       Task.async(fn ->
         System.cmd("git", ["status", "--porcelain=v2", "--branch"],
@@ -23,7 +30,7 @@ defmodule Xeito.Session.Git do
       _ -> nil
     end
   rescue
-    # No git binary, or cwd gone.
+    # No git binary, or the workspace removed while git starts.
     _ -> nil
   end
 

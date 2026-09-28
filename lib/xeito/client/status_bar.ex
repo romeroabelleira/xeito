@@ -155,6 +155,7 @@ defmodule Xeito.Client.StatusBar do
 
   defp segment(:cpu, _u, nil, _w), do: ""
   defp segment(:cpu, _u, m, _w), do: cpu(m["system"])
+  defp segment(:git, _u, _m, %{"missing" => true}), do: "⚠ workspace missing"
   defp segment(:git, _u, _m, w), do: git(w && w["git"])
   defp segment(:calls, u, _m, _w), do: calls(u)
   defp segment(:tokens, u, m, _w), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)

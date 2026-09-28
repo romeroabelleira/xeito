@@ -7,7 +7,7 @@ defmodule Xeito.HarnessTest do
   alias Xeito.Decisions.{Risk, Triage}
   alias Xeito.Effects.Local
   alias Xeito.Machines.{Chat, FixFailingTest, RunTests}
-  alias Xeito.Session.Router
+  alias Xeito.Session.{Git, Router}
 
   setup {Req.Test, :set_req_test_to_shared}
 
@@ -133,6 +133,15 @@ defmodule Xeito.HarnessTest do
 
     assert %{ok: false, error: :outside_workspace} =
              Local.run(Effect.edit("../x", "a", "b", cwd: ws), [])
+  end
+
+  test "a missing workspace is reported, and nothing is started in it" do
+    gone = Path.join(System.tmp_dir!(), "xeito-gone-#{System.unique_integer([:positive])}")
+
+    assert %{exit_status: 127, output: "workspace missing: " <> _} =
+             Local.run(Effect.bash("ls", cwd: gone), [])
+
+    assert Git.status(gone) == nil
   end
 
   test "the transcript shows an edit as a compact diff" do

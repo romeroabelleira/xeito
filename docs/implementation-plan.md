@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-09-27 (P0–P3b done, P4 in progress) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-09-28 (P0–P3b done; P4 built, dogfooding) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -11,18 +11,24 @@ Status: living plan, last updated 2026-09-27 (P0–P3b done, P4 in progress) · 
 
 ## Milestones
 
-The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built with agent assistance and finished well ahead of it, so the chart below re-bases the remaining phases on the actual finish date. Durations for P4 onwards are unchanged.
+The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built with agent assistance and finished well ahead of it, so the remaining phases are re-based on the actual dates. Their durations are unchanged. P4's exit needs two weeks of dogfooding, so it cannot close before 2026-10-12.
 
-| Phase | Planned (original) | Effective | Evidence |
-|---|---|---|---|
-| P0 · Toolchain and repository | 2026-10-05 → 2026-10-19 | done 2026-09-27 | [bench 0](../bench/0-baseline.md), CI green |
-| Bench 1 · contention (inserted) | — | done 2026-09-27 | [bench 1](../bench/1-contention.md) |
-| P1 · State-machine core and log | 2026-10-19 → 2026-11-16 | done 2026-09-27 | 34 tests, property test |
-| P2 · Typed decisions | 2026-11-16 → 2026-12-14 | done 2026-09-27 | [bench 2](../bench/2-decisions.md) |
-| P3 · Delegation tiers | 2026-12-14 → 2027-01-04 | done 2026-09-27 | [bench 3](../bench/3-escalation.md) |
-| P3b · OpenRouter tier (inserted) | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
-| P4 · TUI harness | 2027-01-04 → 2027-02-08 | in progress, started 2026-09-27; items 1–6 done 2026-09-28, dogfooding open | [bench 4](../bench/4-harness.md) |
-| P9 · Bridges (added) | — | planned, after P4 | — |
+| Phase | Scope | Planned (original) | Effective / re-based | Evidence |
+|---|---|---|---|---|
+| P0 · Toolchain and repository | Elixir/OTP toolchain, CI, docs, guard hooks | 2026-10-05 → 10-19 | done 2026-09-27 | [bench 0](../bench/0-baseline.md), CI green |
+| Bench 1 · contention (inserted) | CPU and GPU tiers under load | — | done 2026-09-27 | [bench 1](../bench/1-contention.md) |
+| P1 · State-machine core and log | statecharts on `gen_statem`, effects as data, OCEL SQLite log, recovery | 2026-10-19 → 11-16 | done 2026-09-27 | 34 tests, property test |
+| P2 · Typed decisions | decision types, rules, the CPU model, calibration, eval sets | 2026-11-16 → 12-14 | done 2026-09-27 | [bench 2](../bench/2-decisions.md) |
+| P3 · Delegation tiers | escalation as a machine, the GPU tier, policy, budgets | 2026-12-14 → 2027-01-04 | done 2026-09-27 | [bench 3](../bench/3-escalation.md) |
+| P3b · OpenRouter tier (inserted) | hosted open models as an off-box tier | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
+| P4 · TUI harness | daemon, TUI, chat and structured machines, step mode, skills, compact log, dogfood fixes | 2027-01-04 → 02-08 | built 2026-09-27 → 09-28; dogfooding until ≥ 2026-10-12 | [bench 4](../bench/4-harness.md) |
+| P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals, **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
+| P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
+| P7 · Meta machine | mining-driven proposals, counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
+| P8 · Packaging and v0.1 | Burrito binary, install script or setup machine, guides, benchmark write-up | 2027-05-10 → 05-31 | ≈ 2027-01-11 → 02-01 | — |
+| P9 · Bridges (added) | `pi-xeito`, surveying and bridging other harnesses | — | after P4, alongside P5 (≈ 2 weeks) | — |
+
+The original dates of P5–P8 follow the original chain of durations. The re-based dates assume part-time pace, and P9 runs alongside P5 rather than after P8, since it needs only the daemon's socket.
 
 ```mermaid
 gantt
@@ -36,15 +42,16 @@ gantt
   P3 Delegation tiers            :done, p3, 2026-09-27, 1d
   P3b OpenRouter tier            :done, p3b, 2026-09-27, 1d
   section Harness
-  P4 TUI harness (pi parity)     :active, p4, 2026-09-27, 5w
+  P4 build                       :done, p4b, 2026-09-27, 2d
+  P4 dogfooding                  :active, p4d, 2026-09-28, 2w
   section Insight
-  P5 OCEL + mining               :p5, after p4, 4w
+  P5 OCEL, mining, portability   :p5, after p4d, 4w
   P6 Web inspector               :p6, after p5, 5w
   P7 Meta machine loop           :p7, after p6, 4w
   section Release
   P8 Packaging & v0.1            :p8, after p7, 3w
   section Reach
-  P9 Bridges (pi, others)        :p9, after p8, 2w
+  P9 Bridges (pi, others)        :p9, after p4d, 2w
 ```
 
 ---
@@ -185,6 +192,8 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
     - A blinking prompt cursor. It is solid while typing and stops blinking after 10 s idle, so an idle TUI doesn't wake up.
     - `write`/`edit` refuse `deps/`, `_build/`, `node_modules/`, `.git/` and `.xeito/`. In the dogfood session, an edit to a dependency looked done but never took.
     - A quote-aware Risk tokenizer that treats read-only pipelines as safe. It decides 33 of that session's 35 commands by rule, where 13 were decided by rule before.
+    - A project map in each chat turn's instructions (`Xeito.Source.RepoMap`): the project kind, top-level directories, modules with files (plus docs and public functions if they fit in 6,000 characters), and dependencies.
+    - `read` gains `outline` (modules and functions with line ranges) and `symbol` (one definition by name) for Elixir files, and `write`/`edit` report a file that no longer parses in the same step (`Xeito.Source`, using Elixir's own parser). Other languages can follow through tree-sitter.
     - The chat machine (0.2.0) runs a quick check before answering a turn that edited files, and gives the model up to two tries to fix a failure. The check asks whether the code still builds (format and warnings for Mix, `cargo check`, `go build`, `tsc`), which takes about 0.5 s on this project. A `check.quick` alias or `check-quick` target overrides it.
   - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.

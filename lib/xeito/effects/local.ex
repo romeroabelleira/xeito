@@ -31,14 +31,7 @@ defmodule Xeito.Effects.Local do
   @impl true
   def run(%Effect{kind: :bash, args: args}, opts) do
     cwd = workspace!(args)
-
-    task =
-      Task.async(fn -> System.cmd("sh", ["-c", args.cmd], cd: cwd, stderr_to_stdout: true) end)
-
-    case Task.yield(task, args.timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {output, status}} -> %{exit_status: status, output: truncate(output, opts)}
-      nil -> %{exit_status: 124, output: "timed out after #{args.timeout} ms"}
-    end
+    if File.dir?(cwd), do: run_bash(cwd, args, opts), else: workspace_missing(cwd)
   end
 
   def run(%Effect{kind: :read, args: args}, _opts) do
@@ -192,6 +185,23 @@ defmodule Xeito.Effects.Local do
       _ -> nil
     end
   end
+
+  defp run_bash(cwd, args, opts) do
+    task =
+      Task.async(fn -> System.cmd("sh", ["-c", args.cmd], cd: cwd, stderr_to_stdout: true) end)
+
+    case Task.yield(task, args.timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {output, status}} -> %{exit_status: status, output: truncate(output, opts)}
+      nil -> %{exit_status: 124, output: "timed out after #{args.timeout} ms"}
+    end
+  end
+
+  # The shell's own exit status for "cannot run here", with a message a model or human can act on.
+  defp workspace_missing(cwd),
+    do: %{
+      exit_status: 127,
+      output: "workspace missing: #{cwd} does not exist (moved or deleted?)"
+    }
 
   defp view(%{symbol: name, path: path}, content), do: Xeito.Source.symbol(path, content, name)
   defp view(%{outline: true, path: path}, content), do: Xeito.Source.outline(path, content)

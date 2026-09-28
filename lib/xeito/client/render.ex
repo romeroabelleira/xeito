@@ -46,10 +46,6 @@ defmodule Xeito.Client.Render do
     end
   end
 
-  defp read_label(%{"path" => p, "symbol" => s}), do: "read #{p} · #{s}"
-  defp read_label(%{"path" => p, "outline" => true}), do: "outline #{p}"
-  defp read_label(%{"path" => p}), do: "read #{p}"
-
   defp render(%{"event" => "effect_completed", "attrs" => %{"kind" => kind, "result" => r}}, pad) do
     case {to_string(kind), r} do
       {"bash", %{"exit_status" => status, "output" => out}} ->
@@ -115,6 +111,10 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "notice", "attrs" => %{"text" => text}}, _pad), do: text <> "\n"
   defp render(%{"event" => "error", "attrs" => %{"text" => text}}, _pad), do: "✗ " <> text <> "\n"
   defp render(_event, _pad), do: ""
+
+  defp read_label(%{"path" => p, "symbol" => s}), do: "read #{p} · #{s}"
+  defp read_label(%{"path" => p, "outline" => true}), do: "outline #{p}"
+  defp read_label(%{"path" => p}), do: "read #{p}"
 
   defp paused_what(%{"summary" => %{"decision" => d, "value" => v} = sm}),
     do: "#{d |> to_string() |> short()}: #{v} (#{sm["actor"]} #{conf(sm["confidence"])})"

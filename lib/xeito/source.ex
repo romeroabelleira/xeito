@@ -8,6 +8,8 @@ defmodule Xeito.Source do
       or a module).
     * `syntax_error/2`: whether a file still parses, checked right after a `write` or `edit`.
 
+  `Xeito.Source.RepoMap` builds a project map from the same parse.
+
   Elixir files (`.ex`, `.exs`) are parsed with Elixir's own parser (`Code.string_to_quoted/2`),
   so there are no dependencies; JSON files get a syntax check. Other languages are not supported
   yet: `outline/2` and `symbol/3` say so, and `syntax_error/2` returns `nil`.
