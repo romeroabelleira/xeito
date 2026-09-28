@@ -39,6 +39,7 @@ defmodule Xeito.Decision.Eval do
         input: atomize(ex["input"], type),
         label: label,
         lang: ex["lang"],
+        source: ex["source"],
         dangerous: ex["dangerous"] == true
       }
     end)

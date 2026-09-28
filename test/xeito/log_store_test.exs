@@ -119,7 +119,7 @@ defmodule Xeito.LogStoreTest do
 
     entries = fn logged ->
       [
-        {1, "run_started", {:run_started, Chat, "0.1.0", input}},
+        {1, "run_started", {:run_started, Chat, Machine.fetch!(Chat).version, input}},
         {2, "effect_requested", {:effect_requested, logged}}
       ]
     end

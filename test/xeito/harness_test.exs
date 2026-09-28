@@ -150,6 +150,50 @@ defmodule Xeito.HarnessTest do
 
   # --- the chat machine --------------------------------------------------------------------
 
+  test "chat: after edits the checks run before the answer; a failure goes back to the model",
+       %{ws: ws} do
+    log = start_log!()
+    File.write!(Path.join(ws, "a.txt"), "bug")
+    edit = fn old, new -> {"edit", %{"path" => "a.txt", "old_text" => old, "new_text" => new}} end
+
+    cfg =
+      ollama(self(), [
+        {"Editing.", [edit.("bug", "wip")]},
+        {"Done.", []},
+        {"Fixing.", [edit.("wip", "fixed")]},
+        {"Fixed now.", []}
+      ])
+
+    id = run_chat(log, ws, cfg, %{prompt: "Fix a.txt", verify: "grep -q fixed a.txt"})
+
+    await_exit(id)
+    assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
+    assert ctx.answer == "Fixed now."
+    assert ctx.checks == %{cmd: "grep -q fixed a.txt", exit_status: 0, passed: true}
+    assert kinds(log, id) == [:chat, :edit, :chat, :bash, :chat, :edit, :chat, :bash]
+
+    # The third request carries the failed checks as the user's reply.
+    requests =
+      for _ <- 1..4 do
+        assert_received {:chat_request, request}
+        request
+      end
+
+    failure = requests |> Enum.at(2) |> Map.fetch!("messages") |> List.last()
+    assert failure["role"] == "user" and failure["content"] =~ "fail after your edits"
+  end
+
+  test "chat: a turn without edits answers without running the checks", %{ws: ws} do
+    log = start_log!()
+    cfg = ollama(self(), [{"Just an answer.", []}])
+    id = run_chat(log, ws, cfg, %{prompt: "hi", verify: "false"})
+
+    await_exit(id)
+    assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
+    refute Map.has_key?(ctx, :checks)
+    assert kinds(log, id) == [:chat]
+  end
+
   test "chat: a safe bash call runs, its output goes back to the model, then it answers", %{
     ws: ws
   } do

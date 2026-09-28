@@ -161,6 +161,31 @@ defmodule Xeito.DecisionTest do
       assert unsafe_as_safe == []
     end
 
+    test "read-only commands are safe by rule, quotes and harmless redirects included" do
+      type = Decision.type!(Risk)
+
+      missed =
+        for ex <- Eval.examples(Risk),
+            ex.label == :safe and ex.source == "dogfood",
+            Decider.apply_rules(type, Type.normalize_input(type, ex.input)) !=
+              {:ok, :safe, :classify},
+            do: ex.input.command
+
+      assert missed == []
+    end
+
+    test "the shell tokenizer splits on unquoted operators only" do
+      assert Risk.segments(~s(grep -n "a\\|b" f 2>/dev/null | head -3; echo "x; y")) ==
+               {:ok, [~s(grep -n "a\\|b" f), "head -3", ~s(echo "x; y")]}
+
+      assert Risk.segments("mix test 2>&1 | tail") == {:ok, ["mix test", "tail"]}
+      assert Risk.segments("echo '$(not run)' && ls") == {:ok, ["echo '$(not run)'", "ls"]}
+
+      for unsafe <- ["ls > out", ~s(echo "`id`"), "ls & rm x", "echo 'open", "cat <<EOF"] do
+        assert Risk.segments(unsafe) == :unsafe, unsafe
+      end
+    end
+
     test "the decider raises model output to the floor" do
       decision = Decider.decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [])
       assert %Decision{value: :review, actor: :none} = decision

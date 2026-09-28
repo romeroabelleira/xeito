@@ -181,6 +181,11 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
   - `/machines` (summary, routing, per-project usage) and a toggleable TUI status bar: GPU, VRAM, power and temperatures, resident models and unload countdown, CPU and RAM, git branch/dirty, session usage, the determinism budget, spend, the off-box budget left, and queues. The daemon polls only while a client shows the bar. Segments are configurable (`/statusbar show|hide`) and saved as a client preference.
   - Lifecycle: session status in the log is truthful (`open`, `closed`, `interrupted`), idle workspace logs close and reopen transparently, and `mix xeito.log sessions|prune` gives explicit, whole-session retention (a dry run unless `--apply`).
   - Compact log (2026-09-28): chat messages are stored once as hash-linked chains of plain JSON rows, results are not repeated, terms are compressed, and replay checks each requested effect against the log (desync detection). A 40-call chat run's payload drops from 1.4 MB to 49 KB, and growth is linear instead of quadratic. `mix xeito.log stats|verify|compact`. See [05](architecture/05-event-log-and-process-mining.md#storing-inputs-not-state).
+  - From dogfooding (2026-09-28):
+    - A blinking prompt cursor. It is solid while typing and stops blinking after 10 s idle, so an idle TUI doesn't wake up.
+    - `write`/`edit` refuse `deps/`, `_build/`, `node_modules/`, `.git/` and `.xeito/`. In the dogfood session, an edit to a dependency looked done but never took.
+    - A quote-aware Risk tokenizer that treats read-only pipelines as safe. It decides 33 of that session's 35 commands by rule, where 13 were decided by rule before.
+    - The chat machine (0.2.0) runs the project's checks before answering a turn that edited files, and gives the model up to two tries to fix a failure.
   - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
 - Live (2026-09-28): `/skill:py-inventory`, "run the checks and fix what fails" (a delegated fix, then the checks pass) and "commit these changes" (drafted, approved, committed) all work end to end.

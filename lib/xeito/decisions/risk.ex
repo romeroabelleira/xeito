@@ -92,8 +92,7 @@ defmodule Xeito.Decisions.Risk do
     "go test",
     "go build",
     "make test",
-    "bundle exec rspec",
-    "find ."
+    "bundle exec rspec"
   ]
 
   @doc false
@@ -106,17 +105,17 @@ defmodule Xeito.Decisions.Risk do
   end
 
   defp all_segments_safe?(command) do
-    not String.contains?(command, [">", "`", "$(", "sudo "]) and
-      command
-      |> String.split(~r/\s*(&&|\|\||;|\|)\s*/, trim: true)
-      |> Enum.all?(&safe_segment?/1)
+    case segments(command) do
+      {:ok, segments} -> segments |> Enum.reject(&(&1 == "")) |> Enum.all?(&safe_segment?/1)
+      :unsafe -> false
+    end
   end
 
   defp safe_segment?(segment) do
-    segment = String.trim(segment)
     [word | _] = String.split(segment, ~r/\s+/, parts: 2) ++ [""]
 
-    (word in @safe_commands or Enum.any?(@safe_prefixes, &String.starts_with?(segment, &1))) and
+    (word in @safe_commands or Enum.any?(@safe_prefixes, &String.starts_with?(segment, &1)) or
+       read_only?(word, segment)) and
       not String.contains?(segment, [
         "-delete",
         "-exec",
@@ -127,4 +126,79 @@ defmodule Xeito.Decisions.Risk do
         ".netrc"
       ])
   end
+
+  # `find` anywhere, without the actions that write or run something; `sed -n` printing line
+  # ranges (never `-i`, or scripts that could write or execute); `cd` to a relative directory
+  # inside the workspace.
+  defp read_only?("find", segment),
+    do: not String.contains?(segment, ["-ok", "-fprint", "-fls"])
+
+  defp read_only?("sed", segment),
+    do: Regex.match?(~r/^sed\s+-n\s+'?\d+(,(\d+|\$))?p'?(\s+[^\s-][^\s;]*)*$/, segment)
+
+  defp read_only?("cd", segment),
+    do:
+      Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and
+        not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
+
+  defp read_only?(_word, _segment), do: false
+
+  # --- a small shell tokenizer -------------------------------------------------------------
+  #
+  # Splits a command into the segments between unquoted `|`, `||`, `&&`, `;` and newlines,
+  # respecting quotes. It is deliberately strict: `:unsafe` for command substitution, process
+  # substitution, heredocs, background jobs, unbalanced quotes, and any redirection except to
+  # `/dev/null` or between streams (`2>&1`), since other redirections write files.
+
+  @doc false
+  @spec segments(String.t()) :: {:ok, [String.t()]} | :unsafe
+  def segments(command), do: scan(String.graphemes(command), nil, [], [])
+
+  defp scan([], nil, cur, acc), do: {:ok, Enum.reverse([segment(cur) | acc])}
+  defp scan([], _quote, _cur, _acc), do: :unsafe
+
+  # Inside single quotes nothing is special.
+  defp scan(["'" | rest], "'", cur, acc), do: scan(rest, nil, ["'" | cur], acc)
+  defp scan([c | rest], "'", cur, acc), do: scan(rest, "'", [c | cur], acc)
+  defp scan(["'" | rest], nil, cur, acc), do: scan(rest, "'", ["'" | cur], acc)
+
+  # Substitution runs a command, also inside double quotes.
+  defp scan(["`" | _], _quote, _cur, _acc), do: :unsafe
+  defp scan(["$", "(" | _], _quote, _cur, _acc), do: :unsafe
+  defp scan(["\\", c | rest], quote, cur, acc), do: scan(rest, quote, [c, "\\" | cur], acc)
+  defp scan(["\"" | rest], "\"", cur, acc), do: scan(rest, nil, ["\"" | cur], acc)
+  defp scan([c | rest], "\"", cur, acc), do: scan(rest, "\"", [c | cur], acc)
+  defp scan(["\"" | rest], nil, cur, acc), do: scan(rest, "\"", ["\"" | cur], acc)
+
+  # Unquoted operators.
+  defp scan(["&", "&" | rest], nil, cur, acc), do: split(rest, cur, acc)
+  defp scan(["|", "|" | rest], nil, cur, acc), do: split(rest, cur, acc)
+  defp scan([op | rest], nil, cur, acc) when op in ["|", ";", "\n"], do: split(rest, cur, acc)
+  defp scan(["&", ">" | rest], nil, cur, acc), do: redirect(rest, cur, acc)
+  defp scan(["&" | _], nil, _cur, _acc), do: :unsafe
+  defp scan([">" | rest], nil, cur, acc), do: redirect(rest, cur, acc)
+  defp scan(["<", c | _], nil, _cur, _acc) when c in ["(", "<"], do: :unsafe
+  defp scan([c | rest], nil, cur, acc), do: scan(rest, nil, [c | cur], acc)
+
+  defp split(rest, cur, acc), do: scan(rest, nil, [], [segment(cur) | acc])
+
+  # After `>`, `>>`, `N>` or `&>`: only `/dev/null` or another stream (`&1`, `&2`) is allowed.
+  # The redirection (and a file descriptor number before it) is dropped from the segment.
+  defp redirect([">" | rest], cur, acc), do: redirect(rest, cur, acc)
+
+  defp redirect(rest, cur, acc) do
+    target = rest |> Enum.join() |> String.trim_leading()
+
+    case Regex.run(~r/^(\/dev\/null|&[12-])(?=$|[\s;|&])/, target) do
+      [_, t] ->
+        skipped = String.length(Enum.join(rest)) - String.length(target) + String.length(t)
+        cur = if match?([d | _] when d in ~w(0 1 2), cur), do: tl(cur), else: cur
+        scan(Enum.drop(rest, skipped), nil, cur, acc)
+
+      nil ->
+        :unsafe
+    end
+  end
+
+  defp segment(cur), do: cur |> Enum.reverse() |> Enum.join() |> String.trim()
 end

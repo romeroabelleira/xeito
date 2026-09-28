@@ -442,6 +442,8 @@ defmodule Xeito.Session do
       cwd: s.cwd,
       prompt: text,
       messages: s.history,
+      # A turn that edits files is checked before it answers (`Xeito.Machines.Chat`).
+      verify: Router.check_command(s.cwd),
       system: s.system <> Skills.prompt_section(skills),
       skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
     }

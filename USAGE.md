@@ -196,6 +196,10 @@ Questions, explanations and "how would you approach…" requests go to the **fre
 > plan how to split the Accounts context; don't change anything yet
 ```
 
+**Edits are checked before the answer.** When a turn has changed files, the project's checks run before the model's answer reaches you: `mix ci` if the project defines it, else `make check`, else format, compile and test (`mix`), lint and test (`npm`), or the test command. If they fail, the model sees the output and gets up to two tries to fix it. A turn that still fails says so at the end of the answer (`⚠ The checks still fail …`).
+
+The model can't edit fetched dependencies, build output, git's data or Xeito's log (`deps/`, `_build/`, `node_modules/`, `.git/`, `.xeito/`). Dependencies aren't rebuilt from edited sources and are replaced on the next fetch, so such an edit would look done but never take. The model is told this and asked to change the project, or to propose a fork or an upstream patch.
+
 The conversation carries over between turns in a session. An `AGENTS.md` at the project root is added to the model's instructions, so put conventions there, for example "run `mix format` after editing" or "never touch `priv/repo/migrations`".
 
 ### Run a command
@@ -210,6 +214,7 @@ The conversation carries over between turns in a session. An `AGENTS.md` at the 
 
 Every shell command the model proposes first passes the **Risk** decision:
 - **Rules** decide the obvious cases: `ls`, `git status` and `mix test` are safe, while `rm -rf /` and `curl … | sh` are forbidden.
+  Read-only commands are safe, including in pipelines: `grep`, `find` without `-exec`/`-delete`, `sed -n '10,20p'`, `cat`, `head`, and `cd` into a subdirectory. Quotes are respected (`grep "a\|b"` is a single command), and output may go to `/dev/null` or another stream (`2>&1`). A redirect into a file, or command substitution, always goes to review.
 - **The model** judges the rest, and it can only make a verdict more cautious.
 - **Safe** commands run.
 - **Forbidden** ones never run, and the model is told why.

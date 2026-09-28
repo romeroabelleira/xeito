@@ -17,6 +17,9 @@ defmodule Xeito.Tui do
 
   `/quit` (or `/exit`, Ctrl-D, Ctrl-C) closes the TUI; the session keeps running in the daemon.
 
+  The prompt's cursor blinks like an editor's: solid while you type, blinking in between, and
+  solid again (with no timer running) after 10 s without a key.
+
   Keys: Enter sends (and steps a paused run when the prompt is empty); `y` / `n` answer a
   pending review when the prompt is empty; PgUp / PgDn
   scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
@@ -36,6 +39,10 @@ defmodule Xeito.Tui do
   alias Xeito.Client.{Render, StatusBar}
 
   @max_lines 5_000
+  # Blink half-period and how long the cursor keeps blinking after the last key (as GTK does), so
+  # an idle TUI stops waking up.
+  @blink_ms 530
+  @blink_for_ms 10_000
 
   # --- init ----------------------------------------------------------------------------------
 
@@ -74,8 +81,12 @@ defmodule Xeito.Tui do
       monitor: nil,
       workspace: nil,
       workspace_at: nil,
-      usage: StatusBar.new()
+      usage: StatusBar.new(),
+      cursor_on: true,
+      blink: 0,
+      blink_until: 0
     }
+    |> wake_cursor()
     |> tap(&if(&1.bar, do: Client.request(client, %{"cmd" => "monitor", "on" => true})))
     |> tap(&Client.request(client, %{"cmd" => "workspace", "session" => &1.session}))
   end
@@ -154,14 +165,36 @@ defmodule Xeito.Tui do
   def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state),
     do: {append(state, "✗ #{error}\n"), []}
 
+  # Only the timer of the latest key counts; older ones are stale.
+  def handle_info({:blink, gen}, %{blink: gen} = state) do
+    if now() < state.blink_until do
+      Process.send_after(self(), {:blink, gen}, @blink_ms)
+      {%{state | cursor_on: not state.cursor_on}, []}
+    else
+      {%{state | cursor_on: true}, []}
+    end
+  end
+
   def handle_info(_msg, state), do: {state, []}
 
   # --- update --------------------------------------------------------------------------------
 
+  # Every message here comes from a key, except a resize: a key shows the cursor solid and
+  # restarts the blinking phase.
   @impl true
-  def update(:quit, state), do: {state, [TermUI.Command.quit(:normal)]}
+  def update({:resize, _, _} = msg, state), do: handle_update(msg, state)
+  def update(msg, state), do: handle_update(msg, wake_cursor(state))
 
-  def update(:submit, state) do
+  @doc false
+  def wake_cursor(state) do
+    gen = state.blink + 1
+    Process.send_after(self(), {:blink, gen}, @blink_ms)
+    %{state | cursor_on: true, blink: gen, blink_until: now() + @blink_for_ms}
+  end
+
+  defp handle_update(:quit, state), do: {state, [TermUI.Command.quit(:normal)]}
+
+  defp handle_update(:submit, state) do
     case String.trim(TextInput.get_value(state.input)) do
       "" when state.paused ->
         request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/next"})
@@ -172,10 +205,10 @@ defmodule Xeito.Tui do
 
       # Handled here: it changes how this client shows things, never what runs.
       quit when quit in ["/quit", "/exit"] ->
-        update(:quit, state)
+        handle_update(:quit, state)
 
       "/statusbar" <> args ->
-        update({:statusbar, args}, state)
+        handle_update({:statusbar, args}, state)
 
       text ->
         request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
@@ -183,7 +216,7 @@ defmodule Xeito.Tui do
     end
   end
 
-  def update({:review, answer}, state) do
+  defp handle_update({:review, answer}, state) do
     cmd = if answer == "y", do: "approve", else: "deny"
     request(state, %{"cmd" => cmd, "session" => state.session})
 
@@ -191,24 +224,24 @@ defmodule Xeito.Tui do
      |> append("  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
   end
 
-  def update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
+  defp handle_update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
 
-  def update({:statusbar, args}, state) do
+  defp handle_update({:statusbar, args}, state) do
     state = %{state | input: TextInput.clear(state.input)}
     {statusbar(String.split(args, ~r/[\s,]+/, trim: true), state), []}
   end
 
-  def update({:input, event}, state) do
+  defp handle_update({:input, event}, state) do
     {:ok, input} = TextInput.handle_event(event, state.input)
     {%{state | input: input}, []}
   end
 
-  def update({:scroll, n}, state), do: {%{state | scroll: max(state.scroll + n, 0)}, []}
+  defp handle_update({:scroll, n}, state), do: {%{state | scroll: max(state.scroll + n, 0)}, []}
 
-  def update({:resize, w, h}, state),
+  defp handle_update({:resize, w, h}, state),
     do: {%{state | width: w, height: h, input: Map.put(state.input, :width, w - 2)}, []}
 
-  def update(_msg, state), do: {state, []}
+  defp handle_update(_msg, state), do: {state, []}
 
   # --- status bar preferences ----------------------------------------------------------
 
@@ -347,12 +380,18 @@ defmodule Xeito.Tui do
       stack(:vertical, Enum.map(visible(state, body_height), &text/1)),
       stack(:horizontal, [
         text("> "),
-        TextInput.render(state.input, %{width: state.width - 2, height: 1})
+        TextInput.render(input_view(state), %{width: state.width - 2, height: 1})
       ]),
       stack(:vertical, Enum.map(bar, &text(pad(" " <> &1, state.width), bar_style()))),
       text(pad(status_line(state), state.width), status_style(state))
     ])
   end
+
+  # In the blink's off phase the input is drawn from a copy whose cursor row is off-screen, so
+  # TextInput draws no cursor cell; the stored input (and typing) is unaffected.
+  @doc false
+  def input_view(%{cursor_on: true, input: input}), do: input
+  def input_view(%{input: input}), do: %{input | cursor_row: -1}
 
   defp visible(state, height) do
     lines = state.lines ++ if(state.partial == "", do: [], else: [state.partial])

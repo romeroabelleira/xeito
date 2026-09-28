@@ -5,6 +5,10 @@ defmodule Xeito.Tools do
   runner, never by the model client.
 
   * `read` and `write`/`edit` are confined to the workspace by `Xeito.Effects.Local`.
+  * `write`/`edit` refuse directories that edits do not belong in: fetched dependencies and build
+    output (`deps/`, `_build/`, `node_modules/`), git's own data (`.git/`) and Xeito's log
+    (`.xeito/`). Dependencies are not rebuilt from edited sources and are replaced on the next
+    fetch, so such an edit looks done but never takes; the model is told why and what to do.
   * `bash` commands pass the `Xeito.Decisions.Risk` decision first (see `Xeito.Machines.Chat`).
   * `skill` (offered only when skills are available, `Xeito.Skills`) reads a file of a skill,
     confined to that skill's directory; `SKILL.md` by default.
@@ -114,16 +118,43 @@ defmodule Xeito.Tools do
 
   defp effect("write", %{"path" => p, "content" => c}, opts)
        when is_binary(p) and is_binary(c) and is_list(opts),
-       do: Effect.write(p, c, opts)
+       do: protected(p, opts) || Effect.write(p, c, opts)
 
   defp effect("edit", %{"path" => p, "old_text" => o, "new_text" => n}, opts)
        when is_binary(p) and is_binary(o) and is_binary(n) and is_list(opts),
-       do: Effect.edit(p, o, n, opts)
+       do: protected(p, opts) || Effect.edit(p, o, n, opts)
 
   defp effect("bash", %{"command" => c}, opts) when is_binary(c) and is_list(opts),
     do: Effect.bash(c, opts)
 
   defp effect(_name, _args, opts) when is_list(opts), do: nil
+
+  @dependency_reason "holds fetched dependencies or build output: they are not rebuilt from " <>
+                       "edited sources and are replaced on the next fetch, so the edit would " <>
+                       "never take effect. Change the project's own code instead; if the " <>
+                       "dependency itself must change, tell the user and propose a fork or an " <>
+                       "upstream patch"
+
+  @protected %{
+    "deps" => @dependency_reason,
+    "_build" => @dependency_reason,
+    "node_modules" => @dependency_reason,
+    ".git" => "is git's own data; use git commands through bash instead",
+    ".xeito" => "is Xeito's event log; it is written only by Xeito"
+  }
+
+  # `{:error, reason}` if `path` (relative to the workspace) lies in a protected directory.
+  defp protected(path, opts) do
+    root = Path.expand(Keyword.get(opts, :cwd) || ".")
+
+    case path |> Path.expand(root) |> Path.relative_to(root) |> Path.split() do
+      [dir | _] when is_map_key(@protected, dir) ->
+        {:error, "refused: #{dir}/ #{Map.fetch!(@protected, dir)}"}
+
+      _ ->
+        nil
+    end
+  end
 
   @doc "Whether a tool call needs the Risk decision before it runs."
   @spec risky?(map()) :: boolean()
