@@ -14,14 +14,17 @@ jobs:
     env:
       MIX_ENV: test
     steps:
-      - uses: actions/checkout@v4
+      # Node 24 majors (checkout v5+, cache v5+); Node 20 actions are deprecated on runners.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: erlef/setup-beam@v1
         with:
           version-file: .tool-versions
           version-type: strict
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             deps

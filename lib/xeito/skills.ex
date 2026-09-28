@@ -5,8 +5,7 @@ defmodule Xeito.Skills do
   Discovery, first match wins on a name collision (project before user):
 
     * `<workspace>/.pi/skills/`, `<workspace>/.agents/skills/`
-    * pi's user-level skills directory (`agent/skills/` in pi's config directory under the
-      home directory), `~/.agents/skills/`
+    * `~/.pi/agent/skills/`, `~/.agents/skills/`
 
   Directories containing `SKILL.md` are found recursively. The frontmatter must have a `name` and
   a `description`; skills without a description are skipped, as in pi.

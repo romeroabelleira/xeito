@@ -225,7 +225,7 @@ The model only drafts the message; the git commands are fixed. Staged changes ar
 
 ### Skills
 
-Xeito reads skills in pi's format ([Agent Skills](https://agentskills.io/specification)): a directory with a `SKILL.md` that starts with `name` and `description` frontmatter. It looks in the project's `.pi/skills/` and `.agents/skills/`, then in pi's user-level skills directory and in `~/.agents/skills/` ([pi's skill locations](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md)), so skills you already use with pi work unchanged.
+Xeito reads skills in pi's format ([Agent Skills](https://agentskills.io/specification)): a directory with a `SKILL.md` that starts with `name` and `description` frontmatter. It looks in the project's `.pi/skills/` and `.agents/skills/`, then in `~/.pi/agent/skills/` and `~/.agents/skills/` ([pi's skill locations](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md)), so skills you already use with pi work unchanged.
 
 ```markdown
 ---

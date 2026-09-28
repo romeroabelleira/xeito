@@ -176,7 +176,7 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
   - A systemd user unit that puts the desktop first (`deploy/systemd/xeitod.service.example`): about 100 MB of RAM and no CPU when idle.
   - Idle sessions close after 2 h and resume transparently from the log. Budget entries are removed with their run or session, and a periodic sweep catches the rest.
   - [USAGE.md](../USAGE.md): setup, everyday examples, step mode, the log, evaluation, extending.
-  - Skills in pi's format (Agent Skills, `SKILL.md`), read from the project's `.pi/skills` and `.agents/skills`, pi's user-level skills directory, and `~/.agents/skills`. They are listed for the model, loaded on demand through a `skill` tool confined to the skill's directory, and can be forced with `/skill:name`.
+  - Skills in pi's format (Agent Skills, `SKILL.md`), read from the project's `.pi/skills` and `.agents/skills`, then `~/.pi/agent/skills` and `~/.agents/skills`. They are listed for the model, loaded on demand through a `skill` tool confined to the skill's directory, and can be forced with `/skill:name`.
   - Structured machines: `run_tests`, `fix_failing_test`, `commit` (drafted message, human approval, fixed git commands) and `check` (the project's checks, with failures delegated to a chat run). With the free chat machine, that makes five.
   - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
