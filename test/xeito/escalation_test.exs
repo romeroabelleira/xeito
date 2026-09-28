@@ -217,6 +217,18 @@ defmodule Xeito.EscalationTest do
     assert Enum.any?(d.evidence, &match?(%{tier: :large, error: {:skipped, _}}, &1))
   end
 
+  test "budgets are deleted with their run, and swept when their owner is gone" do
+    owner = run_id()
+    Budget.add(owner, :usd, 0.2)
+    Budget.add(owner, :swaps, 1)
+    assert Budget.sweep() >= 1
+    assert Budget.get(owner, :usd) == 0 and Budget.get(owner, :swaps) == 0
+
+    Budget.add(owner, :usd, 0.2)
+    Budget.delete(owner)
+    assert Budget.get(owner, :usd) == 0
+  end
+
   test "a rule's verdict is not raised by the severity floor; a model's is" do
     {safe, _, _} = decide(Risk, %{command: "git status"}, deciders: [])
     assert %{value: :safe, actor: :rule} = safe

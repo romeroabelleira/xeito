@@ -20,6 +20,11 @@ defmodule Xeito.Session do
   conf<<x> | clear`. Debug settings apply to the session's live runs and to every run it starts;
   escalation runs never pause. See `docs/architecture/07-harness-frontend.md#interaction-model`.
 
+  **Idle sessions close.** A session with no run in progress and no activity for
+  `:idle_timeout` (default 2 hours, `config :xeito, :session_idle_timeout`) stops and frees its
+  memory and budget entries. Nothing is lost: its turns are in the workspace log, and `attach`
+  (or any request of a client that knows the workspace) rebuilds it.
+
   Clients subscribe with `subscribe/1` and receive `{:xeito, "session:<id>", event}` where
   `event` is `%{type: type, run: run_id, attrs: map}`. Besides the logged event types, the
   session emits `prompt`, `intent`, `run_selected`, `human_needed`, `turn_finished`, `notice`
@@ -28,7 +33,7 @@ defmodule Xeito.Session do
 
   use GenServer
 
-  alias Xeito.{Escalation, Events, Log, Run, RunSupervisor}
+  alias Xeito.{Budget, Escalation, Events, Log, Run, RunSupervisor}
   alias Xeito.Machines.{Chat, FixFailingTest, RunTests}
   alias Xeito.Session.Router
 
@@ -41,7 +46,8 @@ defmodule Xeito.Session do
   Starts a session. Options: `:cwd` (workspace, required), `:id`, `:log` (default: the
   workspace's own log, `Xeito.Log.for_workspace/1`),
   `:decider` (escalation options for decisions: `deciders`, `policy`, `tiers`), `:chat`
-  (chat-model overrides), `:test_cmd`, `:system` (replaces the default system prompt).
+  (chat-model overrides), `:test_cmd`, `:system` (replaces the default system prompt),
+  `:idle_timeout` (ms).
   """
   @spec start(keyword()) :: {:ok, String.t()} | {:error, term()}
   def start(opts) do
@@ -124,11 +130,24 @@ defmodule Xeito.Session do
       root: nil,
       machine: nil,
       prompt: nil,
-      waiting: nil
+      waiting: nil,
+      idle_timeout:
+        Keyword.get_lazy(opts, :idle_timeout, fn ->
+          Application.get_env(:xeito, :session_idle_timeout, 7_200_000)
+        end),
+      active_at: now()
     }
 
+    schedule_idle_check(state)
     {:ok, restore(state)}
   end
+
+  defp now, do: System.monotonic_time(:millisecond)
+
+  defp schedule_idle_check(s),
+    do: Process.send_after(self(), :idle_check, max(div(s.idle_timeout, 4), 10))
+
+  defp busy?(s), do: s.root != nil or s.waiting != nil or s.paused != nil
 
   # A session id that already has turns in the workspace log is resumed: the conversation is
   # rebuilt from its finished runs. An unfinished run (the daemon stopped mid-turn) is reported,
@@ -169,8 +188,11 @@ defmodule Xeito.Session do
   end
 
   # Commands that answer or inspect work while a run is busy; anything that starts a run does not.
+  # Every request counts as activity for the idle timeout.
   @impl true
-  def handle_call({:prompt, text}, _from, s) do
+  def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
+
+  defp handle_request({:prompt, text}, _from, s) do
     trimmed = String.trim(text)
 
     cond do
@@ -195,15 +217,17 @@ defmodule Xeito.Session do
     end
   end
 
-  def handle_call({:human, _answer}, _from, %{waiting: nil} = s),
+  defp handle_request({:human, _answer}, _from, %{waiting: nil} = s),
     do: {:reply, {:error, :nothing_to_approve}, s}
 
-  def handle_call({:human, answer}, _from, s) do
-    Run.send_event(s.waiting.run, answer, %{}, :human)
-    {:reply, :ok, %{s | waiting: nil}}
+  defp handle_request({:human, answer}, _from, s) do
+    case answer_human(s.waiting.run, answer) do
+      :ok -> {:reply, :ok, %{s | waiting: nil}}
+      :ignored -> {:reply, {:error, :not_accepted}, s}
+    end
   end
 
-  def handle_call(:status, _from, s) do
+  defp handle_request(:status, _from, s) do
     {:reply,
      %{
        id: s.id,
@@ -217,7 +241,7 @@ defmodule Xeito.Session do
      }, s}
   end
 
-  def handle_call(:history, _from, s), do: {:reply, s.history, s}
+  defp handle_request(:history, _from, s), do: {:reply, s.history, s}
 
   @impl true
   def handle_info({:intent, text, decision}, s) do
@@ -233,10 +257,22 @@ defmodule Xeito.Session do
     {:noreply, start_machine(machine, input_for(machine, text, s), reason, s)}
   end
 
+  def handle_info(:idle_check, s) do
+    if not busy?(s) and now() - s.active_at >= s.idle_timeout do
+      emit(s, "closed", nil, %{"reason" => "idle", "idle_ms" => s.idle_timeout})
+      Log.put_object(s.log, s.id, "session", %{status: "closed"}, "status")
+      Budget.delete(s.id)
+      {:stop, :normal, s}
+    else
+      schedule_idle_check(s)
+      {:noreply, s}
+    end
+  end
+
   def handle_info({:xeito, run_id, event}, s) when is_binary(run_id) do
     if String.starts_with?(run_id, s.id <> "/") do
       emit(s, event.type, run_id, event.attrs)
-      {:noreply, track(run_id, event, s)}
+      {:noreply, track(run_id, event, %{s | active_at: now()})}
     else
       {:noreply, s}
     end
@@ -306,8 +342,25 @@ defmodule Xeito.Session do
     do: error(s, "nothing is waiting for #{answer}")
 
   defp human_command(answer, s) do
-    Run.send_event(s.waiting.run, answer, %{}, :human)
-    %{s | waiting: nil}
+    case answer_human(s.waiting.run, answer) do
+      :ok -> %{s | waiting: nil}
+      :ignored -> error(s, "the waiting run did not accept #{answer}")
+    end
+  end
+
+  # Review states take :approved / :denied (the chat machine); a machine's own ask_human state
+  # may continue with :answered and stop with :abort (fix_failing_test).
+  @fallback %{approved: :answered, denied: :abort}
+
+  defp answer_human(run, answer) do
+    with :ignored <- Run.send_event(run, answer, %{}, :human),
+         :ignored <- Run.send_event(run, @fallback[answer], %{}, :human) do
+      :ignored
+    else
+      {:ok, _leaf} -> :ok
+    end
+  catch
+    :exit, _ -> :ignored
   end
 
   defp input_for(Chat, text, s),

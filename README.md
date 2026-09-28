@@ -19,6 +19,7 @@ The reference deployment runs on a single workstation. A small CPU-bound model m
 
 | Doc | What it is |
 |---|---|
+| [USAGE.md](USAGE.md) | How to set up, run and extend Xeito, with examples |
 | [docs/design.md](docs/design.md) | One-page design doc |
 | [docs/architecture/00-overview.md](docs/architecture/00-overview.md) | Architecture draft (overview + one file per section) |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | Step-by-step implementation plan with exit criteria |
@@ -39,6 +40,6 @@ mix xeito.daemon            # runs, logs, and the client socket (tier endpoints 
 mix xeito.tui --cwd PROJECT # terminal UI on a session in PROJECT (or: mix xeito.chat, line mode)
 ```
 
-Tier endpoints are configured through `XEITO_*` environment variables; see `config/runtime.exs`.
+Tier endpoints are configured through `XEITO_*` environment variables. See [USAGE.md](USAGE.md) for setup, examples and ideas.
 
 *Xeito* is Galician for "knack" or "the right way of doing something".

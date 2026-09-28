@@ -101,6 +101,9 @@ defmodule Xeito.Client.Render do
     "#{mark} #{a["final_state"]}#{summary}\n"
   end
 
+  defp render(%{"event" => "closed"}, _pad),
+    do: "· session closed while idle; the next prompt resumes it from the log\n"
+
   defp render(%{"event" => "notice", "attrs" => %{"text" => text}}, _pad), do: text <> "\n"
   defp render(%{"event" => "error", "attrs" => %{"text" => text}}, _pad), do: "✗ " <> text <> "\n"
   defp render(_event, _pad), do: ""

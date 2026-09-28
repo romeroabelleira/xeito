@@ -6,6 +6,11 @@ defmodule Xeito.Budget do
   The ledger is an ETS table keyed by the *parent* run, so every decision in a run draws on the
   same budget. It is in memory: after a node restart, budgets start from zero. The logged costs
   (`decision_made` events) remain the durable record, and `Xeito.Run.cost/2` sums them.
+
+  Entries are removed when their run finishes (`Xeito.Run`) or their session closes
+  (`Xeito.Session`). As a backstop for a long-running daemon, a periodic sweep (hourly by
+  default, `config :xeito, :budget_sweep_ms`) drops entries whose owner is neither a live run
+  nor a live session.
   """
 
   use GenServer
@@ -33,6 +38,28 @@ defmodule Xeito.Budget do
     end
   end
 
+  @doc "Removes every entry of `run_id`."
+  @spec delete(String.t()) :: :ok
+  def delete(run_id) do
+    :ets.match_delete(@table, {{run_id, :_}, :_})
+    :ok
+  end
+
+  @doc "Removes entries whose owner is neither a live run nor a live session. Returns the count."
+  @spec sweep() :: non_neg_integer()
+  def sweep do
+    owners = :ets.select(@table, [{{{:"$1", :_}, :_}, [], [:"$1"]}]) |> Enum.uniq()
+    stale = Enum.reject(owners, &alive?/1)
+    Enum.each(stale, &delete/1)
+    length(stale)
+  end
+
+  defp alive?(owner) do
+    Xeito.Run.whereis(owner) != nil or
+      (Process.whereis(Xeito.SessionRegistry) != nil and
+         Registry.lookup(Xeito.SessionRegistry, owner) != [])
+  end
+
   defp put(run_id, key, value) do
     :ets.insert(@table, {{run_id, key}, value})
     value
@@ -41,6 +68,18 @@ defmodule Xeito.Budget do
   @impl true
   def init(:ok) do
     :ets.new(@table, [:named_table, :public, :set, write_concurrency: true])
+    schedule_sweep()
     {:ok, nil}
   end
+
+  @impl true
+  def handle_info(:sweep, state) do
+    sweep()
+    schedule_sweep()
+    {:noreply, state}
+  end
+
+  defp schedule_sweep,
+    do:
+      Process.send_after(self(), :sweep, Application.get_env(:xeito, :budget_sweep_ms, 3_600_000))
 end

@@ -13,9 +13,7 @@ defmodule Xeito.Api.Connection do
 
   @impl true
   def init(opts),
-    do:
-      {:ok,
-       %{socket: opts[:socket], buffer: "", defaults: opts[:session], sessions: MapSet.new()}}
+    do: {:ok, %{socket: opts[:socket], buffer: "", defaults: opts[:session], sessions: %{}}}
 
   @impl true
   def handle_info(:go, s) do
@@ -74,16 +72,22 @@ defmodule Xeito.Api.Connection do
     opts = Keyword.merge(s.defaults, cwd: req["cwd"] || File.cwd!())
 
     case Session.start(opts) do
-      {:ok, id} -> {%{ok: true, session: id}, follow(s, id)}
+      {:ok, id} -> {%{ok: true, session: id}, follow(s, id, opts[:cwd])}
       {:error, reason} -> {%{ok: false, error: inspect(reason)}, s}
     end
   end
 
   defp handle("attach", %{"session" => id} = req, s) do
     cond do
-      exists?(id) -> {%{ok: true, session: id, status: Session.status(id)}, follow(s, id)}
-      req["cwd"] -> handle("resume", req, s)
-      true -> {%{ok: false, error: "no such session"}, s}
+      exists?(id) ->
+        status = Session.status(id)
+        {%{ok: true, session: id, status: status}, follow(s, id, status.cwd)}
+
+      req["cwd"] ->
+        handle("resume", req, s)
+
+      true ->
+        {%{ok: false, error: "no such session"}, s}
     end
   end
 
@@ -92,8 +96,11 @@ defmodule Xeito.Api.Connection do
     opts = Keyword.merge(s.defaults, id: id, cwd: req["cwd"] || File.cwd!())
 
     case Session.start(opts) do
-      {:ok, ^id} -> {%{ok: true, session: id, status: Session.status(id)}, follow(s, id)}
-      {:error, reason} -> {%{ok: false, error: inspect(reason)}, s}
+      {:ok, ^id} ->
+        {%{ok: true, session: id, status: Session.status(id)}, follow(s, id, opts[:cwd])}
+
+      {:error, reason} ->
+        {%{ok: false, error: inspect(reason)}, s}
     end
   end
 
@@ -102,11 +109,22 @@ defmodule Xeito.Api.Connection do
     {%{ok: true, sessions: Enum.map(ids, &Session.status/1)}, s}
   end
 
+  # A followed session that closed while idle is resumed transparently from its workspace log.
   defp handle(cmd, %{"session" => id} = req, s)
        when cmd in ~w(prompt approve deny status history) do
-    if exists?(id),
-      do: {session_cmd(cmd, id, req), s},
-      else: {%{ok: false, error: "no such session"}, s}
+    cond do
+      exists?(id) ->
+        {session_cmd(cmd, id, req), s}
+
+      cwd = s.sessions[id] ->
+        case handle("resume", %{"session" => id, "cwd" => cwd}, s) do
+          {%{ok: true}, s} -> {session_cmd(cmd, id, req), s}
+          failed -> failed
+        end
+
+      true ->
+        {%{ok: false, error: "no such session"}, s}
+    end
   end
 
   defp handle(cmd, _req, s), do: {%{ok: false, error: "unknown or incomplete command #{cmd}"}, s}
@@ -122,13 +140,10 @@ defmodule Xeito.Api.Connection do
 
   defp exists?(id), do: Registry.lookup(Xeito.SessionRegistry, id) != []
 
-  defp follow(s, id) do
-    if MapSet.member?(s.sessions, id) do
-      s
-    else
-      Session.subscribe(id)
-      %{s | sessions: MapSet.put(s.sessions, id)}
-    end
+  # Remembers the workspace of every followed session, so it can be resumed after an idle close.
+  defp follow(s, id, cwd) do
+    unless Map.has_key?(s.sessions, id), do: Session.subscribe(id)
+    %{s | sessions: Map.put(s.sessions, id, cwd)}
   end
 
   defp send_line(s, map), do: :gen_tcp.send(s.socket, [Codec.encode(map), "\n"])

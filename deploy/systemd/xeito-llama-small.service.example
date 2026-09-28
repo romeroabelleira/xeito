@@ -16,6 +16,8 @@ ExecStart=/bin/sh -c 'exec "$LLAMA_SERVER" -m "$XEITO_SMALL_MODEL" \
 Restart=on-failure
 RestartSec=5
 Nice=5
+# Decisions are short CPU bursts; let interactive use win contention.
+CPUWeight=30
 
 [Install]
 WantedBy=default.target

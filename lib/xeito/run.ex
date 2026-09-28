@@ -20,7 +20,7 @@ defmodule Xeito.Run do
 
   @behaviour :gen_statem
 
-  alias Xeito.{Decision, Effect, Effects, Log, Machine}
+  alias Xeito.{Budget, Decision, Effect, Effects, Log, Machine}
   alias Xeito.Decision.Type
   alias Xeito.Log.Event
   alias Xeito.Machine.Engine
@@ -495,6 +495,7 @@ defmodule Xeito.Run do
     ])
 
     Log.put_object(data.log, data.run_id, "run", %{status: status}, "status")
+    Budget.delete(data.run_id)
 
     case from do
       :init -> :ignore

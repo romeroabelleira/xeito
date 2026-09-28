@@ -404,6 +404,36 @@ defmodule Xeito.HarnessTest do
     assert "first question" in Enum.map(second["messages"], & &1["content"])
   end
 
+  test "session: approving at fix_failing_test's ask_human continues the machine", %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [{"Fixed.", []}], %{
+        "What does the user want" => "edit",
+        "Why is this test failing" => "env_problem"
+      })
+
+    {:ok, id} =
+      Session.start(
+        cwd: ws,
+        log: log,
+        id: "ses-test-#{System.unique_integer([:positive])}",
+        chat: cfg,
+        # Fails once (reproduce), passes afterwards (verify), so the run ends cleanly.
+        test_cmd: "test -f .ok || (touch .ok; echo 'service unavailable'; exit 1)",
+        decider: [deciders: [:large], tiers: [large: cfg]]
+      )
+
+    Session.subscribe(id)
+    Session.prompt(id, "the pricing test is failing")
+    next_event("human_needed")
+    assert :ok = Session.approve(id)
+
+    # :answered took it back to working: the fix is delegated, verified, and the turn ends.
+    assert_receive {:xeito, _, %{type: "transition", attrs: %{"event_name" => :answered}}}, 3_000
+    assert %{attrs: %{"status" => :done}} = next_event("turn_finished")
+  end
+
   # --- the client API over the Unix socket -------------------------------------------------
 
   test "api: a client starts a session, prompts, and receives the streamed events", %{ws: ws} do
@@ -449,6 +479,54 @@ defmodule Xeito.HarnessTest do
              Client.request(client, %{"cmd" => "status", "session" => "nope"})
 
     assert %{"ok" => true, "status" => %{"history" => 2}} =
+             Client.request(client, %{"cmd" => "status", "session" => session})
+  end
+
+  test "an idle session closes, frees its budget, and a client's next prompt resumes it", %{
+    ws: ws
+  } do
+    log = start_log!()
+    cfg = ollama(self(), [{"one", []}, {"two", []}], %{"What does the user want" => "other"})
+    dir = Path.join(System.tmp_dir!(), "xa-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf(dir) end)
+    path = Path.join(dir, "x.sock")
+
+    defaults = [
+      log: log,
+      chat: cfg,
+      decider: [deciders: [:large], tiers: [large: cfg]],
+      idle_timeout: 200
+    ]
+
+    start_supervised!(
+      {Xeito.Api,
+       socket: path, name: :"api_#{System.unique_integer([:positive])}", session: defaults}
+    )
+
+    {:ok, client} = Client.connect(path)
+
+    %{"ok" => true, "session" => session} =
+      Client.request(client, %{"cmd" => "start", "cwd" => ws})
+
+    Xeito.Budget.add(session, :usd, 0.01)
+
+    %{"ok" => true} =
+      Client.request(client, %{"cmd" => "prompt", "session" => session, "text" => "hi"})
+
+    collect_until("turn_finished")
+
+    collect_until("closed")
+    eventually(fn -> Registry.lookup(Xeito.SessionRegistry, session) == [] end)
+    assert Xeito.Budget.get(session, :usd) == 0
+
+    # The client never noticed: its next prompt resumes the session from the log.
+    assert %{"ok" => true} =
+             Client.request(client, %{"cmd" => "prompt", "session" => session, "text" => "again"})
+
+    events = collect_until("turn_finished")
+    assert List.last(events)["attrs"]["answer"] == "two"
+
+    assert %{"ok" => true, "status" => %{"turns" => 2}} =
              Client.request(client, %{"cmd" => "status", "session" => session})
   end
 

@@ -170,6 +170,9 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
   - The free chat machine (tools as effects, `bash` behind `Risk`, reviews), machine selection from `Intent`, and delegation (`fix_failing_test` hands the fix to a chat child run).
   - Step mode and breakpoints, with human decisions logged as labels.
   - Per-workspace logs, and sessions that survive the client and are rebuilt from the log after a daemon restart.
+  - A systemd user unit that puts the desktop first (`deploy/systemd/xeitod.service.example`): about 100 MB of RAM and no CPU when idle.
+  - Idle sessions close after 2 h and resume transparently from the log. Budget entries are removed with their run or session, and a periodic sweep catches the rest.
+  - [USAGE.md](../USAGE.md): setup, everyday examples, step mode, the log, evaluation, extending.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
 - Open: pi's skills directory (item 5), the pi bridge (item 7), and dogfooding (item 8).
 - Exit latency not met yet: the median time to first token is 1.70 s against 1.5 s. Ollama holds back streamed content when tools are offered; options are listed in bench 4.

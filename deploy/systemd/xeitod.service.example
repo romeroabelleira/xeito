@@ -1,0 +1,31 @@
+# Xeito daemon (xeitod): runs, logs and the client socket for the TUI and other clients.
+# Copy to ~/.config/systemd/user/xeitod.service, set the paths, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now xeitod
+# Without `loginctl enable-linger`, a user unit runs only while you are logged in.
+[Unit]
+Description=Xeito daemon (xeitod)
+After=network.target xeito-llama-small.service
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/xeito
+# tiers.env exports the XEITO_* variables read by config/runtime.exs.
+ExecStart=/bin/bash -c 'source %h/.config/xeito/tiers.env && exec /path/to/mise exec -- mix xeito.daemon'
+Restart=on-failure
+RestartSec=5
+# Runs recover from the log on the next start, so a short stop timeout is safe.
+TimeoutStopSec=15
+
+# Desktop first: the daemon and every command it runs share this cgroup.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryHigh=8G
+MemoryMax=12G
+TasksMax=2048
+# IOWeight works only if the io controller is delegated to your user manager:
+#   cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+
+[Install]
+WantedBy=default.target

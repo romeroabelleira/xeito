@@ -23,7 +23,9 @@ if config_env() != :test do
     ],
     large: [
       url: System.get_env("XEITO_OLLAMA_URL"),
-      model: System.get_env("XEITO_LARGE_MODEL", "qwen3.6:27b")
+      model: System.get_env("XEITO_LARGE_MODEL", "qwen3.6:27b"),
+      # How long Ollama keeps the model in VRAM after the last request (frees the GPU sooner).
+      keep_alive: System.get_env("XEITO_KEEP_ALIVE", "10m")
     ],
     # OpenRouter tier (hosted open-weight models with logprobs). Off-box: gated by Xeito.Policy
     # like the remote tier. XEITO_OPENROUTER_PROVIDERS optionally pins providers (comma list).
