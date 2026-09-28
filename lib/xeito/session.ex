@@ -496,9 +496,11 @@ defmodule Xeito.Session do
   defp track(run_id, %{type: "run_finished"} = event, %{root: run_id} = s) do
     {:ok, result} = Run.result(s.log, run_id)
     answer = answer(s.machine, result)
-    emit(s, "turn_finished", run_id, Map.merge(event.attrs, %{"answer" => answer}))
-    # A turn may have edited files or committed: refresh the status bars.
+    # A turn may have edited files or committed: refresh the status bars first, so that
+    # `turn_finished` is the turn's last event and nothing (git) still runs in the workspace
+    # once a client sees it.
     emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
+    emit(s, "turn_finished", run_id, Map.merge(event.attrs, %{"answer" => answer}))
 
     %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer)}
   end
