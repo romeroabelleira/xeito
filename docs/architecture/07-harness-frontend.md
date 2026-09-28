@@ -63,7 +63,9 @@ flowchart LR
   - `mix xeito.tui`: TermUI, Elm architecture. Daemon events reach it through the root's `handle_info/2`.
   - `mix xeito.chat`: line mode.
   - Both use `Xeito.Client.Render`, which folds escalation runs into their decision and indents delegated runs.
-- **Delegation.** `fix_failing_test` with `delegate: true` hands the fix to a child run of the free chat machine (the `machine` effect). Machines compose without a second agent loop.
+- **Delegation.** `fix_failing_test` with `delegate: true`, and `check`, hand the fix to a child run of the free chat machine (the `machine` effect). Machines compose without a second agent loop.
+- **Skills** in pi's Agent Skills format are listed for the model and loaded on demand through a `skill` tool confined to the skill's directory. `/skill:name` forces one (`Xeito.Skills`).
+- **Machines routed from `Intent`:** `fix_failing_test`, `commit`, `check`, `run_tests`, and otherwise free chat (`Xeito.Session.Router`).
 
 ## Interaction model
 

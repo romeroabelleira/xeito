@@ -18,7 +18,9 @@ defmodule Xeito.Machines.Chat do
   passes the `Risk` decision first, and invalid calls are answered with an error message rather
   than executed. `max_steps` (default 25) bounds the model turns per run.
 
-  Input: `%{cwd: path, prompt: text, messages: [earlier messages], system: text, max_steps: n}`.
+  Input: `%{cwd: path, prompt: text, messages: [earlier messages], system: text, max_steps: n}`,
+  optionally `skills: [skill]` (`Xeito.Skills`, adds the `skill` tool) and `tools: false` (a plain
+  answer with no tools, which streams sooner).
   """
 
   use Xeito.Machine, version: "0.1.0"
@@ -77,12 +79,12 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def ask_model(ctx) do
-    [Effect.chat(messages(ctx))]
+    [Effect.chat(messages(ctx), tools: Tools.names_for(ctx))]
   end
 
   @doc false
   def run_tool(%{current: call} = ctx) do
-    {:ok, effect} = Tools.to_effect(call, ctx.cwd)
+    {:ok, effect} = Tools.to_effect(call, ctx)
     [effect]
   end
 
@@ -130,7 +132,7 @@ defmodule Xeito.Machines.Chat do
 
   defp valid(message, ctx) do
     for call <- Map.get(message, :tool_calls, []),
-        match?({:ok, _}, Tools.to_effect(call, Map.get(ctx, :cwd))),
+        match?({:ok, _}, Tools.to_effect(call, ctx)),
         do: call
   end
 
@@ -139,11 +141,11 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def queue_calls(ctx, message) do
     calls = Map.get(message, :tool_calls, [])
-    {valid, invalid} = Enum.split_with(calls, &match?({:ok, _}, Tools.to_effect(&1, ctx.cwd)))
+    {valid, invalid} = Enum.split_with(calls, &match?({:ok, _}, Tools.to_effect(&1, ctx)))
 
     errors =
       for call <- invalid do
-        {:error, reason} = Tools.to_effect(call, ctx.cwd)
+        {:error, reason} = Tools.to_effect(call, ctx)
         tool_message(call, "error: " <> reason)
       end
 

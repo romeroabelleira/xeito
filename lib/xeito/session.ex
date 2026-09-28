@@ -33,8 +33,8 @@ defmodule Xeito.Session do
 
   use GenServer
 
-  alias Xeito.{Budget, Escalation, Events, Log, Run, RunSupervisor}
-  alias Xeito.Machines.{Chat, FixFailingTest, RunTests}
+  alias Xeito.{Budget, Escalation, Events, Log, Run, RunSupervisor, Skills}
+  alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
   alias Xeito.Session.Router
 
   @max_history 80
@@ -254,7 +254,15 @@ defmodule Xeito.Session do
     })
 
     {machine, reason} = Router.route(decision.value, text)
-    {:noreply, start_machine(machine, input_for(machine, text, s), reason, s)}
+    input = input_for(machine, text, s)
+
+    # Small talk needs no tools, and without tools the model's answer streams at once.
+    input =
+      if machine == Chat and decision.value == :other,
+        do: Map.put(input, :tools, false),
+        else: input
+
+    {:noreply, start_machine(machine, input, reason, s)}
   end
 
   def handle_info(:idle_check, s) do
@@ -303,6 +311,7 @@ defmodule Xeito.Session do
     do: command(String.split(command, ~r/\s+/, parts: 2) ++ [""], command, s)
 
   defp command(["machine", rest | _], _raw, s), do: machine_command(rest, s)
+  defp command(["skill:" <> name, rest | _], _raw, s), do: skill_command(name, rest, s)
 
   defp command(["run", cmd | _], _raw, s) when cmd != "",
     do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
@@ -338,6 +347,26 @@ defmodule Xeito.Session do
     end
   end
 
+  # `/skill:name args`, as in pi: the skill's instructions become the prompt of a chat turn.
+  defp skill_command(name, request, s) do
+    case Enum.find(Skills.discover(s.cwd), &(&1.name == name)) do
+      nil ->
+        error(s, "no skill named #{inspect(name)}")
+
+      skill ->
+        prompt = """
+        Use the skill "#{skill.name}". Its directory is #{skill.dir}; paths in it are relative to
+        that directory, and the skill tool reads its files. Instructions:
+
+        #{Skills.body(skill)}
+
+        Request: #{if request == "", do: "(none; follow the instructions)", else: request}
+        """
+
+        start_machine(Chat, input_for(Chat, prompt, s), "/skill:#{name}", s)
+    end
+  end
+
   defp human_command(answer, %{waiting: nil} = s),
     do: error(s, "nothing is waiting for #{answer}")
 
@@ -363,8 +392,23 @@ defmodule Xeito.Session do
     :exit, _ -> :ignored
   end
 
-  defp input_for(Chat, text, s),
-    do: %{cwd: s.cwd, prompt: text, messages: s.history, system: s.system}
+  # Skills are discovered on every turn, so a new or edited SKILL.md applies at once.
+  defp input_for(Chat, text, s) do
+    skills = Skills.discover(s.cwd)
+
+    %{
+      cwd: s.cwd,
+      prompt: text,
+      messages: s.history,
+      system: s.system <> Skills.prompt_section(skills),
+      skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
+    }
+  end
+
+  defp input_for(Commit, text, s), do: %{cwd: s.cwd, request: text}
+
+  defp input_for(Check, _text, s),
+    do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
 
   defp input_for(FixFailingTest, _text, s),
     do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
@@ -504,6 +548,7 @@ defmodule Xeito.Session do
   defp pending_call(run_id) do
     case Run.whereis(run_id) && Run.snapshot(run_id) do
       %{ctx: %{current: %{name: name, arguments: args}}} -> %{"tool" => name, "arguments" => args}
+      %{ctx: %{review: summary}} -> %{"tool" => "review", "summary" => summary}
       _ -> nil
     end
   catch
@@ -517,7 +562,15 @@ defmodule Xeito.Session do
     "fix_failing_test ended in #{state}" <> if(fix, do: ": " <> fix, else: "")
   end
 
-  defp answer(machine, %{state: state}), do: "#{inspect(machine)} ended in #{state}"
+  defp answer(machine, %{state: state} = result) do
+    ctx = Map.get(result, :ctx, %{})
+
+    Map.get(ctx, :answer) ||
+      to_text(Map.get(ctx, :error)) |> default("#{inspect(machine)} ended in #{state}")
+  end
+
+  defp default("", fallback), do: fallback
+  defp default(text, _fallback), do: text
 
   defp to_text(nil), do: ""
   defp to_text(text) when is_binary(text), do: text
@@ -586,6 +639,7 @@ defmodule Xeito.Session do
   defp help do
     """
     /machine <name> [prompt]  start a machine directly (#{Enum.join(Map.keys(Router.machines()), ", ")})
+    /skill:<name> [request]   run a skill (pi / Agent Skills format)
     /run <command>            run a command once
     /approve · /deny          answer a command waiting for review
     /why                      the last decisions, with tier and confidence

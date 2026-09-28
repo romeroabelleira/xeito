@@ -46,9 +46,22 @@ When the model calls a tool first ("What does pricing.py do?"), the first *text*
 2. Start the chat turn while Intent is still being decided, and discard it if another machine is chosen. This costs GPU time on the queue.
 3. Rules for the obvious intents (greetings, "run the tests"), before any model.
 
+## 2b. After the Intent rules (2026-09-28)
+
+`Intent` now has rules for small talk ("hi", "thanks") and "run the tests". Small talk is also answered without tools, so Ollama streams at once. Same seven prompts:
+
+| | median | range |
+|---|---|---|
+| model warm | **1.34 s** (target < 1.5 s) | 0.85–2.81 s |
+| after the keep-alive expired | 2.41 s | 1.16–3.98 s (the first reply pays ~2.5 s to reload the model) |
+
+The target is met with the model warm, mostly thanks to small talk (hi: 1.70 → 0.85 s). Answers that begin with a tool call are unchanged at 2.4–2.8 s to the first text. The trade-off behind `XEITO_KEEP_ALIVE` is VRAM for the desktop against that reload.
+
+Also verified live: `/skill:…` (pi-format skill), `check` (a failure delegated, fixed, checks pass: 12.5 s) and `commit` (message drafted, approved, committed: 2.4 s).
+
 ## 3. Tests
 
-96 tests. The harness pieces are tested against a scripted, streaming Ollama stub:
+106 tests. The harness pieces are tested against a scripted, streaming Ollama stub:
 - chat loop, Risk gate, review with approve/deny, invalid tools, step limit
 - delegation from `fix_failing_test`
 - sessions: routing, history, `/why`, resume from the log

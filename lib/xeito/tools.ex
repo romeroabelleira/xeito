@@ -6,6 +6,8 @@ defmodule Xeito.Tools do
 
   * `read` and `write`/`edit` are confined to the workspace by `Xeito.Effects.Local`.
   * `bash` commands pass the `Xeito.Decisions.Risk` decision first (see `Xeito.Machines.Chat`).
+  * `skill` (offered only when skills are available, `Xeito.Skills`) reads a file of a skill,
+    confined to that skill's directory; `SKILL.md` by default.
   * An unknown tool name or malformed arguments become an error result for the model, not a
     crash: the set of tools is closed, like a typed decision's values.
   """
@@ -14,13 +16,24 @@ defmodule Xeito.Tools do
 
   @names ~w(read write edit bash)
 
-  @doc "Tool names the model may call."
+  @doc "The core tool names."
   @spec names() :: [String.t()]
   def names, do: @names
 
-  @doc "OpenAI-style function specs, as accepted by Ollama's `tools` field."
-  @spec specs() :: [map()]
-  def specs do
+  @doc """
+  The tools offered in a run with context `ctx`: none when `ctx.tools == false`, else the core
+  tools, plus `skill` when the run has skills.
+  """
+  @spec names_for(map()) :: [String.t()]
+  def names_for(%{tools: false}), do: []
+  def names_for(%{skills: [_ | _]}), do: @names ++ ["skill"]
+  def names_for(_ctx), do: @names
+
+  @doc "OpenAI-style function specs for `names`, as accepted by Ollama's `tools` field."
+  @spec specs([String.t()]) :: [map()]
+  def specs(names \\ @names), do: Enum.filter(all_specs(), &(&1.function.name in names))
+
+  defp all_specs do
     [
       spec("read", "Read a text file in the workspace.", %{
         path: %{type: "string", description: "path relative to the workspace root"}
@@ -40,11 +53,22 @@ defmodule Xeito.Tools do
       ),
       spec("bash", "Run a shell command in the workspace root and return its output.", %{
         command: %{type: "string", description: "the command line to run with sh -c"}
-      })
+      }),
+      spec(
+        "skill",
+        "Load a skill's instructions (SKILL.md), or another file inside that skill's directory.",
+        %{
+          name: %{type: "string", description: "the skill's name, as listed in the system prompt"},
+          file: %{type: "string", description: "optional path relative to the skill directory"}
+        },
+        ["name"]
+      )
     ]
   end
 
-  defp spec(name, description, properties) do
+  defp spec(name, description, properties, required \\ nil) do
+    required = required || properties |> Map.keys() |> Enum.map(&Atom.to_string/1)
+
     %{
       type: "function",
       function: %{
@@ -53,33 +77,53 @@ defmodule Xeito.Tools do
         parameters: %{
           type: "object",
           properties: properties,
-          required: properties |> Map.keys() |> Enum.map(&Atom.to_string/1)
+          required: required
         }
       }
     }
   end
 
-  @doc "The effect for a tool call, or `{:error, reason}` for an unknown tool or bad arguments."
-  @spec to_effect(map(), String.t()) :: {:ok, Effect.t()} | {:error, String.t()}
-  def to_effect(%{name: name, arguments: args}, cwd) do
-    case effect(name, args, cwd: cwd, reply: :tool_done) do
+  @doc """
+  The effect for a tool call in a run with context `ctx` (`:cwd`, optional `:skills`), or
+  `{:error, reason}` for an unknown tool, a tool not offered, or bad arguments.
+  """
+  @spec to_effect(map(), map()) :: {:ok, Effect.t()} | {:error, String.t()}
+  def to_effect(%{name: name, arguments: args}, ctx) do
+    offered = names_for(ctx)
+
+    case name in offered && effect(name, args, ctx) do
       %Effect{} = effect -> {:ok, effect}
-      nil when name in @names -> {:error, "invalid arguments for #{name}: #{inspect(args)}"}
-      nil -> {:error, "unknown tool #{inspect(name)}; available: #{Enum.join(@names, ", ")}"}
+      {:error, reason} -> {:error, reason}
+      nil -> {:error, "invalid arguments for #{name}: #{inspect(args)}"}
+      false -> {:error, "unknown tool #{inspect(name)}; available: #{Enum.join(offered, ", ")}"}
     end
   end
 
-  defp effect("read", %{"path" => p}, opts) when is_binary(p), do: Effect.read(p, opts)
+  defp effect("skill", %{"name" => skill} = args, ctx) when is_binary(skill) and is_map(ctx) do
+    case Enum.find(Map.get(ctx, :skills, []), &(&1.name == skill)) do
+      nil -> {:error, "no skill named #{inspect(skill)}"}
+      %{dir: dir} -> Effect.read(args["file"] || "SKILL.md", cwd: dir, reply: :tool_done)
+    end
+  end
 
-  defp effect("write", %{"path" => p, "content" => c}, opts) when is_binary(p) and is_binary(c),
-    do: Effect.write(p, c, opts)
+  defp effect(name, args, ctx) when is_map(ctx),
+    do: effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
+
+  defp effect("read", %{"path" => p}, opts) when is_binary(p) and is_list(opts),
+    do: Effect.read(p, opts)
+
+  defp effect("write", %{"path" => p, "content" => c}, opts)
+       when is_binary(p) and is_binary(c) and is_list(opts),
+       do: Effect.write(p, c, opts)
 
   defp effect("edit", %{"path" => p, "old_text" => o, "new_text" => n}, opts)
-       when is_binary(p) and is_binary(o) and is_binary(n),
+       when is_binary(p) and is_binary(o) and is_binary(n) and is_list(opts),
        do: Effect.edit(p, o, n, opts)
 
-  defp effect("bash", %{"command" => c}, opts) when is_binary(c), do: Effect.bash(c, opts)
-  defp effect(_name, _args, _opts), do: nil
+  defp effect("bash", %{"command" => c}, opts) when is_binary(c) and is_list(opts),
+    do: Effect.bash(c, opts)
+
+  defp effect(_name, _args, opts) when is_list(opts), do: nil
 
   @doc "Whether a tool call needs the Risk decision before it runs."
   @spec risky?(map()) :: boolean()

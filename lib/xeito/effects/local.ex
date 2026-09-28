@@ -72,7 +72,13 @@ defmodule Xeito.Effects.Local do
   end
 
   def run(%Effect{kind: :chat, args: args} = effect, opts) do
-    tools = if args.tools, do: Tools.specs(), else: []
+    tools =
+      case args.tools do
+        names when is_list(names) -> Tools.specs(names)
+        true -> Tools.specs()
+        false -> []
+      end
+
     on_delta = &Xeito.Events.delta(opts[:run_id], effect.id, &1)
 
     case Chat.complete(args.messages, tools, Keyword.get(opts, :chat, []), on_delta) do

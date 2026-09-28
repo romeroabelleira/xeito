@@ -471,7 +471,7 @@ defmodule Xeito.HarnessTest do
     assert List.last(events)["attrs"]["answer"] == "Hello from the model."
 
     text = Enum.map_join(events, &Render.line/1)
-    assert text =~ "◆ intent: other (large 1.00)"
+    assert text =~ "◆ intent: other (rule 1.00)"
     assert text =~ "Hello from the model."
     assert text =~ "✓ answered"
 

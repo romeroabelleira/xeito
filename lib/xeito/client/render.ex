@@ -77,6 +77,7 @@ defmodule Xeito.Client.Render do
     what =
       case call do
         %{"tool" => "bash", "arguments" => %{"command" => cmd}} -> "run `#{cmd}`"
+        %{"summary" => summary} -> summary
         %{"tool" => tool} -> tool
         _ -> "continue"
       end

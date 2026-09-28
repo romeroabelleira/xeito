@@ -184,12 +184,71 @@ Every shell command the model proposes first passes the **Risk** decision:
 
 In the TUI, press `y` or `n` while the prompt is empty. In any client, use `/approve` or `/deny`. A denied command is reported to the model, which then continues without it.
 
+### Run the checks
+
+```
+> run the checks and fix what fails
+◆ intent: run (large 0.95)
+  → Check · intent run, checks
+  $ mix ci
+    exit 1 · … 3 files are not formatted
+  ↳ delegating to Chat
+    $ mix format
+· checking
+  $ mix ci
+    exit 0
+✓ done · Checks pass after 1 fix run(s).
+```
+
+The check command is taken from the project, in this order:
+1. A `ci` alias in `mix.exs` (`mix ci`).
+2. A `check` target in the Makefile (`make check`).
+3. For Mix projects: format check, compile with warnings as errors, then tests.
+4. `npm run lint && npm test` when `package.json` has a lint script.
+5. Otherwise, the test command.
+
+Failures go to a chat run, up to three attempts. After that, it asks you: fix the problem by hand and `/approve`, or `/deny` to stop.
+
+### Commit
+
+```
+> commit these changes
+  → Commit · intent run, commit
+· drafting
+Fix calculation of gross price in pricing module
+* Correct formula to add tax rate to 1 before multiplying by net price
+? review: commit 1 file: Fix calculation of gross price in pricing module — approve with y, deny with n
+✓ done · Committed fd05b3d Fix calculation of gross price in pricing module
+```
+
+The model only drafts the message; the git commands are fixed. Staged changes are committed as they are. With nothing staged, everything is staged first (`git add -A`, which respects `.gitignore`), so check the file count in the review line. Your commit hooks run as usual.
+
+### Skills
+
+Xeito reads skills in pi's format ([Agent Skills](https://agentskills.io/specification)): a directory with a `SKILL.md` that starts with `name` and `description` frontmatter. It looks in the project's `.pi/skills/` and `.agents/skills/`, then in pi's user-level skills directory and in `~/.agents/skills/` ([pi's skill locations](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md)), so skills you already use with pi work unchanged.
+
+```markdown
+---
+name: py-inventory
+description: List every Python function with a one-line summary. Use when asked for an overview of the code.
+---
+1. Find the Python files. 2. Read each. 3. Answer with a table: file, function, summary.
+```
+
+- **Automatic:** the model sees each skill's name and description, and loads the instructions with its `skill` tool when a task matches. That tool reads only files inside the skill's own directory.
+- **Explicit:** `/skill:py-inventory` or `/skill:py-inventory only pricing.py`.
+- `disable-model-invocation: true` in the frontmatter hides a skill from the model; it can then only be run explicitly.
+- Skills are re-read on every turn, so edits apply immediately.
+- A skill's commands still pass the Risk decision like any other.
+
 ### Start a machine directly
 
 ```
 > /machine fix_failing_test
 > /machine chat summarise the open TODOs in lib/
 > /machine run_tests
+> /machine check
+> /machine commit
 ```
 
 ## 6. Seeing why
@@ -402,6 +461,7 @@ Replies echo the request `id`. Events stream as `{"event": …, "session": …, 
 - **Let it fix one real failing test** per day. Then read the path in the log. Where did triage go wrong? Where did the chat run take a detour?
 - **Label while you work.** Turn on `/break conf<0.7` for a week and answer unsure decisions with `/decide`. Each answer is a labelled example.
 - **Write your `AGENTS.md`.** Short, concrete rules help more than long prose: test commands, forbidden directories, style.
+- **Wrap a routine in a skill first.** A 10-line `SKILL.md` for "prepare a release" or "update the changelog" is the cheapest way to make a workflow repeatable. If it proves itself, turn it into a machine.
 - **Turn repeated chats into machines.** If the log shows the same free-chat pattern again and again ("update the changelog", "bump the version and tag"), write it as a machine. It becomes faster, cheaper and auditable. This is how Xeito is meant to grow.
 - **Tighten Risk for your repo.** Add a rule for a command you always approve (or always deny) and you'll see fewer reviews.
 - **Compare tiers on your own data.** Export decisions with `--predictions`, relabel the wrong ones, and rerun the gate test with your small model.

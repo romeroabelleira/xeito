@@ -21,7 +21,8 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P2 · Typed decisions | 2026-11-16 → 2026-12-14 | done 2026-09-27 | [bench 2](../bench/2-decisions.md) |
 | P3 · Delegation tiers | 2026-12-14 → 2027-01-04 | done 2026-09-27 | [bench 3](../bench/3-escalation.md) |
 | P3b · OpenRouter tier (inserted) | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
-| P4 · TUI harness | 2027-01-04 → 2027-02-08 | in progress, started 2026-09-27 | [bench 4](../bench/4-harness.md) |
+| P4 · TUI harness | 2027-01-04 → 2027-02-08 | in progress, started 2026-09-27; items 1–6 done 2026-09-28, dogfooding open | [bench 4](../bench/4-harness.md) |
+| P9 · Bridges (added) | — | planned, after P4 | — |
 
 ```mermaid
 gantt
@@ -42,6 +43,8 @@ gantt
   P7 Meta machine loop           :p7, after p6, 4w
   section Release
   P8 Packaging & v0.1            :p8, after p7, 3w
+  section Reach
+  P9 Bridges (pi, others)        :p9, after p8, 2w
 ```
 
 ---
@@ -160,11 +163,11 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
 4. Add step mode and breakpoints in the TUI ([06](architecture/06-observability.md#2-step)).
 5. Support project context files (`AGENTS.md`), and read pi's skills directory format where feasible.
 6. Add session save/resume, which comes for free from the log.
-7. Write the optional `pi-xeito` bridge extension ([07](architecture/07-harness-frontend.md#pi-bridge-optional)).
+7. ~~Write the optional `pi-xeito` bridge extension~~, moved to [P9](#p9--bridges-to-other-harnesses-after-p4-2-weeks) on 2026-09-28.
 8. **Dogfood.** Use Xeito for its own development for at least two weeks, and log the friction as issues.
 
 **Status:** in progress since 2026-09-27. See [bench 4](../bench/4-harness.md).
-- Done (items 1–4, 6, and 5 for `AGENTS.md`):
+- Done (items 1–6):
   - `xeitod` (`mix xeito.daemon`) with a JSONL client API on a private Unix socket.
   - The TUI (`mix xeito.tui`, TermUI) with transcript, edit diffs, status line (machine, state, tier, cost), reviews and step mode, plus a line-mode client (`mix xeito.chat`).
   - The free chat machine (tools as effects, `bash` behind `Risk`, reviews), machine selection from `Intent`, and delegation (`fix_failing_test` hands the fix to a chat child run).
@@ -173,9 +176,13 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
   - A systemd user unit that puts the desktop first (`deploy/systemd/xeitod.service.example`): about 100 MB of RAM and no CPU when idle.
   - Idle sessions close after 2 h and resume transparently from the log. Budget entries are removed with their run or session, and a periodic sweep catches the rest.
   - [USAGE.md](../USAGE.md): setup, everyday examples, step mode, the log, evaluation, extending.
+  - Skills in pi's format (Agent Skills, `SKILL.md`), read from the project's `.pi/skills` and `.agents/skills`, pi's user-level skills directory, and `~/.agents/skills`. They are listed for the model, loaded on demand through a `skill` tool confined to the skill's directory, and can be forced with `/skill:name`.
+  - Structured machines: `run_tests`, `fix_failing_test`, `commit` (drafted message, human approval, fixed git commands) and `check` (the project's checks, with failures delegated to a chat run). With the free chat machine, that makes five.
+  - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
-- Open: pi's skills directory (item 5), the pi bridge (item 7), and dogfooding (item 8).
-- Exit latency not met yet: the median time to first token is 1.70 s against 1.5 s. Ollama holds back streamed content when tools are offered; options are listed in bench 4.
+- Live (2026-09-28): `/skill:py-inventory`, "run the checks and fix what fails" (a delegated fix, then the checks pass) and "commit these changes" (drafted, approved, committed) all work end to end.
+- Exit latency: the median time to first token is **1.34 s** with the model warm (1.70 s before the Intent rules). Answers that start with a tool call still take 2.4–2.8 s, because Ollama holds back text while tools are offered. After the keep-alive has expired, the first reply adds ~2.5 s for the model reload. See [bench 4](../bench/4-harness.md).
+- Open: dogfooding (item 8), which also measures the "five structured machines in daily use" criterion.
 - Deviation from [07](architecture/07-harness-frontend.md): the TUI uses the same JSONL socket as every other client, not Erlang distribution.
 
 **Exit:** a two-week dogfood log with ≥ 50 runs. At least five structured machines are in daily use. Median latency of `Intent` + first token is under 1.5 s on the reference workstation.
@@ -218,6 +225,16 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
 5. Tag v0.1.0.
 
 **Exit:** a fresh Ubuntu-based machine goes from install to the first `fix_failing_test` run in under 15 minutes.
+
+## P9 · Bridges to other harnesses (after P4; ≈2 weeks)
+
+Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
+
+1. **`pi-xeito`**, the original P4.7 ([07](architecture/07-harness-frontend.md#pi-bridge-optional)): a small pi extension that registers `/xeito <machine>` and an `xeito_decide` tool, talking to the daemon's JSON Lines socket. It would be the only TypeScript in the project.
+2. **Survey other agent harnesses** worth bridging, for example Odysseus AI and Jensen (to be researched; neither is evaluated yet). For each, note its extension or RPC surface, and whether its loop can call out to typed decisions or delegate to a machine.
+3. Build the bridges the survey justifies. Each is a thin client of `Xeito.Api`, not a new code path in the daemon.
+
+**Exit:** at least one bridge drives a Xeito machine end to end from the other harness, and the run is logged like any other.
 
 ---
 

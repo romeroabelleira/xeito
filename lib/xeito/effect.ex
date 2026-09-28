@@ -68,7 +68,8 @@ defmodule Xeito.Effect do
   end
 
   @doc """
-  One chat-model turn over `messages` with the core tools (`Xeito.Chat`). Streamed output is
+  One chat-model turn over `messages` (`Xeito.Chat`). `:tools` is a list of tool names
+  (`Xeito.Tools`), `true` for the core tools (default) or `false` for none. Streamed output is
   published to `Xeito.Events` as it arrives; the complete message is the result.
   """
   @spec chat([map()], keyword()) :: t()
