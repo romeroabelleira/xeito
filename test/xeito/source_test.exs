@@ -1,0 +1,114 @@
+defmodule Xeito.SourceTest do
+  use Xeito.Case, async: true
+
+  alias Xeito.Effects.Local
+  alias Xeito.{Source, Tools}
+
+  @code """
+  defmodule Shop.Cart do
+    @moduledoc "A cart."
+
+    def total(cart), do: Enum.sum(cart.items)
+
+    def add(cart, item) when is_map(item) do
+      %{cart | items: [item | cart.items]}
+    end
+
+    def add(cart, _other), do: cart
+
+    defp helper do
+      :ok
+    end
+
+    defmodule Line do
+      def new(sku), do: %{sku: sku}
+    end
+  end
+  """
+
+  test "outline lists modules and definitions with line ranges, clauses grouped" do
+    {:ok, text} = Source.outline("lib/cart.ex", @code)
+
+    assert text =~ ~s(lib/cart.ex · 20 lines)
+
+    assert text |> String.split("\n") |> tl() == [
+             "defmodule Shop.Cart  1-19",
+             "  def total/1  4-4",
+             "  def add/2  6-10 (2 clauses)",
+             "  defp helper/0  12-14",
+             "  defmodule Shop.Cart.Line  16-18",
+             "    def new/1  17-17"
+           ]
+  end
+
+  test "symbol reads one definition by name, arity or module" do
+    {:ok, add} = Source.symbol("lib/cart.ex", @code, "add/2")
+    assert add =~ "lib/cart.ex lines 6-10:\n  def add(cart, item) when is_map(item) do"
+    assert add =~ "def add(cart, _other), do: cart"
+
+    assert {:ok, "lib/cart.ex lines 12-14:" <> _} = Source.symbol("lib/cart.ex", @code, "helper")
+
+    assert {:ok, "lib/cart.ex lines 17-17:" <> _} =
+             Source.symbol("lib/cart.ex", @code, "Line.new/1")
+
+    assert {:ok, "lib/cart.ex lines 16-18:" <> _} = Source.symbol("lib/cart.ex", @code, "Line")
+    assert {:error, "no definition" <> _} = Source.symbol("lib/cart.ex", @code, "remove")
+  end
+
+  test "tests are outlined under their describe blocks" do
+    code = """
+    defmodule CartTest do
+      describe "add" do
+        test "adds an item" do
+          :ok
+        end
+      end
+    end
+    """
+
+    {:ok, text} = Source.outline("test/cart_test.exs", code)
+    assert text =~ ~s(  describe "add"  2-6\n    test "adds an item"  3-5)
+  end
+
+  test "syntax errors are described; other languages are not checked" do
+    assert Source.syntax_error("a.ex", @code) == nil
+    assert Source.syntax_error("a.ex", "def f do\n  x(\nend") =~ "line 2:"
+    assert Source.syntax_error("a.json", "{\"a\": }") =~ "invalid JSON"
+    assert Source.syntax_error("a.py", "def (:") == nil
+    assert {:error, "outline and symbol support Elixir" <> _} = Source.outline("a.py", "")
+  end
+
+  test "the read tool outlines and reads symbols; edits report a file that no longer parses" do
+    ws = Path.join(System.tmp_dir!(), "xeito-src-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(Path.join(ws, "lib"))
+    on_exit(fn -> File.rm_rf(ws) end)
+    File.write!(Path.join(ws, "lib/cart.ex"), @code)
+    ctx = %{cwd: ws}
+
+    run = fn name, args ->
+      {:ok, effect} = Tools.to_effect(%{name: name, arguments: args}, ctx)
+      Local.run(effect, [])
+    end
+
+    assert %{ok: true, content: "lib/cart.ex · 20 lines" <> _} =
+             run.("read", %{"path" => "lib/cart.ex", "outline" => true})
+
+    assert %{ok: true, content: "lib/cart.ex lines 4-4:" <> _} =
+             run.("read", %{"path" => "lib/cart.ex", "symbol" => "total"})
+
+    broken =
+      run.("edit", %{
+        "path" => "lib/cart.ex",
+        "old_text" => "    :ok\n",
+        "new_text" => "    :ok(\n"
+      })
+
+    assert %{ok: true, syntax_error: "line " <> _} = broken
+    assert Tools.result_text(broken) =~ "no longer parses"
+
+    assert %{ok: true} =
+             run.("edit", %{"path" => "lib/cart.ex", "old_text" => ":ok(", "new_text" => ":ok"})
+
+    refute Map.has_key?(run.("read", %{"path" => "lib/cart.ex"}), :syntax_error)
+  end
+end

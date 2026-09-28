@@ -37,7 +37,7 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "effect_requested", "attrs" => %{"kind" => kind, "args" => args}}, pad) do
     case {to_string(kind), args} do
       {"bash", %{"cmd" => cmd}} -> "#{pad}  $ #{cmd}\n"
-      {"read", %{"path" => p}} -> "#{pad}  read #{p}\n"
+      {"read", %{"path" => _} = a} -> "#{pad}  #{read_label(a)}\n"
       {"write", %{"path" => p} = a} -> "#{pad}  write #{p} (#{count_lines(a["content"])} lines)\n"
       {"edit", %{"path" => p} = a} -> "#{pad}  edit #{p}\n" <> diff(a["old"], a["new"], pad)
       {"machine", %{"machine" => m}} -> "#{pad}  ↳ delegating to #{short(m)}\n"
@@ -45,6 +45,10 @@ defmodule Xeito.Client.Render do
       _ -> ""
     end
   end
+
+  defp read_label(%{"path" => p, "symbol" => s}), do: "read #{p} · #{s}"
+  defp read_label(%{"path" => p, "outline" => true}), do: "outline #{p}"
+  defp read_label(%{"path" => p}), do: "read #{p}"
 
   defp render(%{"event" => "effect_completed", "attrs" => %{"kind" => kind, "result" => r}}, pad) do
     case {to_string(kind), r} do
@@ -59,6 +63,9 @@ defmodule Xeito.Client.Render do
 
       {k, %{"ok" => false, "error" => error}} when k in ~w(read write edit) ->
         "#{pad}    ✗ #{error}\n"
+
+      {k, %{"syntax_error" => error}} when k in ~w(write edit) ->
+        "#{pad}    ⚠ no longer parses: #{error}\n"
 
       _ ->
         ""

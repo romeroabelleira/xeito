@@ -43,8 +43,9 @@ defmodule Xeito.Effects.Local do
 
   def run(%Effect{kind: :read, args: args}, _opts) do
     with {:ok, path} <- resolve(args),
-         {:ok, content} <- File.read(path) do
-      %{ok: true, content: content}
+         {:ok, content} <- File.read(path),
+         {:ok, text} <- view(args, content) do
+      %{ok: true, content: text}
     else
       {:error, reason} -> %{ok: false, error: reason}
     end
@@ -54,7 +55,7 @@ defmodule Xeito.Effects.Local do
     with {:ok, path} <- resolve(args),
          :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.write(path, args.content) do
-      %{ok: true}
+      parsed(args.path, args.content)
     else
       {:error, reason} -> %{ok: false, error: reason}
     end
@@ -65,7 +66,7 @@ defmodule Xeito.Effects.Local do
          {:ok, content} <- File.read(path),
          {:ok, updated} <- replace_once(content, args.old, args.new),
          :ok <- File.write(path, updated) do
-      %{ok: true}
+      parsed(args.path, updated)
     else
       {:error, reason} -> %{ok: false, error: reason}
     end
@@ -189,6 +190,19 @@ defmodule Xeito.Effects.Local do
     case String.split(run_id, "/e", parts: 2) do
       [parent, _] -> parent
       _ -> nil
+    end
+  end
+
+  defp view(%{symbol: name, path: path}, content), do: Xeito.Source.symbol(path, content, name)
+  defp view(%{outline: true, path: path}, content), do: Xeito.Source.outline(path, content)
+  defp view(_args, content), do: {:ok, content}
+
+  # A write or edit is applied either way; a file that no longer parses is reported at once, so
+  # the model fixes it in its next step rather than after the turn.
+  defp parsed(path, content) do
+    case Xeito.Source.syntax_error(path, content) do
+      nil -> %{ok: true}
+      error -> %{ok: true, syntax_error: error}
     end
   end
 

@@ -39,9 +39,25 @@ defmodule Xeito.Tools do
 
   defp all_specs do
     [
-      spec("read", "Read a text file in the workspace.", %{
-        path: %{type: "string", description: "path relative to the workspace root"}
-      }),
+      spec(
+        "read",
+        "Read a text file in the workspace. For Elixir files, outline: true lists its modules and " <>
+          "functions with line ranges, and symbol reads just one definition; use them to find " <>
+          "code instead of grep.",
+        %{
+          path: %{type: "string", description: "path relative to the workspace root"},
+          outline: %{
+            type: "boolean",
+            description: "list the file's modules and functions with their line ranges instead"
+          },
+          symbol: %{
+            type: "string",
+            description:
+              ~s(read only this definition, e.g. "init/1", "init" or "MyApp.Mod.init/1")
+          }
+        },
+        ["path"]
+      ),
       spec("write", "Create or overwrite a file in the workspace with the given content.", %{
         path: %{type: "string", description: "path relative to the workspace root"},
         content: %{type: "string", description: "the complete new file content"}
@@ -113,8 +129,13 @@ defmodule Xeito.Tools do
   defp effect(name, args, ctx) when is_map(ctx),
     do: effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
 
-  defp effect("read", %{"path" => p}, opts) when is_binary(p) and is_list(opts),
-    do: Effect.read(p, opts)
+  defp effect("read", %{"path" => p} = args, opts) when is_binary(p) and is_list(opts) do
+    case args do
+      %{"symbol" => s} when is_binary(s) and s != "" -> Effect.read(p, [symbol: s] ++ opts)
+      %{"outline" => true} -> Effect.read(p, [outline: true] ++ opts)
+      _ -> Effect.read(p, opts)
+    end
+  end
 
   defp effect("write", %{"path" => p, "content" => c}, opts)
        when is_binary(p) and is_binary(c) and is_list(opts),
@@ -167,6 +188,10 @@ defmodule Xeito.Tools do
     do: "exit status #{status}\n#{output}"
 
   def result_text(%{ok: true, content: content}), do: content
+
+  def result_text(%{ok: true, syntax_error: error}),
+    do: "ok, applied; but the file no longer parses: #{error}. Fix it before continuing."
+
   def result_text(%{ok: true}), do: "ok"
   def result_text(%{ok: false, error: error}), do: "error: #{format_error(error)}"
   def result_text(other), do: inspect(other)

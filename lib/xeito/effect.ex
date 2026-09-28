@@ -37,12 +37,19 @@ defmodule Xeito.Effect do
     }
   end
 
-  @doc "Read a file inside the workspace `:cwd`."
+  @doc """
+  Read a file inside the workspace `:cwd`. With `outline: true` the result is the file's outline,
+  with `symbol: name` the source of that definition (`Xeito.Source`).
+  """
   @spec read(String.t(), keyword()) :: t()
   def read(path, opts \\ []) do
     %__MODULE__{
       kind: :read,
-      args: %{path: path, cwd: opts[:cwd]},
+      args:
+        Map.merge(
+          %{path: path, cwd: opts[:cwd]},
+          Map.new(Keyword.take(opts, [:outline, :symbol]))
+        ),
       reply: Keyword.get(opts, :reply, :read)
     }
   end
