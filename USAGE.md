@@ -196,7 +196,12 @@ Questions, explanations and "how would you approach…" requests go to the **fre
 > plan how to split the Accounts context; don't change anything yet
 ```
 
-**Edits are checked before the answer.** When a turn has changed files, the project's checks run before the model's answer reaches you: `mix ci` if the project defines it, else `make check`, else format, compile and test (`mix`), lint and test (`npm`), or the test command. If they fail, the model sees the output and gets up to two tries to fix it. A turn that still fails says so at the end of the answer (`⚠ The checks still fail …`).
+**Edits are checked before the answer.** When a turn has changed files, a *quick check* runs before the model's answer reaches you. It only asks whether the code still builds, and takes a few seconds:
+- Mix: format and compile warnings. Rust: `cargo check`. Go: `go build ./...`. TypeScript: `tsc --noEmit`. Other `package.json` projects: the lint script. Python: `ruff check`, if configured.
+- Your own quick check wins: a `"check.quick"` alias in `mix.exs`, or a `check-quick` Makefile target.
+- Projects with none of these aren't checked.
+
+The full suite (tests, linters) is what "run the checks" and the `check` machine are for. If the quick check fails, the model sees the output and gets up to two tries to fix it. A turn that still fails says so at the end of the answer (`⚠ The checks still fail …`).
 
 The model can't edit fetched dependencies, build output, git's data or Xeito's log (`deps/`, `_build/`, `node_modules/`, `.git/`, `.xeito/`). Dependencies aren't rebuilt from edited sources and are replaced on the next fetch, so such an edit would look done but never take. The model is told this and asked to change the project, or to propose a fork or an upstream patch.
 

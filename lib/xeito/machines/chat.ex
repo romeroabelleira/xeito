@@ -19,7 +19,8 @@ defmodule Xeito.Machines.Chat do
   ends in `answered` with `ctx.answer` and `ctx.turn` (the full message list of the turn,
   system prompt first).
 
-  **Verifying.** With `verify` (the project's check command, e.g. `mix ci`), a turn that edited
+  **Verifying.** With `verify` (a quick check command, `Xeito.Session.Router.quick_check_command/1`,
+  e.g. format and compile warnings), a turn that edited
   files (`write`/`edit`) does not end on the model's word: the checks run first. If they fail,
   the model is shown the output and may fix it (twice at most); a turn that still fails, or that
   stopped at the step limit, ends with the failure stated in the answer. So "it compiles" means

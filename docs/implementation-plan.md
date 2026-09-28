@@ -185,7 +185,7 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
     - A blinking prompt cursor. It is solid while typing and stops blinking after 10 s idle, so an idle TUI doesn't wake up.
     - `write`/`edit` refuse `deps/`, `_build/`, `node_modules/`, `.git/` and `.xeito/`. In the dogfood session, an edit to a dependency looked done but never took.
     - A quote-aware Risk tokenizer that treats read-only pipelines as safe. It decides 33 of that session's 35 commands by rule, where 13 were decided by rule before.
-    - The chat machine (0.2.0) runs the project's checks before answering a turn that edited files, and gives the model up to two tries to fix a failure.
+    - The chat machine (0.2.0) runs a quick check before answering a turn that edited files, and gives the model up to two tries to fix a failure. The check asks whether the code still builds (format and warnings for Mix, `cargo check`, `go build`, `tsc`), which takes about 0.5 s on this project. A `check.quick` alias or `check-quick` target overrides it.
   - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
 - Live (2026-09-28): `/skill:py-inventory`, "run the checks and fix what fails" (a delegated fix, then the checks pass) and "commit these changes" (drafted, approved, committed) all work end to end.

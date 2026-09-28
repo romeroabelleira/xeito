@@ -143,6 +143,36 @@ defmodule Xeito.Session.Router do
     end
   end
 
+  @doc """
+  The quick check for a chat turn that edited files: whether the code still builds, in a few
+  seconds, without running the tests (those are what `check_command/1` and the `check` machine
+  are for). A `check.quick` alias in `mix.exs` or a `check-quick` Makefile target wins; else
+  format and warnings for Mix, `cargo check`, `go build ./...`, `tsc --noEmit` for TypeScript,
+  a lint script for other `package.json` projects, and `ruff check` when a Python project
+  configures ruff. `nil` when nothing fits: the turn is then not checked.
+  """
+  @spec quick_check_command(Path.t()) :: String.t() | nil
+  def quick_check_command(cwd) do
+    Enum.find_value(quick_checks(), fn {file, pattern, cmd} ->
+      text = read(cwd, file)
+      if File.exists?(Path.join(cwd, file)) and text =~ pattern, do: cmd
+    end)
+  end
+
+  # `{build file, pattern it must contain, command}`, first match wins.
+  defp quick_checks do
+    [
+      {"mix.exs", ~r/"check\.quick":\s*\[/, "mix check.quick"},
+      {"Makefile", ~r/^check-quick:/m, "make check-quick"},
+      {"mix.exs", "", "mix format --check-formatted && mix compile --warnings-as-errors"},
+      {"Cargo.toml", "", "cargo check"},
+      {"go.mod", "", "go build ./..."},
+      {"tsconfig.json", "", "npx --no-install tsc --noEmit"},
+      {"package.json", ~r/"lint"\s*:/, "npm run lint"},
+      {"pyproject.toml", "[tool.ruff", "ruff check"}
+    ]
+  end
+
   defp read(cwd, file) do
     case File.read(Path.join(cwd, file)) do
       {:ok, text} -> text

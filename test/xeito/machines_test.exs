@@ -254,8 +254,17 @@ defmodule Xeito.MachinesTest do
     assert {Chat, _} = Router.route(:question, "what does commit abc123 change?")
 
     assert Router.check_command(ws) == "make test"
+    assert Router.quick_check_command(ws) == nil
+    File.write!(Path.join(ws, "Cargo.toml"), "")
+    assert Router.quick_check_command(ws) == "cargo check"
     File.write!(Path.join(ws, "mix.exs"), "defp aliases, do: [ci: [\"test\"]]")
     assert Router.check_command(ws) == "mix ci"
+
+    assert Router.quick_check_command(ws) ==
+             "mix format --check-formatted && mix compile --warnings-as-errors"
+
+    File.write!(Path.join(ws, "mix.exs"), ~s(defp aliases, do: ["check.quick": ["compile"]]))
+    assert Router.quick_check_command(ws) == "mix check.quick"
   end
 
   test "intent rules answer small talk and 'run the tests' without a model" do

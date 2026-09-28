@@ -107,7 +107,7 @@ stateDiagram-v2
   answering --> [*]
 ```
 
-A turn that edited files ends only after the project's checks have run (`verifying`), so the model's "done" is checked against the code that actually runs. `write` and `edit` refuse dependencies and build output (`deps/`, `_build/`, `node_modules/`) as well as `.git/` and `.xeito/`. Such edits never take effect, and a dogfood session lost two turns to one.
+A turn that edited files ends only after a quick check has run (`verifying`: does it still build, e.g. format and compile warnings, in seconds; the full suite is the `check` machine's job), so the model's "done" is checked against the code that actually runs. `write` and `edit` refuse dependencies and build output (`deps/`, `_build/`, `node_modules/`) as well as `.git/` and `.xeito/`. Such edits never take effect, and a dogfood session lost two turns to one.
 
 Process mining of free chat runs is how **new machines are discovered**. Frequent variants in the free-chat log are candidates for a dedicated machine. Rule 6 in [01](01-principles.md) and the meta machine in [05](05-event-log-and-process-mining.md#the-meta-state-machine) put this into practice.
 
