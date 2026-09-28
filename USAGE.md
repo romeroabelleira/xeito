@@ -80,7 +80,7 @@ systemctl --user daemon-reload && systemctl --user enable --now xeitod
 journalctl --user -u xeitod -f
 ```
 
-When idle, the daemon uses about 100 MB of RAM and no CPU. Sessions without activity close after two hours; they're rebuilt from the log the next time you use them.
+When idle, the daemon uses about 100 MB of RAM and no CPU. Sessions without activity close after two hours; they're rebuilt from the log the next time you use them. A project's log closes after 30 minutes without use and reopens on its own.
 
 ## 4. Your first session
 
@@ -410,6 +410,20 @@ import pm4py
 ocel = pm4py.read_ocel2_sqlite(".xeito/log.sqlite")
 print(pm4py.ocel_get_object_types(ocel))
 ```
+
+### Keeping the log small
+
+Nothing is deleted automatically: the log is also what resume, `/why`, `/machines` and process mining read. List the sessions of a project and prune old ones explicitly:
+
+```bash
+mix xeito.log sessions --cwd ~/src/my-project
+mix xeito.log prune --cwd ~/src/my-project --older-than 90 --keep 50           # dry run: shows what would go
+mix xeito.log prune --cwd ~/src/my-project --older-than 90 --keep 50 --apply   # deletes, then compacts the file
+```
+
+- A session is `open` while a daemon holds it, `closed` after an idle close or a clean daemon stop, and `interrupted` if the daemon stopped abruptly (it is marked when the log next opens).
+- `prune` deletes whole sessions (every run, event and relation under them), and only `closed` or `interrupted` ones. `--older-than DAYS` looks at last activity, and `--keep N` spares the N most recent sessions. With both options, a session must meet both conditions to be deleted.
+- Runs outside any session (scripts, benchmarks) are kept.
 
 ## 9. Evaluating deciders
 

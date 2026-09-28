@@ -22,17 +22,25 @@ defmodule Xeito.Log do
 
   # --- Client API --------------------------------------------------------------------------
 
-  @doc "Starts a log. Options: `:path` (required), `:name`."
+  @doc """
+  Starts a log. Options: `:path` (required), `:name`, `:idle_ms` (stop after that long without a
+  call; workspace logs), `:reconcile` (on open, mark sessions left `open` by an earlier daemon as
+  `interrupted`; workspace logs).
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     path = Keyword.fetch!(opts, :path)
-    GenServer.start_link(__MODULE__, path, Keyword.take(opts, [:name]))
+    GenServer.start_link(__MODULE__, {path, opts}, Keyword.take(opts, [:name]))
   end
 
   @doc """
   The log of a workspace, `<cwd>/.xeito/log.sqlite`, started on first use under
   `Xeito.WorkspaceLogs` and registered by path. Sessions started by the daemon use it, so each
   project keeps its own log (`docs/architecture/07-harness-frontend.md#context-and-configuration`).
+
+  A workspace log closes itself after `config :xeito, :log_idle_ms` (default 30 minutes)
+  without a call, so a daemon that touched many projects does not keep them all open. Callers
+  keep the returned name; the next call reopens the log transparently (see `call/2`).
   """
   @spec for_workspace(Path.t()) :: server()
   def for_workspace(cwd) do
@@ -43,48 +51,95 @@ defmodule Xeito.Log do
     File.mkdir_p!(dir)
     ignore = Path.join(dir, ".gitignore")
     unless File.exists?(ignore), do: File.write!(ignore, "*\n")
-    name = {:via, Registry, {Xeito.LogRegistry, path}}
+    open_workspace(path)
+  end
 
-    case DynamicSupervisor.start_child(Xeito.WorkspaceLogs, {__MODULE__, path: path, name: name}) do
+  defp open_workspace(path) do
+    name = {:via, Registry, {Xeito.LogRegistry, path}}
+    idle = Application.get_env(:xeito, :log_idle_ms, 1_800_000)
+
+    spec =
+      Supervisor.child_spec(
+        {__MODULE__, path: path, name: name, idle_ms: idle, reconcile: true},
+        restart: :transient
+      )
+
+    case DynamicSupervisor.start_child(Xeito.WorkspaceLogs, spec) do
       {:ok, _} -> name
       {:error, {:already_started, _}} -> name
     end
   end
 
+  # A workspace log that closed while idle is reopened on its next call. Other logs (the
+  # default log, test logs) are plain GenServer calls.
+  defp call({:via, Registry, {Xeito.LogRegistry, path}} = name, request) do
+    GenServer.call(name, request)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal] ->
+      open_workspace(path)
+      GenServer.call(name, request)
+  end
+
+  defp call(log, request), do: GenServer.call(log, request)
+
   @doc "Appends events for `run_id` in one transaction. Returns their sequence numbers."
   @spec append(server(), String.t(), [Event.t()]) :: {:ok, [pos_integer()]}
-  def append(log, run_id, events), do: GenServer.call(log, {:append, run_id, events})
+  def append(log, run_id, events), do: call(log, {:append, run_id, events})
 
   @doc "Records an object (or a change of its attributes). `changed` names the changed field, if any."
   @spec put_object(server(), String.t(), String.t(), map(), String.t() | nil) :: :ok
   def put_object(log, id, type, attrs, changed \\ nil),
-    do: GenServer.call(log, {:put_object, id, type, attrs, changed})
+    do: call(log, {:put_object, id, type, attrs, changed})
 
   @doc "Relates two objects (`object_object`)."
   @spec relate(server(), String.t(), String.t(), String.t()) :: :ok
   def relate(log, source, target, qualifier),
-    do: GenServer.call(log, {:relate, source, target, qualifier})
+    do: call(log, {:relate, source, target, qualifier})
 
   @doc "All events of a run, in order: `[{seq, type, term}]`."
   @spec read_run(server(), String.t()) :: [{pos_integer(), String.t(), term()}]
-  def read_run(log, run_id), do: GenServer.call(log, {:read_run, run_id})
+  def read_run(log, run_id), do: call(log, {:read_run, run_id})
 
   @doc "Runs a read-only SQL query and returns the rows (for tests, exports and diagnostics)."
   @spec query(server(), String.t(), list()) :: [list()]
-  def query(log, sql, params \\ []), do: GenServer.call(log, {:query, sql, params})
+  def query(log, sql, params \\ []), do: call(log, {:query, sql, params})
 
   # --- Server ------------------------------------------------------------------------------
 
   @impl true
-  def init(path) do
+  def init({path, opts}) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
     :ok = Sqlite3.execute(db, "PRAGMA journal_mode=WAL")
     :ok = Sqlite3.execute(db, "PRAGMA synchronous=NORMAL")
     :ok = Sqlite3.set_busy_timeout(db, 5_000)
     Enum.each(Schema.statements(), &(:ok = Sqlite3.execute(db, &1)))
-    {:ok, %{db: db, seqs: %{}}}
+    if opts[:reconcile], do: reconcile_sessions(db)
+    state = %{db: db, seqs: %{}, idle: Keyword.get(opts, :idle_ms) || :infinity}
+    {:ok, state, state.idle}
   end
+
+  @impl true
+  def handle_info(:timeout, state), do: {:stop, :normal, state}
+
+  # Sessions recorded as open whose process is not alive in this daemon ended without closing
+  # (the daemon stopped abruptly): record that, so the log does not claim they are open.
+  defp reconcile_sessions(db) do
+    sql = """
+    SELECT s.ocel_id FROM object_session s
+    WHERE s.status = 'open' AND s.rowid = (
+      SELECT MAX(s2.rowid) FROM object_session s2 WHERE s2.ocel_id = s.ocel_id AND s2.status IS NOT NULL)
+    """
+
+    for [id] <- select(db, sql, []), not live_session?(id) do
+      write_object(db, id, "session", %{status: "interrupted"}, "status")
+    end
+  end
+
+  defp live_session?(id),
+    do:
+      Process.whereis(Xeito.SessionRegistry) != nil and
+        Registry.lookup(Xeito.SessionRegistry, id) != []
 
   @impl true
   def handle_call({:append, run_id, events}, _from, state) do
@@ -101,31 +156,13 @@ defmodule Xeito.Log do
         end)
       end)
 
-    {:reply, {:ok, seqs}, %{state | seqs: Map.put(state.seqs, run_id, next + length(events))}}
+    state = %{state | seqs: Map.put(state.seqs, run_id, next + length(events))}
+    {:reply, {:ok, seqs}, state, state.idle}
   end
 
   def handle_call({:put_object, id, type, attrs, changed}, _from, state) do
-    columns = Map.fetch!(Schema.object_types(), type)
-    time = DateTime.utc_now() |> DateTime.to_iso8601()
-
-    transaction(state.db, fn ->
-      exec(state.db, "INSERT OR IGNORE INTO object (ocel_id, ocel_type) VALUES (?1, ?2)", [
-        id,
-        type
-      ])
-
-      attrs = Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
-      values = Enum.map(columns, &Codec.attr(Map.get(attrs, &1)))
-
-      insert_row(
-        state.db,
-        "object_#{type}",
-        ["ocel_id", "ocel_time", "ocel_changed_field" | columns],
-        [id, time, changed | values]
-      )
-    end)
-
-    {:reply, :ok, state}
+    write_object(state.db, id, type, attrs, changed)
+    {:reply, :ok, state, state.idle}
   end
 
   def handle_call({:relate, source, target, qualifier}, _from, state) do
@@ -135,7 +172,7 @@ defmodule Xeito.Log do
       [source, target, qualifier]
     )
 
-    {:reply, :ok, state}
+    {:reply, :ok, state, state.idle}
   end
 
   def handle_call({:read_run, run_id}, _from, state) do
@@ -145,17 +182,36 @@ defmodule Xeito.Log do
       ])
 
     {:reply,
-     Enum.map(rows, fn [seq, type, term] -> {seq, type, :erlang.binary_to_term(term)} end), state}
+     Enum.map(rows, fn [seq, type, term] -> {seq, type, :erlang.binary_to_term(term)} end), state,
+     state.idle}
   end
 
   def handle_call({:query, sql, params}, _from, state) do
-    {:reply, select(state.db, sql, params), state}
+    {:reply, select(state.db, sql, params), state, state.idle}
   end
 
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
 
   # --- SQL helpers -------------------------------------------------------------------------
+
+  defp write_object(db, id, type, attrs, changed) do
+    columns = Map.fetch!(Schema.object_types(), type)
+    time = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    transaction(db, fn ->
+      exec(db, "INSERT OR IGNORE INTO object (ocel_id, ocel_type) VALUES (?1, ?2)", [id, type])
+      attrs = Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
+      values = Enum.map(columns, &Codec.attr(Map.get(attrs, &1)))
+
+      insert_row(
+        db,
+        "object_#{type}",
+        ["ocel_id", "ocel_time", "ocel_changed_field" | columns],
+        [id, time, changed | values]
+      )
+    end)
+  end
 
   defp next_seq(state, run_id) do
     case state.seqs do

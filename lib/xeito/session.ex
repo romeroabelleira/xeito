@@ -118,6 +118,8 @@ defmodule Xeito.Session do
     log = Keyword.get_lazy(opts, :log, fn -> Log.for_workspace(cwd) end)
     id = Keyword.fetch!(opts, :id)
 
+    # Trapping exits lets a clean daemon stop run terminate/2, which records the session closed.
+    Process.flag(:trap_exit, true)
     Log.put_object(log, id, "session", %{cwd: cwd, status: "open"})
     Events.subscribe(:all)
 
@@ -290,8 +292,6 @@ defmodule Xeito.Session do
   def handle_info(:idle_check, s) do
     if not busy?(s) and now() - s.active_at >= s.idle_timeout do
       emit(s, "closed", nil, %{"reason" => "idle", "idle_ms" => s.idle_timeout})
-      Log.put_object(s.log, s.id, "session", %{status: "closed"}, "status")
-      Budget.delete(s.id)
       {:stop, :normal, s}
     else
       schedule_idle_check(s)
@@ -309,6 +309,20 @@ defmodule Xeito.Session do
   end
 
   def handle_info(_msg, s), do: {:noreply, s}
+
+  # An idle close (:normal) or a clean daemon stop (:shutdown) records the session closed. A
+  # crash records nothing; the next time the workspace log opens, it marks the session
+  # `interrupted` (`Xeito.Log`).
+  @impl true
+  def terminate(reason, s)
+      when reason in [:normal, :shutdown] or (is_tuple(reason) and elem(reason, 0) == :shutdown) do
+    Budget.delete(s.id)
+    Log.put_object(s.log, s.id, "session", %{status: "closed"}, "status")
+  catch
+    :exit, _ -> :ok
+  end
+
+  def terminate(_reason, s), do: Budget.delete(s.id)
 
   # --- prompts -------------------------------------------------------------------------------
 
