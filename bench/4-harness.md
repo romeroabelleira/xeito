@@ -66,3 +66,36 @@ Also verified live: `/skill:…` (pi-format skill), `check` (a failure delegated
 - delegation from `fix_failing_test`
 - sessions: routing, history, `/why`, resume from the log
 - the socket protocol, and step mode with breakpoints and human decisions
+
+## 4. Code navigation: outline, symbol reads and the project map (2026-09-28)
+
+The task: "Make the TUI's prompt cursor blink, like an editor's cursor." The starting point is Xeito's own code before the blinking cursor existed, as a fresh git repository with compiled dependencies. [`bench/scripts/p4_code_nav.exs`](scripts/p4_code_nav.exs) sends the prompt through a normal session in-process: Intent, the chat machine, Risk and the quick check. Reviews are denied automatically. The large local model is used, with the step limit at 25.
+
+- **A:** harness before this work (`71a5c26`).
+- **B:** A plus `read` with `outline`/`symbol`, and a syntax check after `write`/`edit` (`978d673`).
+- **C:** B plus the project map in the instructions (`3fcb280`).
+
+Three runs each, interleaved:
+
+| | A | B | C |
+|---|---|---|---|
+| Runs that reached an edit | 1 of 3 | 0 of 3 | 3 of 3 |
+| Step of the first edit | 18 | — | 18, 18, 19 |
+| Runs using `outline`/`symbol` | — | 1 of 3 | 2 of 3 |
+| Shell commands per run (mean) | 17 | 16 | 14 |
+| Input tokens per run (mean) | 465k | 424k | 502k |
+| Wall time per run (mean) | 140 s | 131 s | 182 s |
+| Finished within the step limit / quick check passed | 0 / 0 | 0 / 0 | 0 / 0 |
+
+An earlier round had a broken workspace, so its quick-check results are invalid. Its step counts still hold: A and B each reached an edit in 1 of 3 runs, which makes A 2 of 6 and B 1 of 6 over both rounds.
+
+Findings:
+- **No variant finished the task.** Every run spent about 18 steps exploring, mostly in the TermUI dependency's source, learning how timers and the text input work. It then ran out of steps while editing.
+- **With the project map, every run reached the editing stage.** A and B mostly did not. The sample is small, and n = 3 per variant is suggestive rather than conclusive.
+- **Outline and symbol reads are used only some of the time.** The model still reaches for `grep -rn` across files, which the outline (one file at a time) does not replace.
+- **The edits that were made did not compile.** One left a syntax error, which the new check reported in the same step, but no step was left to fix it. The others used an undefined variable or misused `&1` captures. A failing check at the step limit is only reported: `stopped` turns cannot fix.
+
+What this suggests next:
+1. A small fix budget beyond the step limit: after edits, allow a couple of extra steps to repair a failing quick check.
+2. The API of the dependencies the project uses (for example `TermUI.*`) in the map, since exploring dependency sources took most of the steps.
+3. A step limit that fits unfamiliar-library tasks for a local model, or a planning step before exploring.
