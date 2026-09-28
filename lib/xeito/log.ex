@@ -8,7 +8,9 @@ defmodule Xeito.Log do
 
   Every event gets a per-run sequence number, an OCEL id `"<run_id>:<seq>"`, a UTC timestamp,
   its typed OCEL attributes, an `event_object` link to its run (qualifier `"within"`) plus any
-  extra objects, and the exact term in `xeito_term` for replay.
+  extra objects, and the exact term in `xeito_term` for replay. Terms and attributes are stored
+  compactly (message chains stored once, results not repeated, compression; `Xeito.Log.Store`),
+  and read back exactly.
 
   See `docs/architecture/05-event-log-and-process-mining.md`.
   """
@@ -16,7 +18,7 @@ defmodule Xeito.Log do
   use GenServer
 
   alias Exqlite.Sqlite3
-  alias Xeito.Log.{Codec, Event, Schema}
+  alias Xeito.Log.{Codec, Event, Schema, Sql, Store}
 
   @type server :: GenServer.server()
 
@@ -113,9 +115,16 @@ defmodule Xeito.Log do
     :ok = Sqlite3.execute(db, "PRAGMA journal_mode=WAL")
     :ok = Sqlite3.execute(db, "PRAGMA synchronous=NORMAL")
     :ok = Sqlite3.set_busy_timeout(db, 5_000)
-    Enum.each(Schema.statements(), &(:ok = Sqlite3.execute(db, &1)))
+    Enum.each(Schema.statements() ++ Store.statements(), &(:ok = Sqlite3.execute(db, &1)))
     if opts[:reconcile], do: reconcile_sessions(db)
-    state = %{db: db, seqs: %{}, idle: Keyword.get(opts, :idle_ms) || :infinity}
+
+    state = %{
+      db: db,
+      seqs: %{},
+      idle: Keyword.get(opts, :idle_ms) || :infinity,
+      check: Application.get_env(:xeito, :check_log_roundtrip, false)
+    }
+
     {:ok, state, state.idle}
   end
 
@@ -148,14 +157,16 @@ defmodule Xeito.Log do
 
     seqs =
       transaction(state.db, fn ->
-        events
-        |> Enum.with_index(next)
-        |> Enum.map(fn {event, seq} ->
-          insert_event(state.db, run_id, seq, time, event)
+        numbered = Enum.with_index(events, next) |> Enum.map(fn {e, seq} -> {seq, e} end)
+
+        for {seq, event, blob, heads} <- Store.encode(state.db, run_id, numbered) do
+          insert_event(state.db, run_id, seq, time, event, blob)
+          Store.put_refs(state.db, "#{run_id}:#{seq}", heads)
           seq
-        end)
+        end
       end)
 
+    if state.check, do: check_roundtrip!(state.db, run_id, seqs, events)
     state = %{state | seqs: Map.put(state.seqs, run_id, next + length(events))}
     {:reply, {:ok, seqs}, state, state.idle}
   end
@@ -181,9 +192,7 @@ defmodule Xeito.Log do
         run_id
       ])
 
-    {:reply,
-     Enum.map(rows, fn [seq, type, term] -> {seq, type, :erlang.binary_to_term(term)} end), state,
-     state.idle}
+    {:reply, Store.decode(state.db, rows), state, state.idle}
   end
 
   def handle_call({:query, sql, params}, _from, state) do
@@ -192,6 +201,21 @@ defmodule Xeito.Log do
 
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
+
+  # Reads the rows just written back and compares them with the appended events (tests).
+  defp check_roundtrip!(db, run_id, seqs, events) do
+    rows =
+      select(
+        db,
+        "SELECT seq, type, term FROM xeito_term WHERE run_id = ?1 AND seq >= ?2 ORDER BY seq",
+        [run_id, List.first(seqs)]
+      )
+
+    expected = Enum.zip_with(seqs, events, &{&1, &2.type, &2.term})
+
+    unless Store.decode(db, rows) == expected,
+      do: raise("log round trip failed for #{run_id} #{inspect(seqs)}")
+  end
 
   # --- SQL helpers -------------------------------------------------------------------------
 
@@ -228,7 +252,7 @@ defmodule Xeito.Log do
     end
   end
 
-  defp insert_event(db, run_id, seq, time, %Event{} = event) do
+  defp insert_event(db, run_id, seq, time, %Event{} = event, blob) do
     id = "#{run_id}:#{seq}"
     columns = Map.fetch!(Schema.event_types(), event.type)
     values = Enum.map(columns, &Codec.attr(Map.get(event.attrs, &1)))
@@ -249,7 +273,7 @@ defmodule Xeito.Log do
     exec(
       db,
       "INSERT INTO xeito_term (ocel_id, run_id, seq, type, term) VALUES (?1, ?2, ?3, ?4, ?5)",
-      [id, run_id, seq, event.type, {:blob, :erlang.term_to_binary(event.term)}]
+      [id, run_id, seq, event.type, {:blob, blob}]
     )
   end
 
@@ -278,41 +302,7 @@ defmodule Xeito.Log do
     )
   end
 
-  defp transaction(db, fun) do
-    :ok = Sqlite3.execute(db, "BEGIN IMMEDIATE")
-
-    try do
-      result = fun.()
-      :ok = Sqlite3.execute(db, "COMMIT")
-      result
-    rescue
-      error ->
-        Sqlite3.execute(db, "ROLLBACK")
-        reraise error, __STACKTRACE__
-    end
-  end
-
-  defp exec(db, sql, params) do
-    {:ok, stmt} = Sqlite3.prepare(db, sql)
-
-    try do
-      :ok = Sqlite3.bind(stmt, params)
-      :done = Sqlite3.step(db, stmt)
-      :ok
-    after
-      Sqlite3.release(db, stmt)
-    end
-  end
-
-  defp select(db, sql, params) do
-    {:ok, stmt} = Sqlite3.prepare(db, sql)
-
-    try do
-      :ok = Sqlite3.bind(stmt, params)
-      {:ok, rows} = Sqlite3.fetch_all(db, stmt)
-      rows
-    after
-      Sqlite3.release(db, stmt)
-    end
-  end
+  defp transaction(db, fun), do: Sql.transaction(db, fun)
+  defp exec(db, sql, params), do: Sql.exec(db, sql, params)
+  defp select(db, sql, params), do: Sql.select(db, sql, params)
 end

@@ -41,6 +41,17 @@ Each event carries `(id, type, time, attributes, [{object_id, qualifier}])`, for
 - **Durable:** **SQLite**, using the OCEL 2.0 SQLite relational layout, so PM4Py and other tools can read it directly. This means no export step, and a single file per workspace (`.xeito/log.sqlite`).
 - **Optional:** export to OCEL JSON, flattened XES per object type, and OpenTelemetry spans ([06](06-observability.md)).
 
+#### Storing inputs, not state
+
+The log applies the central idea of fighting games' rollback netcode: the machines are deterministic, so the log records *inputs* once (model replies, tool output, human answers) and treats everything derived from them as recomputable. `Xeito.Log.Store` implements this without changing what readers see.
+
+- **Message chains.** Each chat message is stored once in `xeito_message` and points to its parent. A message's id hashes its parent's id and its own content, so the id of a chain's last message is a checksum of the conversation up to it, and shared prefixes (system prompt, earlier turns) are stored once. An event that carries a message list stores `{:xeito_chain, head, count}` instead. Its OCEL attribute shows `{"chain": head, "messages": count}`, so mining tools see the shape of a conversation without its text.
+- **Results once.** The event that an effect's result produces refers to the `effect_completed` event instead of repeating its payload.
+- **Compressed terms.** Terms are stored with compression, and small terms stay uncompressed.
+- **Replay checks itself.** Like rollback's state checksums, recovery compares every effect the replay requests with the one the log recorded. For a chat call, that is the exact message chain the model saw. The first mismatch is reported as a desync, and the run refuses to recover from it instead of sending a different request. `mix xeito.log verify` runs this check over a whole log.
+
+As a result, the log grows linearly with conversation length, not quadratically: in a synthetic chat run with 40 model calls, the payload drops from 1.4 MB to 49 KB. Logs written before this layout read unchanged, and `mix xeito.log compact` rewrites them.
+
 ## Mining pipeline
 
 ```mermaid

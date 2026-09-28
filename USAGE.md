@@ -425,6 +425,14 @@ mix xeito.log prune --cwd ~/src/my-project --older-than 90 --keep 50 --apply   #
 - `prune` deletes whole sessions (every run, event and relation under them), and only `closed` or `interrupted` ones. `--older-than DAYS` looks at last activity, and `--keep N` spares the N most recent sessions. With both options, a session must meet both conditions to be deleted.
 - Runs outside any session (scripts, benchmarks) are kept.
 
+The log stores each chat message once and refers to it afterwards, so a long conversation grows the log linearly ([05](docs/architecture/05-event-log-and-process-mining.md#storing-inputs-not-state)). Three more commands help with maintenance:
+
+```bash
+mix xeito.log stats --cwd ~/src/my-project     # where the bytes are, per table and event type
+mix xeito.log verify --cwd ~/src/my-project    # replay every run and check it matches the log
+mix xeito.log compact --cwd ~/src/my-project   # rewrite a log written by an older Xeito (stop the daemon first)
+```
+
 ## 9. Evaluating deciders
 
 Every decision type has labelled examples in `priv/decisions/<type>/examples.jsonl`, one JSON object per line:

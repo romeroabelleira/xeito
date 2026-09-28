@@ -10,13 +10,14 @@ defmodule Xeito.Log.Retention do
   * `:older_than_days` keeps sessions active within that many days; `:keep` keeps that many of
     the most recently active sessions. With both, a session must satisfy both to be deleted.
   * Runs that belong to no session (scripts, benchmarks) and machine definitions are kept.
+  * Stored chat messages no remaining event refers to are swept (`Xeito.Log.Store.sweep/1`).
 
   Works on its own SQLite connection, so it can run while the daemon holds the log (SQLite
   locks); compacting (`VACUUM`) may then be postponed, which `prune/2` reports.
   """
 
   alias Exqlite.Sqlite3
-  alias Xeito.Log.Schema
+  alias Xeito.Log.{Schema, Store}
 
   @type session :: %{
           id: String.t(),
@@ -86,12 +87,15 @@ defmodule Xeito.Log.Retention do
   end
 
   @doc """
-  Deletes the given sessions, one transaction each, then tries to compact the file. Returns
-  `{:ok, %{sessions: n, events: n, vacuumed: boolean}}`.
+  Deletes the given sessions, one transaction each, sweeps unreferenced messages, then tries to
+  compact the file. Returns `{:ok, %{sessions: n, events: n, messages: n, vacuumed: boolean}}`.
   """
   @spec prune(Sqlite3.db(), [session()]) :: {:ok, map()}
   def prune(db, sessions) do
+    # A log last written before the message store existed gets its (empty) tables first.
+    Enum.each(Store.statements(), &(:ok = Sqlite3.execute(db, &1)))
     Enum.each(sessions, &delete_session(db, &1.id))
+    messages = if sessions == [], do: 0, else: Store.sweep(db)
     # In WAL mode the compacted pages land in the WAL file; the checkpoint moves them into the
     # log file and truncates the WAL, so the file actually shrinks now.
     vacuumed =
@@ -102,6 +106,7 @@ defmodule Xeito.Log.Retention do
      %{
        sessions: length(sessions),
        events: Enum.sum(Enum.map(sessions, & &1.events)),
+       messages: messages,
        vacuumed: vacuumed
      }}
   end
@@ -117,6 +122,7 @@ defmodule Xeito.Log.Retention do
         [
           "DELETE FROM event_object WHERE ocel_event_id IN (#{events})",
           "DELETE FROM event WHERE ocel_id IN (#{events})",
+          "DELETE FROM xeito_term_chain WHERE ocel_id IN (#{events})",
           "DELETE FROM xeito_term WHERE #{prefix("run_id")}",
           "DELETE FROM object_object WHERE #{prefix("ocel_source_id")} OR #{prefix("ocel_target_id")}"
         ] ++

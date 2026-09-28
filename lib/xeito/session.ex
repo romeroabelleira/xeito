@@ -37,7 +37,12 @@ defmodule Xeito.Session do
   alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
   alias Xeito.Session.{Git, Router}
 
+  # The history window trims with slack: past 80 messages it drops back to 60, so its first
+  # message changes once every ~20 messages rather than every turn. The log stores a conversation
+  # as a chain from its first message (`Xeito.Log.Store`); a window sliding every turn would
+  # start a new chain every turn.
   @max_history 80
+  @trimmed_history 60
   @agents_max_bytes 16_384
 
   # --- client API ----------------------------------------------------------------------------
@@ -631,13 +636,18 @@ defmodule Xeito.Session do
 
   # Chat turns keep their full message list; other machines leave a short exchange.
   defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer),
-    do: Enum.take(messages, -@max_history)
+    do: window(messages)
 
   defp remember(s, _result, answer) do
     (s.history ++
        [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
-    |> Enum.take(-@max_history)
+    |> window()
   end
+
+  defp window(messages) when length(messages) > @max_history,
+    do: Enum.take(messages, -@trimmed_history)
+
+  defp window(messages), do: messages
 
   # --- commands ------------------------------------------------------------------------------
 

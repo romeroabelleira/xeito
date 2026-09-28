@@ -237,6 +237,9 @@ defmodule Xeito.Run do
       {:ok, %{finished: true}} ->
         :ignore
 
+      {:ok, %{desync: id}} when id != nil ->
+        {:stop, {:recovery_failed, {:desync, id}}}
+
       {:ok, rebuilt} ->
         data = %{data | ctx: rebuilt.ctx, effect_count: rebuilt.effect_count}
 
