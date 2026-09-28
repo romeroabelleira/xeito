@@ -79,42 +79,101 @@ defmodule Xeito.Client.StatusBar do
 
   # --- rendering -------------------------------------------------------------------------
 
-  @doc "The two bar lines: machine and models (from a monitor snapshot, if any), then usage."
-  @spec lines(usage(), map() | nil) :: [String.t()]
-  def lines(usage, monitor), do: [system_line(monitor), usage_line(usage, monitor)]
+  # Segment → line. Order within a line is fixed; any segment can be hidden.
+  @segments [
+    gpu: 1,
+    models: 1,
+    cpu: 1,
+    git: 1,
+    calls: 2,
+    tokens: 2,
+    det: 2,
+    cost: 2,
+    budget: 2,
+    queue: 2
+  ]
 
-  @doc false
-  def system_line(nil), do: "status: waiting for the daemon's monitor…"
+  @doc "The segment names, in display order."
+  @spec segments() :: [String.t()]
+  def segments, do: Enum.map(@segments, fn {name, _} -> Atom.to_string(name) end)
 
-  def system_line(%{"system" => sys, "models" => models}) do
-    [
-      gpu(sys["gpus"]),
-      large(models["large"]),
-      small(models["small"]),
-      s1(models["system_one"]),
-      cpu(sys)
-    ]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" │ ")
+  @doc """
+  The bar's lines (empty lines are dropped): machine, models and workspace from a monitor
+  snapshot and a session `workspace` event (either may be `nil`), then usage. `hidden` lists
+  segment names not to show.
+  """
+  @spec lines(usage(), map() | nil, map() | nil, [String.t()]) :: [String.t()]
+  def lines(usage, monitor, workspace \\ nil, hidden \\ []) do
+    parts =
+      for {name, line} <- @segments,
+          Atom.to_string(name) not in hidden,
+          do: {line, segment(name, usage, monitor, workspace)}
+
+    for line <- [1, 2],
+        text = parts |> Enum.filter(&(elem(&1, 0) == line)) |> Enum.map(&elem(&1, 1)) |> join(),
+        text != "",
+        do: text
   end
 
+  defp join(texts), do: texts |> Enum.reject(&(&1 == "")) |> Enum.join(" │ ")
+
+  defp segment(:gpu, _u, nil, _w), do: "status: waiting for the daemon's monitor…"
+  defp segment(:gpu, _u, m, _w), do: gpu(m["system"]["gpus"])
+  defp segment(:models, _u, nil, _w), do: ""
+
+  defp segment(:models, _u, %{"models" => models}, _w),
+    do: join([large(models["large"]), small(models["small"]), s1(models["system_one"])])
+
+  defp segment(:cpu, _u, nil, _w), do: ""
+  defp segment(:cpu, _u, m, _w), do: cpu(m["system"])
+  defp segment(:git, _u, _m, w), do: git(w && w["git"])
+  defp segment(:calls, u, _m, _w), do: calls(u)
+  defp segment(:tokens, u, m, _w), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)
+  defp segment(:det, u, _m, _w), do: det(u.det)
+
+  defp segment(:cost, u, _m, _w),
+    do: "$#{:erlang.float_to_binary(u.usd * 1.0, decimals: 4)} · ~#{energy(u.joules)}"
+
+  defp segment(:budget, _u, _m, w), do: budget(w && w["budget"])
+  defp segment(:queue, _u, m, _w), do: queues(m)
+
   @doc false
-  def usage_line(usage, monitor) do
-    calls =
-      case usage.calls |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(fn {a, n} -> "#{a} #{n}" end) do
-        [] -> "no model calls yet"
-        parts -> Enum.join(parts, " · ")
-      end
+  def system_line(monitor, workspace \\ nil),
+    do: lines(new(), monitor, workspace, ~w(calls tokens det cost budget queue)) |> List.first("")
 
-    tokens = "#{k(usage.tokens_in)}→#{k(usage.tokens_out)} tok" <> ctx(usage.ctx, monitor)
+  @doc false
+  def usage_line(usage, monitor, workspace \\ nil),
+    do: lines(usage, monitor, workspace, ~w(gpu models cpu git)) |> List.first("")
 
-    {code, total} = usage.det
-    det = if total > 0, do: "det #{round(100 * code / total)}%", else: "det -"
-    cost = "$#{:erlang.float_to_binary(usage.usd * 1.0, decimals: 4)} · ~#{energy(usage.joules)}"
+  defp calls(usage) do
+    case usage.calls |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(fn {a, n} -> "#{a} #{n}" end) do
+      [] -> "no model calls yet"
+      parts -> Enum.join(parts, " · ")
+    end
+  end
 
-    [calls, tokens, det, cost, queues(monitor)]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" │ ")
+  defp det({_code, 0}), do: "det -"
+  defp det({code, total}), do: "det #{round(100 * code / total)}%"
+
+  defp git(nil), do: ""
+
+  defp git(%{"branch" => branch, "dirty" => dirty} = g) do
+    state = if dirty == 0, do: "clean", else: "#{dirty} changed"
+
+    ab =
+      if(g["ahead"] > 0, do: " ↑#{g["ahead"]}", else: "") <>
+        if(g["behind"] > 0, do: " ↓#{g["behind"]}", else: "")
+
+    "git #{branch} #{state}#{ab}"
+  end
+
+  defp budget(nil), do: ""
+  defp budget(%{"off_box" => false}), do: "off-box off"
+
+  defp budget(%{"max_usd_per_run" => max, "spent_usd" => spent}) do
+    left = max(max - spent, 0)
+
+    "budget $#{:erlang.float_to_binary(left * 1.0, decimals: 2)}/#{:erlang.float_to_binary(max * 1.0, decimals: 2)}"
   end
 
   defp gpu(gpus) when is_list(gpus) do

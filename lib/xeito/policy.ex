@@ -50,6 +50,17 @@ defmodule Xeito.Policy do
     |> enforce_type(type)
   end
 
+  @doc """
+  The session-wide policy, before any decision type narrows it: defaults, deployment config and
+  request options. What the status bar shows as the off-box budget.
+  """
+  @spec effective(keyword()) :: map()
+  def effective(opts \\ []) do
+    @defaults
+    |> Map.merge(Map.new(Application.get_env(:xeito, :policy, [])))
+    |> Map.merge(Map.new(Keyword.get(opts, :policy, [])))
+  end
+
   # A type-level :forbidden cannot be relaxed by configuration or request options.
   defp enforce_type(policy, type) do
     if Keyword.get(type.policy || [], :remote) == :forbidden,

@@ -178,7 +178,7 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
   - [USAGE.md](../USAGE.md): setup, everyday examples, step mode, the log, evaluation, extending.
   - Skills in pi's format (Agent Skills, `SKILL.md`), read from the project's `.pi/skills` and `.agents/skills`, then `~/.pi/agent/skills` and `~/.agents/skills`. They are listed for the model, loaded on demand through a `skill` tool confined to the skill's directory, and can be forced with `/skill:name`.
   - Structured machines: `run_tests`, `fix_failing_test`, `commit` (drafted message, human approval, fixed git commands) and `check` (the project's checks, with failures delegated to a chat run). With the free chat machine, that makes five.
-  - `/machines` (summary, routing, per-project usage) and a toggleable TUI status bar: GPU, VRAM, power and temperatures, resident models and unload countdown, CPU and RAM, session usage, the determinism budget, spend and queues. The daemon polls only while a client shows the bar.
+  - `/machines` (summary, routing, per-project usage) and a toggleable TUI status bar: GPU, VRAM, power and temperatures, resident models and unload countdown, CPU and RAM, git branch/dirty, session usage, the determinism budget, spend, the off-box budget left, and queues. The daemon polls only while a client shows the bar. Segments are configurable (`/statusbar show|hide`) and saved as a client preference.
   - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.
 - Live: "the pricing test is failing, fix it" goes from Intent to a verified fix in 11 s.
 - Live (2026-09-28): `/skill:py-inventory`, "run the checks and fix what fails" (a delegated fix, then the checks pass) and "commit these changes" (drafted, approved, committed) all work end to end.
@@ -220,7 +220,7 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
 ## P8 · Packaging, docs and v0.1 (≈3 weeks)
 
 1. Package as a single-binary CLI (Burrito) plus `mix release` for the server mode.
-2. Write an install script for Linux, with an Ubuntu-based recipe, llama.cpp setup and model download.
+2. Write an install script for Linux, with an Ubuntu-based recipe, llama.cpp setup and model download. Candidate: a `setup` **machine** for the guided part (detect the tiers, test each endpoint, write the environment file), since it has real states and checks.
 3. Write documentation: a machine-authoring guide, a decision-authoring guide, and the benchmark protocol.
 4. Write up the reference benchmark ([09](architecture/09-reference-deployment.md#benchmark-protocol)) as a blog post, with a talk proposal.
 5. Tag v0.1.0.

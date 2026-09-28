@@ -131,7 +131,7 @@ defmodule Xeito.Api.Connection do
 
   # A followed session that closed while idle is resumed transparently from its workspace log.
   defp handle(cmd, %{"session" => id} = req, s)
-       when cmd in ~w(prompt approve deny status history) do
+       when cmd in ~w(prompt approve deny status history workspace) do
     cond do
       exists?(id) ->
         {session_cmd(cmd, id, req), s}
@@ -154,6 +154,7 @@ defmodule Xeito.Api.Connection do
   defp session_cmd("deny", id, _req), do: result(Session.deny(id))
   defp session_cmd("status", id, _req), do: %{ok: true, status: Session.status(id)}
   defp session_cmd("history", id, _req), do: %{ok: true, history: Session.history(id)}
+  defp session_cmd("workspace", id, _req), do: %{ok: true, workspace: Session.workspace(id)}
 
   defp result(:ok), do: %{ok: true}
   defp result({:error, reason}), do: %{ok: false, error: to_string(reason)}

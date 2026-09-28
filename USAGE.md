@@ -112,8 +112,8 @@ Each `◆` line is a **typed decision**. It shows its value, the tier that decid
 Above the status line, the TUI shows two more lines. Toggle them with **Ctrl-T** or `/statusbar`, or start without them using `--no-status-bar`:
 
 ```
- GPU 20.8/24.0 GiB 94% 289 W 73°C │ large qwen3.6:27b unload 4:58 │ small ✓ 0/4 │ S1 ✓ │ CPU 39% load 0.34 RAM 15.9/62.0 GiB
- chat 2 · large 1 · rule 1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ det 50% │ $0.0000 · ~157 J │ queue large 1
+ GPU 20.8/24.0 GiB 94% 289 W 73°C │ large qwen3.6:27b unload 4:58 │ small ✓ 0/4 │ S1 ✓ │ CPU 39% load 0.34 RAM 15.9/62.0 GiB │ git main 2 changed ↑1
+ chat 2 · large 1 · rule 1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ det 50% │ $0.0000 · ~157 J │ budget $0.50/0.50 │ queue large 1
 ```
 
 | Part | Meaning |
@@ -126,9 +126,22 @@ Above the status line, the TUI shows two more lines. Toggle them with **Ctrl-T**
 | `tok`, `ctx` | tokens in → out, and the last chat prompt against the model's context window |
 | `det` | the determinism budget: the share of transitions taken by code or rules rather than a model or a human |
 | `$ · J` | spend on off-box tiers, and estimated energy of local decisions |
+| `git` | the project's branch, uncommitted entries, and commits ahead/behind its upstream |
+| `budget` | the off-box budget left for the current run, of the limit per run, or `off-box off` when policy keeps everything local |
 | `queue` | tiers with calls in flight (+ waiting) |
 
-The hardware and model line comes from the daemon, which only polls (every 2 s) while a client shows the bar. Hidden or closed, it costs nothing.
+The hardware and model line comes from the daemon, which only polls (every 2 s) while a client shows the bar; hidden or closed, it costs nothing. The git and budget segments come from the session. They refresh after every turn, and every 10 s while the bar is shown.
+
+**Choose what it shows.** Each part is a segment you can hide or show again:
+
+```
+> /statusbar segments              list them (hidden ones are marked ·)
+> /statusbar hide cpu,queue,cost
+> /statusbar show cost
+> /statusbar off                   (or on, or reset)
+```
+
+The choice is saved in `~/.config/xeito/tui.json` (or `$XDG_CONFIG_HOME/xeito/tui.json`; set `XEITO_TUI_CONFIG` to use another file), so the next TUI starts the same way. The segments are `gpu models cpu git calls tokens det cost budget queue`.
 
 **Quit** with Ctrl-D or Ctrl-C. The session keeps running in the daemon. Reattach with the id printed at the top:
 

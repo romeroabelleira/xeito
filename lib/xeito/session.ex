@@ -33,9 +33,9 @@ defmodule Xeito.Session do
 
   use GenServer
 
-  alias Xeito.{Budget, Escalation, Events, Log, Run, RunSupervisor, Skills}
+  alias Xeito.{Budget, Escalation, Events, Log, Policy, Run, RunSupervisor, Skills}
   alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
-  alias Xeito.Session.Router
+  alias Xeito.Session.{Git, Router}
 
   @max_history 80
   @agents_max_bytes 16_384
@@ -95,6 +95,14 @@ defmodule Xeito.Session do
   @doc "The conversation history (messages without the system prompt)."
   @spec history(String.t()) :: [map()]
   def history(id), do: GenServer.call(via(id), :history)
+
+  @doc """
+  The workspace state for status bars, also emitted as a `workspace` event: git (branch, dirty
+  entries, ahead/behind; `nil` outside a repository) and the off-box budget (whether off-box
+  tiers are allowed, the limit per run, and what the current run has spent).
+  """
+  @spec workspace(String.t()) :: map()
+  def workspace(id), do: GenServer.call(via(id), :workspace)
 
   @doc "The session topic for `Xeito.Events`."
   @spec topic(String.t()) :: String.t()
@@ -242,6 +250,12 @@ defmodule Xeito.Session do
   end
 
   defp handle_request(:history, _from, s), do: {:reply, s.history, s}
+
+  defp handle_request(:workspace, _from, s) do
+    attrs = workspace_attrs(s)
+    emit(s, "workspace", nil, attrs)
+    {:reply, attrs, s}
+  end
 
   @impl true
   def handle_info({:intent, text, decision}, s) do
@@ -459,6 +473,8 @@ defmodule Xeito.Session do
     {:ok, result} = Run.result(s.log, run_id)
     answer = answer(s.machine, result)
     emit(s, "turn_finished", run_id, Map.merge(event.attrs, %{"answer" => answer}))
+    # A turn may have edited files or committed: refresh the status bars.
+    emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
 
     %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer)}
   end
@@ -479,6 +495,20 @@ defmodule Xeito.Session do
 
   defp unpause(run_id, run_id), do: nil
   defp unpause(paused, _run_id), do: paused
+
+  defp workspace_attrs(s) do
+    policy = Policy.effective(Keyword.take(s.decider, [:policy]))
+    spent = if is_binary(s.root), do: Budget.get(s.root, :usd), else: 0
+
+    %{
+      "git" => Git.status(s.cwd),
+      "budget" => %{
+        "off_box" => policy.remote == :allowed and policy.locality == :public,
+        "max_usd_per_run" => policy.max_usd_per_run,
+        "spent_usd" => spent
+      }
+    }
+  end
 
   defp internal?(run_id),
     do: String.ends_with?(run_id, "/esc") or String.ends_with?(run_id, "/intent")

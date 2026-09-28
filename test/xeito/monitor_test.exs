@@ -2,10 +2,10 @@ defmodule Xeito.MonitorTest do
   # Probes run in tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.Client.StatusBar
+  alias Xeito.Client.{Config, StatusBar}
   alias Xeito.{Monitor, Session}
   alias Xeito.Monitor.{Host, Models}
-  alias Xeito.Session.Router
+  alias Xeito.Session.{Git, Router}
 
   setup {Req.Test, :set_req_test_to_shared}
 
@@ -264,5 +264,83 @@ defmodule Xeito.MonitorTest do
     assert_receive {:xeito, _, %{type: "notice", attrs: %{"text" => text}}}, 2_000
     assert text =~ "run_tests         0.1.0    2     1     1"
     assert text =~ "routed from: intent run/edit + commit · /machine commit"
+  end
+
+  test "git status: branch, changed entries, ahead and behind" do
+    out =
+      "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n1 .M N... a\n? new.txt\n"
+
+    assert Git.parse(out) == %{branch: "main", dirty: 2, ahead: 2, behind: 1}
+
+    assert Git.parse("# branch.head (detached)\n") == %{
+             branch: "(detached)",
+             dirty: 0,
+             ahead: 0,
+             behind: 0
+           }
+  end
+
+  test "the session reports git and the off-box budget, and the bar shows them", %{root: ws} do
+    log = start_log!()
+    File.mkdir_p!(ws)
+    {_, 0} = System.cmd("git", ["init", "-q", "-b", "work"], cd: ws)
+    File.write!(Path.join(ws, "a.txt"), "x")
+
+    {:ok, id} =
+      Session.start(
+        cwd: ws,
+        log: log,
+        id: "ses-test-#{System.unique_integer([:positive])}",
+        decider: [policy: [remote: :allowed, locality: :public, max_usd_per_run: 0.25]]
+      )
+
+    Session.subscribe(id)
+    ws_attrs = Session.workspace(id)
+
+    assert %{
+             "git" => %{branch: "work", dirty: 1},
+             "budget" => %{"off_box" => true, "max_usd_per_run" => 0.25, "spent_usd" => 0}
+           } = ws_attrs
+
+    assert_receive {:xeito, _, %{type: "workspace"}}, 1_000
+
+    # As a client sees it (JSON keys), with segments hidden.
+    workspace = %{
+      "git" => %{"branch" => "work", "dirty" => 1, "ahead" => 1, "behind" => 0},
+      "budget" => %{"off_box" => true, "max_usd_per_run" => 0.25, "spent_usd" => 0.05}
+    }
+
+    [line1, line2] = StatusBar.lines(StatusBar.new(), nil, workspace, ~w(tokens det cost))
+    assert line1 == "status: waiting for the daemon's monitor… │ git work 1 changed ↑1"
+    assert line2 == "no model calls yet │ budget $0.20/0.25"
+
+    assert StatusBar.lines(
+             StatusBar.new(),
+             nil,
+             %{"budget" => %{"off_box" => false}},
+             ~w(gpu calls tokens det cost)
+           ) ==
+             ["off-box off"]
+
+    assert StatusBar.lines(StatusBar.new(), nil, nil, StatusBar.segments()) == []
+  end
+
+  test "client preferences are saved and merged over the defaults", %{root: root} do
+    file = Path.join(root, "cfg/tui.json")
+
+    assert %{"status_bar" => %{"visible" => true, "hidden" => []}} =
+             Config.load(file)
+
+    :ok =
+      Config.save(
+        %{"status_bar" => %{"visible" => false, "hidden" => ["cpu"]}},
+        file
+      )
+
+    assert %{"status_bar" => %{"visible" => false, "hidden" => ["cpu"]}} =
+             Config.load(file)
+
+    File.write!(file, "not json")
+    assert %{"status_bar" => %{"visible" => true}} = Config.load(file)
   end
 end

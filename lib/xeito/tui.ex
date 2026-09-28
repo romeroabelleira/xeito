@@ -10,7 +10,8 @@ defmodule Xeito.Tui do
       │ state verifying · 14.2 s · 3 decisions · review: y/n              │
       └───────────────────────────────────────────────────────────────────┘
 
-  A toggleable **status bar** (Ctrl-T, or `/statusbar`) adds two lines: GPU, model services and
+  A toggleable **status bar** (Ctrl-T, or `/statusbar`; segments with `/statusbar show|hide`,
+  saved in `Xeito.Client.Config`) adds two lines: GPU, model services and
   CPU from the daemon's `Xeito.Monitor`, and the session's usage, determinism budget, spend and
   queues (`Xeito.Client.StatusBar`). While it is hidden, the daemon does not poll for it.
 
@@ -29,6 +30,7 @@ defmodule Xeito.Tui do
   alias TermUI.Renderer.Style
   alias TermUI.Widgets.TextInput
   alias Xeito.Client
+  alias Xeito.Client.Config
   alias Xeito.Client.{Render, StatusBar}
 
   @max_lines 5_000
@@ -43,6 +45,7 @@ defmodule Xeito.Tui do
     {session, status} = open(client, opts)
     {rows, cols} = TermUI.Platform.terminal_size()
     earlier = if opts[:session], do: earlier_turns(client, session), else: []
+    prefs = Config.load()
     {:ok, input} = TextInput.init(TextInput.new(placeholder: "ask, or /help", width: cols - 2))
 
     %{
@@ -63,11 +66,16 @@ defmodule Xeito.Tui do
       usd: 0.0,
       waiting: false,
       paused: false,
-      bar: Keyword.get(opts, :status_bar, true),
+      bar: Keyword.get(opts, :status_bar, prefs["status_bar"]["visible"]),
+      hidden: prefs["status_bar"]["hidden"],
+      prefs: prefs,
       monitor: nil,
+      workspace: nil,
+      workspace_at: nil,
       usage: StatusBar.new()
     }
     |> tap(&if(&1.bar, do: Client.request(client, %{"cmd" => "monitor", "on" => true})))
+    |> tap(&Client.request(client, %{"cmd" => "workspace", "session" => &1.session}))
   end
 
   defp open(client, opts) do
@@ -128,8 +136,16 @@ defmodule Xeito.Tui do
   def event_to_msg(_event, _state), do: :ignore
 
   # Daemon events and request replies arrive as plain process messages.
-  def handle_info({:xeito_event, %{"event" => "monitor", "attrs" => snapshot}}, state),
-    do: {%{state | monitor: snapshot}, []}
+  # Each monitor tick also refreshes the workspace (git, budget) if it is older than 10 s.
+  def handle_info({:xeito_event, %{"event" => "monitor", "attrs" => snapshot}}, state) do
+    if state.workspace_at == nil or now() - state.workspace_at > 10_000,
+      do: request(state, %{"cmd" => "workspace", "session" => state.session})
+
+    {%{state | monitor: snapshot, workspace_at: state.workspace_at || now()}, []}
+  end
+
+  def handle_info({:xeito_event, %{"event" => "workspace", "attrs" => ws}}, state),
+    do: {%{state | workspace: ws, workspace_at: now()}, []}
 
   def handle_info({:xeito_event, event}, state), do: {apply_event(state, event), []}
 
@@ -152,8 +168,9 @@ defmodule Xeito.Tui do
       "" ->
         {state, []}
 
-      "/statusbar" ->
-        update(:toggle_bar, %{state | input: TextInput.clear(state.input)})
+      # Handled here: it changes how this client shows things, never what runs.
+      "/statusbar" <> args ->
+        update({:statusbar, args}, state)
 
       text ->
         request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
@@ -169,10 +186,11 @@ defmodule Xeito.Tui do
      |> append("  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
   end
 
-  def update(:toggle_bar, state) do
-    bar = not state.bar
-    request(state, %{"cmd" => "monitor", "on" => bar})
-    {%{state | bar: bar, monitor: if(bar, do: state.monitor, else: nil)}, []}
+  def update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
+
+  def update({:statusbar, args}, state) do
+    state = %{state | input: TextInput.clear(state.input)}
+    {statusbar(String.split(args, ~r/[\s,]+/, trim: true), state), []}
   end
 
   def update({:input, event}, state) do
@@ -186,6 +204,66 @@ defmodule Xeito.Tui do
     do: {%{state | width: w, height: h, input: Map.put(state.input, :width, w - 2)}, []}
 
   def update(_msg, state), do: {state, []}
+
+  # --- status bar preferences ----------------------------------------------------------
+
+  defp set_bar(state, bar) do
+    request(state, %{"cmd" => "monitor", "on" => bar})
+    %{state | bar: bar, monitor: if(bar, do: state.monitor, else: nil)}
+  end
+
+  defp statusbar([], state), do: set_bar(state, not state.bar) |> save_prefs()
+  defp statusbar(["on"], state), do: set_bar(state, true) |> save_prefs()
+  defp statusbar(["off"], state), do: set_bar(state, false) |> save_prefs()
+  defp statusbar(["reset"], state), do: %{set_bar(state, true) | hidden: []} |> save_prefs()
+
+  defp statusbar([verb | names], state) when verb in ["show", "hide"] and names != [] do
+    case names -- StatusBar.segments() do
+      [] ->
+        hidden =
+          if verb == "hide",
+            do: Enum.uniq(state.hidden ++ names),
+            else: state.hidden -- names
+
+        save_prefs(%{state | hidden: hidden})
+
+      unknown ->
+        append(state, "✗ unknown segment #{Enum.join(unknown, ", ")}; see /statusbar segments\n")
+    end
+  end
+
+  defp statusbar(["segments"], state) do
+    listed =
+      Enum.map_join(StatusBar.segments(), " ", fn seg ->
+        if seg in state.hidden, do: "·#{seg}", else: seg
+      end)
+
+    append(
+      state,
+      "status bar #{if state.bar, do: "on", else: "off"} · segments: #{listed} (· hidden)\n"
+    )
+  end
+
+  defp statusbar(_args, state) do
+    append(
+      state,
+      "/statusbar [on|off|reset|segments] · /statusbar show|hide <segment>[,<segment>]\n"
+    )
+  end
+
+  # Preferences are saved on every change; a failed write keeps them for this session only.
+  defp save_prefs(state) do
+    prefs =
+      put_in(state.prefs, ["status_bar"], %{"visible" => state.bar, "hidden" => state.hidden})
+
+    case Config.save(prefs) do
+      :ok ->
+        %{state | prefs: prefs}
+
+      {:error, reason} ->
+        append(%{state | prefs: prefs}, "✗ could not save preferences: #{inspect(reason)}\n")
+    end
+  end
 
   # Requests are sent from a task, so the UI never waits on the daemon.
   defp request(state, req) do
@@ -249,7 +327,11 @@ defmodule Xeito.Tui do
 
   @impl true
   def view(state) do
-    bar = if state.bar, do: StatusBar.lines(state.usage, state.monitor), else: []
+    bar =
+      if state.bar,
+        do: StatusBar.lines(state.usage, state.monitor, state.workspace, state.hidden),
+        else: []
+
     body_height = max(state.height - 3 - length(bar), 1)
 
     stack(:vertical, [
