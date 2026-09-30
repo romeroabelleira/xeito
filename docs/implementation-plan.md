@@ -244,6 +244,9 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
    - Answer a missed edit with the nearest matching region and its line numbers.
    - Add a task-specific acceptance check to the benchmark, since compiling is a weak measure of success.
    - Then rerun benchmark D.
+   - Status 2026-09-30: reads shaped by purpose and the nearest match on a missed edit are done (`0e0fddc`, [bench 4 §6](../bench/4-harness.md#6-p4b-follow-ups-benchmark-d-rerun-2026-09-30)).
+     - Tokens −63%; runs with an applied edit 2 of 3 (0 of 3 before), against 3 of 3 without P4b.
+     - Next: elision keeps the latest read of each project file whole, since the model re-read the stubbed file in slices. Then the benchmark's acceptance check and another rerun.
 
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 

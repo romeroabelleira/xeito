@@ -128,3 +128,25 @@ What this points to (added to P4b as item 4):
 1. **Shape reads by purpose, not size.** Keep the project's own files whole up to a much larger limit (the model reads them to edit them), and shape dependency sources and generated files (`deps/`, `node_modules/`), which are read to learn an API.
 2. **When an edit misses, show the nearest match.** Answer "old_text not found" with the closest region of the file and its line numbers, so one step recovers instead of a re-read and a retry.
 3. **Judge success on behaviour.** Add a task-specific acceptance check to the benchmark, for example a test that the cursor cell toggles, next to the quick check.
+
+## 6. P4b follow-ups, benchmark D rerun (2026-09-30)
+
+Two follow-ups from §5 (`0e0fddc`):
+- Reads are shaped by purpose: dependency sources and generated files from 400 lines, the project's own files only past 2,000.
+- A missed edit is answered with the closest region of the file.
+
+The same task and setup, with harness E (both follow-ups, plus shaping and elision) against C (project map only), three runs each, interleaved:
+
+| | C | E |
+|---|---|---|
+| Input tokens per run (mean) | 649k | 240k (−63%) |
+| Wall time per run (mean) | 230 s | 134 s |
+| Runs with an edit applied | 3 of 3 | 2 of 3 (§5 D: 0 of 3) |
+| Step of the first edit | 12, 12, 13 | 22, —, 18 |
+| Edits that missed their text | 0 | 0 |
+| Quick check passed | 1 of 3 | 0 of 3 |
+
+Findings:
+- **Token savings hold at 63%**, and most runs reach editing again. None of E's edits missed its text, so the nearest-match answer was never needed here.
+- **Editing still starts later than without P4b** (steps 18–22 against 12–13), and none of E's runs passed the quick check.
+- **The cause is visible in the reads.** The project file is now read whole, but elision later stubs that read, and the model re-reads the file in slices. One run read `lib/xeito/tui.ex` in eight line ranges. Elision should keep the latest read of a project file whole, eliding only older reads, reads of dependency sources, and shell output.
