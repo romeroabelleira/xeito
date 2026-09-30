@@ -41,9 +41,10 @@ defmodule Xeito.Tools do
     [
       spec(
         "read",
-        "Read a text file in the workspace. For Elixir files, outline: true lists its modules and " <>
-          "functions with line ranges, and symbol reads just one definition; use them to find " <>
-          "code instead of grep.",
+        "Read a text file in the workspace, or part of it with lines. For Elixir files, " <>
+          "outline: true lists its modules and functions with line ranges, and symbol reads just " <>
+          "one definition; use them to find code instead of grep. Long tool output is shortened " <>
+          "for you; result reads the full output of an earlier tool call (e.g. \"e12\").",
         %{
           path: %{type: "string", description: "path relative to the workspace root"},
           outline: %{
@@ -54,9 +55,15 @@ defmodule Xeito.Tools do
             type: "string",
             description:
               ~s(read only this definition, e.g. "init/1", "init" or "MyApp.Mod.init/1")
+          },
+          lines: %{type: "string", description: ~s(read only these lines, e.g. "120-400")},
+          result: %{
+            type: "string",
+            description:
+              ~s(instead of a file: the full output of an earlier tool call, e.g. "e12")
           }
         },
-        ["path"]
+        []
       ),
       spec("write", "Create or overwrite a file in the workspace with the given content.", %{
         path: %{type: "string", description: "path relative to the workspace root"},
@@ -129,10 +136,14 @@ defmodule Xeito.Tools do
   defp effect(name, args, ctx) when is_map(ctx),
     do: effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
 
+  defp effect("read", %{"result" => r}, opts) when is_binary(r) and r != "" and is_list(opts),
+    do: Effect.read("", [result: r] ++ opts)
+
   defp effect("read", %{"path" => p} = args, opts) when is_binary(p) and is_list(opts) do
     case args do
       %{"symbol" => s} when is_binary(s) and s != "" -> Effect.read(p, [symbol: s] ++ opts)
       %{"outline" => true} -> Effect.read(p, [outline: true] ++ opts)
+      %{"lines" => l} when is_binary(l) and l != "" -> Effect.read(p, [lines: l] ++ opts)
       _ -> Effect.read(p, opts)
     end
   end
@@ -184,6 +195,8 @@ defmodule Xeito.Tools do
 
   @doc "The text a tool result is reported to the model as."
   @spec result_text(map()) :: String.t()
+  def result_text(%{shaped: text}) when is_binary(text), do: text
+
   def result_text(%{exit_status: status, output: output}),
     do: "exit status #{status}\n#{output}"
 

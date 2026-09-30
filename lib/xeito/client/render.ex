@@ -112,6 +112,8 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "error", "attrs" => %{"text" => text}}, _pad), do: "✗ " <> text <> "\n"
   defp render(_event, _pad), do: ""
 
+  defp read_label(%{"result" => r}), do: "read result #{r}"
+  defp read_label(%{"path" => p, "lines" => l}), do: "read #{p} · lines #{l}"
   defp read_label(%{"path" => p, "symbol" => s}), do: "read #{p} · #{s}"
   defp read_label(%{"path" => p, "outline" => true}), do: "outline #{p}"
   defp read_label(%{"path" => p}), do: "read #{p}"

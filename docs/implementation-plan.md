@@ -228,6 +228,12 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
    - runs that finish within the step limit and pass the quick check;
    - how often the model reads back an elided result. A high rate means the elision is too aggressive.
 
+**Status:**
+- Item 1 done 2026-09-30 (`Xeito.Tools.Shape`, applied in the effect runner, so the shaped text is logged next to the full output).
+  - `read` gains `lines` and `result`.
+  - On the tool outputs of the logged dogfood session, reads shrink by 59% (171k → 70k characters, mostly whole files of a dependency's source). Shell output shrinks by 10% (39k → 36k), because the model already pipes through `head`.
+- Items 2–3 are open.
+
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 
 **Exit:** on the benchmark, input tokens per run are at least halved compared with variant C, with no fewer runs reaching an edit. Shaping and elision are covered by tests, including replay: a recovered run reproduces the shaped and elided messages exactly.

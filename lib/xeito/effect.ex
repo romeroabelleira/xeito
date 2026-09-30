@@ -48,7 +48,7 @@ defmodule Xeito.Effect do
       args:
         Map.merge(
           %{path: path, cwd: opts[:cwd]},
-          Map.new(Keyword.take(opts, [:outline, :symbol]))
+          Map.new(Keyword.take(opts, [:outline, :symbol, :lines, :result]))
         ),
       reply: Keyword.get(opts, :reply, :read)
     }

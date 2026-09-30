@@ -267,7 +267,7 @@ defmodule Xeito.Machines.Chat do
     text = """
     The project's checks (`#{ctx.verify}`) fail after your edits, exit status #{result.exit_status}.
     Fix the cause, or say why it cannot be fixed. Output (tail):
-    #{tail(result.output)}
+    #{result[:shaped] || tail(result.output)}
     """
 
     ctx

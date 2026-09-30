@@ -25,20 +25,26 @@ defmodule Xeito.Effects.Local do
   alias Xeito.{Budget, Chat, Decider, Decision, Effect, Escalation, Log, Policy}
   alias Xeito.{Run, RunSupervisor, Tiers, Tools}
   alias Xeito.Tiers.Ollama
+  alias Xeito.Tools.Shape
 
   @max_output 65_536
 
   @impl true
-  def run(%Effect{kind: :bash, args: args}, opts) do
+  def run(%Effect{kind: :bash, args: args} = effect, opts) do
     cwd = workspace!(args)
-    if File.dir?(cwd), do: run_bash(cwd, args, opts), else: workspace_missing(cwd)
+
+    if File.dir?(cwd),
+      do: Shape.shape(effect, run_bash(cwd, args, opts)),
+      else: workspace_missing(cwd)
   end
 
-  def run(%Effect{kind: :read, args: args}, _opts) do
+  def run(%Effect{kind: :read, args: %{result: ref}}, opts), do: read_back(ref, opts)
+
+  def run(%Effect{kind: :read, args: args} = effect, _opts) do
     with {:ok, path} <- resolve(args),
          {:ok, content} <- File.read(path),
          {:ok, text} <- view(args, content) do
-      %{ok: true, content: text}
+      Shape.shape(effect, %{ok: true, content: text})
     else
       {:error, reason} -> %{ok: false, error: reason}
     end
@@ -203,9 +209,48 @@ defmodule Xeito.Effects.Local do
       output: "workspace missing: #{cwd} does not exist (moved or deleted?)"
     }
 
+  defp view(%{lines: range, path: path}, content), do: slice(path, content, range)
   defp view(%{symbol: name, path: path}, content), do: Xeito.Source.symbol(path, content, name)
   defp view(%{outline: true, path: path}, content), do: Xeito.Source.outline(path, content)
   defp view(_args, content), do: {:ok, content}
+
+  # `lines: "120-400"` (or `"120"`, to the end), headed by the range read.
+  defp slice(path, content, range) do
+    lines = String.split(content, "\n")
+    total = length(lines)
+
+    case Regex.run(~r/^\s*(\d+)\s*(?:-\s*(\d+))?\s*$/, range) do
+      [_, from | to] ->
+        from = max(String.to_integer(from), 1)
+        to = min(if(to == [], do: total, else: to |> hd() |> String.to_integer()), total)
+
+        if from > to,
+          do: {:error, "lines #{range} is outside #{path} (#{total} lines)"},
+          else:
+            {:ok,
+             "#{path} lines #{from}-#{to} of #{total}:\n" <>
+               Enum.join(Enum.slice(lines, (from - 1)..(to - 1)//1), "\n")}
+
+      nil ->
+        {:error, ~s(lines must look like "120-400" or "120", got #{inspect(range)})}
+    end
+  end
+
+  # The full, unshaped result of an earlier effect of this run, from the log.
+  defp read_back(ref, opts) do
+    with log when log != nil <- opts[:log],
+         run_id when is_binary(run_id) <- opts[:run_id],
+         id = "#{run_id}/#{ref}",
+         {_, _, {:effect_completed, ^id, result}} <-
+           Enum.find(Log.read_run(log, run_id), &match?({_, _, {:effect_completed, ^id, _}}, &1)) do
+      %{
+        ok: true,
+        content: "full output of #{ref}:\n" <> Tools.result_text(Map.delete(result, :shaped))
+      }
+    else
+      _ -> %{ok: false, error: "no result #{inspect(ref)} in this run"}
+    end
+  end
 
   # A write or edit is applied either way; a file that no longer parses is reported at once, so
   # the model fixes it in its next step rather than after the turn.
