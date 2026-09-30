@@ -236,7 +236,14 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
   - Tool outputs over 400 characters, except the last 4 and skill instructions, become stubs in batches of 6. Each stub names the call and its full effect id.
   - Only what is sent to the model is elided: the run's context and the session history keep everything.
   - The chat client sends Ollama only its own message fields.
-- Item 3 is open.
+- Item 3 done 2026-09-30, see [bench 4 §5](../bench/4-harness.md#5-p4b-tool-output-shaping-and-elision-benchmark-d-2026-09-30).
+  - Input tokens per run fell by 62% (606k → 230k), and wall time roughly halved. The token half of the exit criterion is met.
+  - The other half fails: no run with shaping reached an applied edit, against 3 of 3 without it. Shaped reads made the model page through files one step at a time.
+4. **Follow-ups from benchmark D** (added 2026-09-30):
+   - Shape reads by purpose rather than size: keep the project's own files whole up to a larger limit, and shape dependency sources and generated files.
+   - Answer a missed edit with the nearest matching region and its line numbers.
+   - Add a task-specific acceptance check to the benchmark, since compiling is a weak measure of success.
+   - Then rerun benchmark D.
 
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 

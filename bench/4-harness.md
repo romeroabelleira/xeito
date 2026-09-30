@@ -99,3 +99,32 @@ What this suggests next:
 1. A small fix budget beyond the step limit: after edits, allow a couple of extra steps to repair a failing quick check.
 2. The API of the dependencies the project uses (for example `TermUI.*`) in the map, since exploring dependency sources took most of the steps.
 3. A step limit that fits unfamiliar-library tasks for a local model, or a planning step before exploring.
+
+## 5. P4b: tool-output shaping and elision, benchmark D (2026-09-30)
+
+The same task and setup as §4. Three harness versions, three runs each, interleaved. The starting workspace passes the quick check before the run.
+
+- **C:** the project map (`3fcb280`), the best variant of §4.
+- **S:** C plus tool-output shaping (`d7fc9fc`).
+- **D:** S plus eliding old tool output (`9258fa7`).
+
+| | C | S | D |
+|---|---|---|---|
+| Input tokens per run (mean) | 606k | 327k (−46%) | 230k (−62%) |
+| Wall time per run (mean) | 211 s | 115 s | 118 s |
+| Runs with an edit applied | 3 of 3 | 0 of 3 | 0 of 3 (two edits, both "old_text not found") |
+| Step of the first edit | 10, 17, 14 | — | 23, 24 |
+| Line-range reads (`lines`) per run | 0 | 6–7 | 5–10 |
+| Results read back (`result`) | — | 1 | 0 |
+| Finished within the step limit and passed the quick check | 1 | 0 | 0 |
+
+Findings:
+- **Tokens: the P4b target is met.** Shaping and elision together cut input tokens per run by 62%, and runs take about half the time. Elision did not make the model fetch results back.
+- **The task: a regression, the other half of the exit criterion fails.** With shaping, whole-file reads became an outline and the first part. The model then paged through files with `lines` reads, one step per page, and reached the step limit before editing (S) or just after starting (D). Tokens are no longer the constraint; steps are.
+- **Both D edits failed with "old_text not found".** The model reconstructed the text to replace from memory, after the read that showed it had been shortened or elided.
+- **C3 is the first run to pass the quick check within the step limit, but it does not do the task.** It makes the `> ` prompt blink instead of the cursor. Compiling is a weak check of success.
+
+What this points to (added to P4b as item 4):
+1. **Shape reads by purpose, not size.** Keep the project's own files whole up to a much larger limit (the model reads them to edit them), and shape dependency sources and generated files (`deps/`, `node_modules/`), which are read to learn an API.
+2. **When an edit misses, show the nearest match.** Answer "old_text not found" with the closest region of the file and its line numbers, so one step recovers instead of a re-read and a retry.
+3. **Judge success on behaviour.** Add a task-specific acceptance check to the benchmark, for example a test that the cursor cell toggles, next to the quick check.
