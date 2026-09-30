@@ -36,7 +36,7 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.2.0"
+  use Xeito.Machine, version: "0.3.0"
 
   alias Xeito.{Effect, Tools}
 
@@ -104,7 +104,56 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def ask_model(ctx) do
-    [Effect.chat(messages(ctx), tools: Tools.names_for(ctx))]
+    [Effect.chat(ctx |> messages() |> elide(), tools: Tools.names_for(ctx))]
+  end
+
+  # --- elision -------------------------------------------------------------------------------
+  #
+  # Every model request resends the whole conversation. Old tool output is replaced by a stub
+  # that says what it was and how to read it again. It happens in whole batches, so the start
+  # of the prompt (and the model's prompt cache) changes only once every @elide_batch outputs:
+  #   * the last @keep_whole tool outputs are always whole;
+  #   * outputs of at most @elide_min characters, and skill instructions, are never elided;
+  #   * the conversation in the context (`ctx.turn`, the session history) keeps everything; only
+  #     what is sent to the model is elided, as a pure function, so replay reproduces it.
+
+  @keep_whole 4
+  @elide_batch 6
+  @elide_min 400
+
+  @doc false
+  @spec elide([map()]) :: [map()]
+  def elide(messages) do
+    candidates =
+      for {%{role: "tool"} = m, i} <- Enum.with_index(messages),
+          elidable?(m),
+          do: i
+
+    cut = div(max(length(candidates) - @keep_whole, 0), @elide_batch) * @elide_batch
+    elided = candidates |> Enum.take(cut) |> MapSet.new()
+
+    messages
+    |> Enum.with_index()
+    |> Enum.map(fn {m, i} -> if i in elided, do: stub(m), else: m end)
+  end
+
+  defp elidable?(%{tool_name: "skill"}), do: false
+
+  defp elidable?(%{content: content} = m),
+    do: is_binary(content) and String.length(content) > @elide_min and Map.has_key?(m, :ref)
+
+  defp elidable?(_message), do: false
+
+  defp stub(%{content: content, ref: ref} = m) do
+    lines = length(String.split(content, "\n"))
+    about = Map.get(m, :about, m[:tool_name] || "tool call")
+
+    %{
+      m
+      | content:
+          "[elided to save context: #{about} (#{lines} lines). " <>
+            "If you still need it, read with result: \"#{ref}\".]"
+    }
   end
 
   @doc false
@@ -238,7 +287,7 @@ defmodule Xeito.Machines.Chat do
   def record_result(ctx, result) do
     ctx
     |> Map.update(:edited, edit_done?(ctx, result), &(&1 or edit_done?(ctx, result)))
-    |> put_turn([tool_message(ctx.current, Tools.result_text(result))])
+    |> put_turn([tool_message(ctx.current, Tools.result_text(result), result)])
     |> advance(ctx.pending)
   end
 
@@ -344,4 +393,23 @@ defmodule Xeito.Machines.Chat do
   end
 
   defp tool_message(call, text), do: %{role: "tool", tool_name: call.name, content: text}
+
+  # A result that can be read back (`ref`) also records what it was, for its stub if elided.
+  defp tool_message(call, text, %{ref: ref}),
+    do: call |> tool_message(text) |> Map.merge(%{ref: ref, about: about(call)})
+
+  defp tool_message(call, text, _result), do: tool_message(call, text)
+
+  defp about(%{name: "bash", arguments: %{"command" => cmd}}),
+    do:
+      "output of `" <>
+        String.slice(cmd, 0, 80) <> if(String.length(cmd) > 80, do: "…`", else: "`")
+
+  defp about(%{name: "read", arguments: %{"path" => path} = args}) when path != "" do
+    detail = args["symbol"] || args["lines"] || if(args["outline"], do: "outline")
+    "read of #{path}" <> if(detail, do: " (#{detail})", else: "")
+  end
+
+  defp about(%{name: "read", arguments: %{"result" => ref}}), do: "full output of #{ref}"
+  defp about(%{name: name}), do: "#{name} result"
 end

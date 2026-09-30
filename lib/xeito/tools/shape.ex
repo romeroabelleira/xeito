@@ -15,7 +15,8 @@ defmodule Xeito.Tools.Shape do
   Shaping runs in the effect runner (`Xeito.Effects.Local`), which adds the text as `:shaped`
   to the result, next to the full output. Both are logged, so a replay shows the model exactly
   what it saw, and the original stays retrievable: shaped text ends with how to read it back
-  (`read` with `result: "e12"`). Output that shaping would barely shorten is left alone.
+  (`read` with `result:` and the effect's id). Output that shaping would barely shorten is left
+  alone.
   """
 
   alias Xeito.{Effect, Source}
@@ -67,10 +68,9 @@ defmodule Xeito.Tools.Shape do
   defp footer(effect, before, now),
     do: "\n[shaped: #{before} → #{now} lines; full output: read with result: \"#{ref(effect)}\"]"
 
-  @doc "The short reference of an effect for `read` with `result`: its last id segment (`e12`)."
-  @spec ref(Effect.t()) :: String.t()
-  def ref(%Effect{id: id}) when is_binary(id), do: id |> String.split("/") |> List.last()
-  def ref(_effect), do: "?"
+  # The effect's full id: it stays valid in later turns (whose runs have other ids).
+  defp ref(%Effect{id: id}) when is_binary(id), do: id
+  defp ref(_effect), do: "?"
 
   # --- shell output --------------------------------------------------------------------------
 

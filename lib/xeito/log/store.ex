@@ -94,7 +94,9 @@ defmodule Xeito.Log.Store do
     "role" => :role,
     "content" => :content,
     "tool_calls" => :tool_calls,
-    "tool_name" => :tool_name
+    "tool_name" => :tool_name,
+    "ref" => :ref,
+    "about" => :about
   }
   @call_keys %{"function" => :function}
   @function_keys %{"name" => :name, "arguments" => :arguments}

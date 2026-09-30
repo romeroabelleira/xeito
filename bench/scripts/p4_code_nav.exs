@@ -57,6 +57,8 @@ summary =
       reads =
         for %{kind: :read, args: a} <- effects do
           cond do
+            a[:result] -> "result"
+            a[:lines] -> "lines"
             a[:symbol] -> "symbol"
             a[:outline] -> "outline"
             true -> "file"

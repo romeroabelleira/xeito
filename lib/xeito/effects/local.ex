@@ -34,7 +34,7 @@ defmodule Xeito.Effects.Local do
     cwd = workspace!(args)
 
     if File.dir?(cwd),
-      do: Shape.shape(effect, run_bash(cwd, args, opts)),
+      do: effect |> Shape.shape(run_bash(cwd, args, opts)) |> with_ref(effect),
       else: workspace_missing(cwd)
   end
 
@@ -44,7 +44,7 @@ defmodule Xeito.Effects.Local do
     with {:ok, path} <- resolve(args),
          {:ok, content} <- File.read(path),
          {:ok, text} <- view(args, content) do
-      Shape.shape(effect, %{ok: true, content: text})
+      effect |> Shape.shape(%{ok: true, content: text}) |> with_ref(effect)
     else
       {:error, reason} -> %{ok: false, error: reason}
     end
@@ -236,16 +236,26 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # The full, unshaped result of an earlier effect of this run, from the log.
+  # Which effect produced a result, so a model can read it back after it was shaped or elided.
+  defp with_ref(result, %Effect{id: id}) when is_binary(id), do: Map.put(result, :ref, id)
+  defp with_ref(result, _effect), do: result
+
+  # The full, unshaped result of an earlier effect, from the log: a full effect id
+  # (`ses-x/t1/e12`, also from an earlier turn), or `e12` for one of this run.
   defp read_back(ref, opts) do
+    {run_id, id} =
+      if String.contains?(ref, "/"),
+        do: {String.replace(ref, ~r{/e\d+$}, ""), ref},
+        else: {opts[:run_id], "#{opts[:run_id]}/#{ref}"}
+
     with log when log != nil <- opts[:log],
-         run_id when is_binary(run_id) <- opts[:run_id],
-         id = "#{run_id}/#{ref}",
+         true <- is_binary(run_id),
          {_, _, {:effect_completed, ^id, result}} <-
            Enum.find(Log.read_run(log, run_id), &match?({_, _, {:effect_completed, ^id, _}}, &1)) do
       %{
         ok: true,
-        content: "full output of #{ref}:\n" <> Tools.result_text(Map.delete(result, :shaped))
+        content:
+          "full output of #{ref}:\n" <> Tools.result_text(Map.drop(result, [:shaped, :ref]))
       }
     else
       _ -> %{ok: false, error: "no result #{inspect(ref)} in this run"}

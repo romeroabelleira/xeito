@@ -39,7 +39,8 @@ defmodule Xeito.Chat do
 
     body = %{
       model: model,
-      messages: messages,
+      # Messages may carry Xeito's own bookkeeping (`ref`, `about`); Ollama gets its fields only.
+      messages: Enum.map(messages, &Map.take(&1, [:role, :content, :tool_calls, :tool_name])),
       tools: tools,
       stream: true,
       think: Keyword.get(cfg, :think, false),

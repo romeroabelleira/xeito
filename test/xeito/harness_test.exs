@@ -243,6 +243,8 @@ defmodule Xeito.HarnessTest do
     tool = List.last(second["messages"])
     assert tool["role"] == "tool" and tool["tool_name"] == "bash"
     assert tool["content"] =~ "hello.txt"
+    # Xeito's bookkeeping on messages (the result's ref, what it was) never reaches the model.
+    assert Map.keys(tool) |> Enum.sort() == ["content", "role", "tool_name"]
 
     # Streamed model output is published as deltas (not logged).
     assert_received {:xeito, ^id, %{type: "delta", attrs: %{"text" => "Let me"}}}

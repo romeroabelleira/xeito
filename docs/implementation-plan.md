@@ -232,7 +232,11 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
 - Item 1 done 2026-09-30 (`Xeito.Tools.Shape`, applied in the effect runner, so the shaped text is logged next to the full output).
   - `read` gains `lines` and `result`.
   - On the tool outputs of the logged dogfood session, reads shrink by 59% (171k → 70k characters, mostly whole files of a dependency's source). Shell output shrinks by 10% (39k → 36k), because the model already pipes through `head`.
-- Items 2–3 are open.
+- Item 2 done 2026-09-30 (chat machine 0.3.0).
+  - Tool outputs over 400 characters, except the last 4 and skill instructions, become stubs in batches of 6. Each stub names the call and its full effect id.
+  - Only what is sent to the model is elided: the run's context and the session history keep everything.
+  - The chat client sends Ollama only its own message fields.
+- Item 3 is open.
 
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 
