@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-09-28 (P0–P3b done; P4 built, dogfooding) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-09-30 (P0–P3b done; P4 built, dogfooding; P4b next) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -22,7 +22,8 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P3 · Delegation tiers | escalation as a machine, the GPU tier, policy, budgets | 2026-12-14 → 2027-01-04 | done 2026-09-27 | [bench 3](../bench/3-escalation.md) |
 | P3b · OpenRouter tier (inserted) | hosted open models as an off-box tier | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
 | P4 · TUI harness | daemon, TUI, chat and structured machines, step mode, skills, compact log, dogfood fixes | 2027-01-04 → 02-08 | built 2026-09-27 → 09-28; dogfooding until ≥ 2026-10-12 | [bench 4](../bench/4-harness.md) |
-| P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals, **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
+| P4b · Context economy (inserted) | shape tool output before the model reads it, elide old tool output from the conversation; measured with the code-navigation benchmark | — | ≈ 2026-09-30 → 10-12, within P4's dogfooding | [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28) |
+| P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
 | P8 · Packaging and v0.1 | Burrito binary, install script or setup machine, guides, benchmark write-up | 2027-05-10 → 05-31 | ≈ 2027-01-11 → 02-01 | — |
@@ -44,6 +45,7 @@ gantt
   section Harness
   P4 build                       :done, p4b, 2026-09-27, 2d
   P4 dogfooding                  :active, p4d, 2026-09-28, 2w
+  P4b Context economy            :p4b, 2026-09-30, 12d
   section Insight
   P5 OCEL, mining, portability   :p5, after p4d, 4w
   P6 Web inspector               :p6, after p5, 5w
@@ -204,12 +206,38 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
 
 **Exit:** a two-week dogfood log with ≥ 50 runs. At least five structured machines are in daily use. Median latency of `Intent` + first token is under 1.5 s on the reference workstation.
 
+## P4b · Context economy (inserted, ≈1.5 weeks)
+
+Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)). A chat run read about 500k input tokens and wrote about 3k: every step resends the whole conversation, including every earlier tool output. As in caveman's proxy, the gain is in what the model *reads*, not in how it writes. P4b runs during P4's dogfooding window, so dogfooding benefits as soon as it lands.
+
+1. **Shape tool output before the model reads it** (`Xeito.Tools.Shape`, pure and deterministic):
+   - Shell output: strip terminal escape codes, collapse repeated or near-identical lines (`… 37 similar lines`), keep the first and last lines.
+   - Test and compile output (ExUnit, `mix compile` and similar, recognised by shape): keep failures, errors, warnings and the summary.
+   - `grep`/`rg`: group matches by file, capped per file and in total. `find`/`ls`: capped.
+   - Very large `read`s: return the outline and the first part, pointing to `symbol` or a line range.
+   - Originals stay retrievable. Every result is already in the log, so shaped text ends with `[full output: read result "e12"]`, and `read` gains a `result` option.
+   - The shaper is versioned. A replay then reproduces exactly what the model saw, and the desync check keeps working. This covers part of P7's prompt-build fingerprint.
+2. **Elide old tool output from the conversation:**
+   - Tool outputs older than the last few steps become one-line stubs, e.g. `[elided: output of grep -rn … (212 lines); re-run or read result "e7"]`.
+   - The system prompt, the user's request, the model's own messages and the latest check output stay whole.
+   - Stubs are applied in batches, every K steps. Changing an earlier message breaks the model's prompt cache from that point, and batching keeps that rare (the same slack as the history window's 80 → 60 trim).
+   - A session's history applies the same stubs to earlier turns, which matters most for long multi-turn sessions.
+3. **Measure** with the code-navigation benchmark (`bench/scripts/p4_code_nav.exs`), as variant D against C:
+   - input tokens per run;
+   - the step of the first edit;
+   - runs that finish within the step limit and pass the quick check;
+   - how often the model reads back an elided result. A high rate means the elision is too aggressive.
+
+Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
+
+**Exit:** on the benchmark, input tokens per run are at least halved compared with variant C, with no fewer runs reaching an edit. Shaping and elision are covered by tests, including replay: a recovered run reproduces the shaped and elided messages exactly.
+
 ## P5 · OCEL export and process mining (≈4 weeks)
 
 1. Validate the SQLite layout against the OCEL 2.0 spec, and add JSON export.
 2. Build a Python sidecar (`tools/mining/`, managed by `uv`) using PM4Py: object-centric discovery, flattening, DFG, Inductive Miner, and alignments against the machines' Petri-net exports.
 3. Build the Elixir side: native DFG and variants for the live views, and `mix xeito.mine` to run the sidecar and ingest its findings as structured records.
-4. Implement the proposal generators from the table in [05](architecture/05-event-log-and-process-mining.md#kinds-of-proposal). Start with rule-based ones only.
+4. Implement the proposal generators from the table in [05](architecture/05-event-log-and-process-mining.md#kinds-of-proposal). Start with rule-based ones only. One of them ranks **token sinks**: which tools, commands and files fill the model's context most, from the logged results, with a suggested fix for each (added 2026-09-30, after caveman's `learn`).
 5. Publish an anonymised sample log. This is useful for research partners and for grant evidence.
 6. **Data portability** (added 2026-09-28): a single `mix xeito.export` that turns what Xeito learns into files other systems can use. Exports are local files you pull, and nothing is pushed by default.
    - **Redaction levels:** *structure* (no text, paths hashed; also what item 5 needs), *metadata*, and *full*. Off-box rules apply as for the tiers: data marked local-only never goes to an opt-in sink.
