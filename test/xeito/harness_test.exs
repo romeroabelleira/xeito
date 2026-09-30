@@ -128,7 +128,7 @@ defmodule Xeito.HarnessTest do
     assert %{ok: false, error: "old_text matches 2 times" <> _} =
              Local.run(Effect.edit("a.txt", "two", "2", cwd: ws), [])
 
-    assert %{ok: false, error: "old_text not found"} =
+    assert %{ok: false, error: "old_text not found; nothing similar" <> _} =
              Local.run(Effect.edit("a.txt", "zzz", "2", cwd: ws), [])
 
     assert %{ok: false, error: :outside_workspace} =

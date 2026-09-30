@@ -93,25 +93,27 @@ defmodule Xeito.ShapeTest do
         "defmodule Big do\n" <>
           Enum.map_join(1..300, "\n", &"  def f#{&1}(x) do\n    x + #{&1}\n  end") <> "\nend\n"
 
-      File.write!(Path.join(ws, "big.ex"), big)
+      File.mkdir_p!(Path.join(ws, "deps"))
+      File.write!(Path.join(ws, "deps/big.ex"), big)
       %{ws: ws}
     end
 
-    test "a large file reads as its outline and first lines; a range reads as asked", %{ws: ws} do
+    test "a large dependency file reads as its outline and first lines; a range reads as asked",
+         %{ws: ws} do
       run = fn args ->
         {:ok, effect} = Tools.to_effect(%{name: "read", arguments: args}, %{cwd: ws})
         Tools.result_text(Local.run(effect, []))
       end
 
-      shaped = run.(%{"path" => "big.ex"})
-      assert shaped =~ "big.ex · 903 lines"
+      shaped = run.(%{"path" => "deps/big.ex"})
+      assert shaped =~ "deps/big.ex · 903 lines"
       assert shaped =~ "  def f300/1  899-901"
       assert shaped =~ ~s(read a definition with symbol, or a range with lines: "121-420")
       refute shaped =~ "x + 200"
 
-      range = run.(%{"path" => "big.ex", "lines" => "599-601"})
-      assert range == "big.ex lines 599-601 of 903:\n  def f200(x) do\n    x + 200\n  end"
-      assert run.(%{"path" => "big.ex", "lines" => "2000"}) =~ "outside big.ex"
+      range = run.(%{"path" => "deps/big.ex", "lines" => "599-601"})
+      assert range == "deps/big.ex lines 599-601 of 903:\n  def f200(x) do\n    x + 200\n  end"
+      assert run.(%{"path" => "deps/big.ex", "lines" => "2000"}) =~ "outside deps/big.ex"
     end
 
     test "result reads back the full output of an earlier call from the log" do
@@ -141,6 +143,55 @@ defmodule Xeito.ShapeTest do
                  log: log,
                  run_id: "ses-x/t1"
                )
+    end
+  end
+
+  describe "missed edits and read limits" do
+    setup do
+      ws = Path.join(System.tmp_dir!(), "xeito-miss-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(ws, "deps/lib_x"))
+      on_exit(fn -> File.rm_rf(ws) end)
+      %{ws: ws}
+    end
+
+    test "an edit that misses shows the closest region of the file", %{ws: ws} do
+      File.write!(Path.join(ws, "a.ex"), """
+      defmodule A do
+        def view(state) do
+          stack(:horizontal, [
+            text("> "),
+            input(state)
+          ])
+        end
+      end
+      """)
+
+      # Indentation from memory: the text is there, differently indented.
+      missed =
+        Local.run(Effect.edit("a.ex", "stack(:horizontal, [\ntext(\"> \"),", "x", cwd: ws), [])
+
+      assert missed.error ==
+               "old_text not found; the closest text is at lines 3-6 (copy it exactly):\n" <>
+                 "    stack(:horizontal, [\n      text(\"> \"),\n      input(state)\n    ])"
+
+      # A slightly different line is still found.
+      assert Local.run(Effect.edit("a.ex", "  def veiw(state) do", "x", cwd: ws), []).error =~
+               "at lines 2-4"
+    end
+
+    test "project files stay whole to 2,000 lines; dependency sources are shaped from 400", %{
+      ws: ws
+    } do
+      body = Enum.map_join(1..600, "\n", &"line #{&1}")
+      File.write!(Path.join(ws, "notes.txt"), body)
+      File.write!(Path.join(ws, "deps/lib_x/notes.txt"), body)
+
+      read = fn path ->
+        Local.run(Effect.read(path, cwd: ws), [])
+      end
+
+      refute Map.has_key?(read.("notes.txt"), :shaped)
+      assert read.("deps/lib_x/notes.txt").shaped =~ "[shaped: first 250 of 600 lines"
     end
   end
 

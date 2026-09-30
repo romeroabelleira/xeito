@@ -10,7 +10,11 @@ defmodule Xeito.Tools.Shape do
     * **Test and compiler output** (recognised by its shape: ExUnit, `mix compile`, pytest,
       cargo, go test): failures, errors, warnings and the summary are kept.
     * **Search results** (`grep`, `rg`): grouped by file, capped per file and in total.
-    * **Large file reads**: the outline (Elixir) or the first part, with how to read the rest.
+    * **Large file reads**, by purpose: dependency sources and generated files (`deps/`,
+      `node_modules/`, `_build/`, …), which a model reads to learn an API, become the outline
+      (Elixir) or the first part past 400 lines. The project's own files, which it reads to edit
+      them, stay whole up to 2,000 lines: shaping them made the model page through files one
+      step at a time (bench 4 §5).
 
   Shaping runs in the effect runner (`Xeito.Effects.Local`), which adds the text as `:shaped`
   to the result, next to the full output. Both are logged, so a replay shows the model exactly
@@ -31,8 +35,11 @@ defmodule Xeito.Tools.Shape do
   # Search results: matches kept per file, and files kept.
   @grep_per_file 8
   @grep_files 30
-  # Reads past this many lines are shown as an outline or their first part.
+  # Reads past this many lines are shown as an outline or their first part: dependency and
+  # generated sources soon, the project's own files only when very long.
   @max_read_lines 400
+  @max_project_read_lines 2_000
+  @third_party ~w(deps node_modules _build vendor target dist build .venv venv __pycache__)
   @read_head 250
   @elixir_read_head 120
 
@@ -243,11 +250,17 @@ defmodule Xeito.Tools.Shape do
 
   # --- file reads ----------------------------------------------------------------------------
 
+  defp read_limit(path) do
+    if path |> Path.split() |> Enum.any?(&(&1 in @third_party)),
+      do: @max_read_lines,
+      else: @max_project_read_lines
+  end
+
   defp read(path, content, result) do
     lines = String.split(content, "\n")
     total = length(lines)
 
-    if total <= @max_read_lines do
+    if total <= read_limit(path) do
       result
     else
       shaped =

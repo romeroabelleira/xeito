@@ -276,8 +276,40 @@ defmodule Xeito.Effects.Local do
   defp replace_once(content, old, new) do
     case :binary.matches(content, old) do
       [_] -> {:ok, String.replace(content, old, new, global: false)}
-      [] -> {:error, "old_text not found"}
+      [] -> {:error, "old_text not found" <> nearest(content, old)}
       many -> {:error, "old_text matches #{length(many)} times; include more context"}
+    end
+  end
+
+  # A missed edit (usually old text recalled from memory, or with different indentation) is
+  # answered with the file's closest region, so the next step can copy it exactly. The region
+  # starts at the first line of old_text: an exact match ignoring indentation, else the most
+  # similar line (Jaro distance ≥ 0.85).
+  @max_region 40
+  defp nearest(content, old) do
+    lines = String.split(content, "\n")
+    old_lines = String.split(old, "\n")
+    anchor = old_lines |> Enum.map(&String.trim/1) |> Enum.find("", &(&1 != ""))
+    trimmed = Enum.map(lines, &String.trim/1)
+
+    index =
+      Enum.find_index(trimmed, &(&1 == anchor)) ||
+        trimmed
+        |> Enum.with_index()
+        |> Enum.map(fn {line, i} -> {String.jaro_distance(line, anchor), i} end)
+        |> Enum.max(fn -> {0, nil} end)
+        |> then(fn {score, i} -> if anchor != "" and score >= 0.85, do: i end)
+
+    case index do
+      nil ->
+        "; nothing similar in the file. Re-read the part you want to change."
+
+      i ->
+        count = min(length(old_lines) + 2, @max_region)
+        region = Enum.slice(lines, i, count)
+
+        "; the closest text is at lines #{i + 1}-#{i + length(region)} (copy it exactly):\n" <>
+          Enum.join(region, "\n")
     end
   end
 
