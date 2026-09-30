@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-09-30 (P0–P3b done; P4 built, dogfooding; P4b next) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-09-30 (P0–P3b done; P4 built, dogfooding; P4b in progress) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -27,7 +27,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
 | P8 · Packaging and v0.1 | Burrito binary, install script or setup machine, guides, benchmark write-up | 2027-05-10 → 05-31 | ≈ 2027-01-11 → 02-01 | — |
-| P9 · Bridges (added) | `pi-xeito`, surveying and bridging other harnesses | — | after P4, alongside P5 (≈ 2 weeks) | — |
+| P9 · Bridges (added) | MCP server and client, ACP agent, `pi-xeito`, surveying and bridging other harnesses | — | after P4, alongside P5 (≈ 2 weeks) | — |
 
 The original dates of P5–P8 follow the original chain of durations. The re-based dates assume part-time pace, and P9 runs alongside P5 rather than after P8, since it needs only the daemon's socket.
 
@@ -258,6 +258,11 @@ Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-sy
    - **Machines:** SCXML (already exported) plus XState JSON. Importing SCXML is the other half: statecharts designed elsewhere could run as Xeito machines.
    - **Decision types:** a bundle of the output schema (already JSON Schema), the eval set and the calibrated thresholds, so another harness can reuse a decision type, for example through the P9 `xeito_decide` tool.
    - **Metrics:** cost, tokens, latency, estimated energy and the determinism budget per run as CSV/Parquet, and live OpenMetrics for Prometheus from the daemon's monitor.
+   - **Standard envelopes and hashes** (added 2026-09-30):
+     - Events in the daemon's stream and in exports use the [CloudEvents](https://cloudevents.io/) envelope (`id`, `source`, `type`, `time`, `subject`, `data`).
+     - Exported hashes use [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON Canonicalization Scheme) with SHA-256, so any language can verify them: decision inputs, message chains, replay checks. The log's own ids stay as they are.
+     - Optionally, new ids become time-ordered [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562) UUIDv7.
+   - **Provenance:** a [W3C PROV](https://www.w3.org/TR/prov-overview/) export (entities, activities, agents) that answers which run, decision, model or human produced a change. It is useful for audits, and PROV is a standard model that other tools read.
 
 **Exit:** a weekly mining report generated from the dogfood logs, with ≥ 3 actionable proposals. PM4Py loads `.xeito/log.sqlite` without conversion. A dogfood session exports to pi's session format and resumes in pi, and logged decisions export as a dataset that trains a classifier outside Xeito.
 
@@ -298,11 +303,16 @@ Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-sy
 
 Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 
-1. **`pi-xeito`**, the original P4.7 ([07](architecture/07-harness-frontend.md#pi-bridge-optional)): a small pi extension that registers `/xeito <machine>` and an `xeito_decide` tool, talking to the daemon's JSON Lines socket. It would be the only TypeScript in the project.
-2. **Survey other agent harnesses** worth bridging, for example Odysseus AI and Jensen (to be researched; neither is evaluated yet). For each, note its extension or RPC surface, and whether its loop can call out to typed decisions or delegate to a machine.
-3. Build the bridges the survey justifies. Each is a thin client of `Xeito.Api`, not a new code path in the daemon.
+1. **Standard protocols first** (added 2026-09-30), so one implementation reaches many harnesses:
+   - An [MCP](https://modelcontextprotocol.io/) **server**: Xeito's machines and typed decisions become tools for Claude Code, pi, Cursor and other MCP clients. `xeito_decide` is one of them.
+   - An MCP **client**: tools of configured MCP servers become effects, logged and gated by Risk and policy like `bash`.
+   - An [ACP](https://agentclientprotocol.com/) (Agent Client Protocol) **agent**: editors that speak ACP, such as Zed, can drive `xeitod` directly. The TUI becomes one client among several.
+   - API errors take the [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details shape, so bridges handle them uniformly.
+2. **`pi-xeito`**, the original P4.7 ([07](architecture/07-harness-frontend.md#pi-bridge-optional)): a small pi extension that registers `/xeito <machine>` and an `xeito_decide` tool, talking to the daemon's JSON Lines socket. It would be the only TypeScript in the project.
+3. **Survey other agent harnesses** worth bridging, for example Odysseus AI and Jensen (to be researched; neither is evaluated yet). For each, note its extension or RPC surface, and whether its loop can call out to typed decisions or delegate to a machine.
+4. Build the bridges the survey justifies. Each is a thin client of `Xeito.Api`, not a new code path in the daemon.
 
-**Exit:** at least one bridge drives a Xeito machine end to end from the other harness, and the run is logged like any other.
+**Exit:** at least one bridge drives a Xeito machine end to end from the other harness, and the run is logged like any other. The MCP server passes the protocol's own conformance checks (its inspector tool), and a decision is requested from another agent through it.
 
 ---
 
@@ -312,7 +322,8 @@ Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 |---|---|---|
 | Eval data | P2 → | Keep growing the labelled decisions. Every human override is a label. |
 | Benchmarks | P0 → | Nightly `bench/` run on the reference workstation: hardware, models, decisions, machines. |
-| Writing | P1 → | One short post per phase. It feeds the grant narratives and talks. |
+| Writing | P1 → | One short post per phase. It feeds the grant narratives and talks. Includes a mapping of Xeito's record-keeping and human oversight (the log, reviews, step mode, human decisions) to the EU AI Act (articles 12 and 14) and ISO/IEC 42001, for public-sector users. |
+| Conformance | P5 → | Execution semantics against [W3C SCXML](https://www.w3.org/TR/scxml/) (added 2026-09-30). Xeito exports SCXML; its engine should also behave like SCXML where their features overlap: event processing, entry and exit order, eventless transitions, and history and parallel states if the engine supports them. Translate the applicable tests of the W3C SCXML test suite into machines and run them in CI. Most tests assume an ECMAScript data model, so only a subset applies. Document every deviation in [02](architecture/02-state-machine-core.md). |
 
 ## Risks and mitigations
 
