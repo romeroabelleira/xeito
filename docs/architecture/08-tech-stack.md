@@ -138,3 +138,12 @@ elixir 1.20.4-otp-29
 # nx ~> 1.0, exla ~> 1.0, bumblebee ~> 0.8   (P7)
 # hologram ~> 0.11 | phoenix_live_view ~> 1.2 (P6, after spike)
 ```
+
+## Code style
+
+Style is settled by tools, not by review:
+- **`mix format`** with the [Styler](https://hexdocs.pm/styler) plugin (`.formatter.exs`). Styler goes beyond layout: it orders module directives, lifts aliases, straightens pipes and rewrites some constructs. It deliberately has no per-rule configuration, which is the point.
+- **Credo** (`.credo.exs`, run with `--strict`) keeps the checks Styler cannot fix: warnings, design and complexity. The 28 Credo checks that Styler already rewrites are disabled, a list taken from Styler's "Styler & Credo" docs.
+- **One command:** `mix ci` runs the format check, compiling with warnings as errors (which includes the type checker), Credo and the tests. CI runs the same, plus Dialyzer.
+
+Styler is pinned to a minor version (`~> 1.12.2`), so new rewrites arrive only through a deliberate upgrade. On an upgrade, run `mix format` across the project, read the diff, and update the disabled list in `.credo.exs` from Styler's docs. A few Styler rewrites can change behaviour (its README lists them), so the tests must pass on the rewritten code before it is committed.

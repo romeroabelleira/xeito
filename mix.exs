@@ -40,6 +40,9 @@ defmodule Xeito.MixProject do
       {:term_ui, "~> 1.0", runtime: false},
       {:plug, "~> 1.20", only: :test},
       {:stream_data, "~> 1.4", only: [:dev, :test]},
+      # Style: Styler rewrites on `mix format`; pinned to a minor version so new rewrites are a
+      # deliberate upgrade. Credo keeps the checks Styler cannot fix (.credo.exs).
+      {:styler, "~> 1.12.2", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
