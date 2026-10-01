@@ -23,6 +23,7 @@ The reference deployment runs on a single workstation. A small CPU-bound model m
 | [docs/design.md](docs/design.md) | One-page design doc |
 | [docs/architecture/00-overview.md](docs/architecture/00-overview.md) | Architecture draft (overview + one file per section) |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | Step-by-step implementation plan with exit criteria |
+| [docs/testing.md](docs/testing.md) | Testing locally: `mix ci`, the CRAP gate, mutation testing, trying changes by hand |
 | [docs/architecture/references.md](docs/architecture/references.md) | Prior art and bibliography |
 
 ## Status

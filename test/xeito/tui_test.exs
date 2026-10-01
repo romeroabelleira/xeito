@@ -142,10 +142,11 @@ defmodule Xeito.TuiTest do
 
   # --- a whole TUI state, against a fake daemon ------------------------------------------------
 
-  # A stand-in for `Xeito.Client`: forwards each request to the test and answers ok.
+  # A stand-in for `Xeito.Client`: forwards each request to the test and answers ok. Not linked:
+  # a request task may still be calling it when the test ends, so it stops itself once idle.
   defp fake_client do
     test = self()
-    spawn_link(fn -> serve(test) end)
+    spawn(fn -> serve(test) end)
   end
 
   defp serve(test) do
@@ -154,6 +155,8 @@ defmodule Xeito.TuiTest do
         send(test, {:request, req})
         GenServer.reply(from, %{"ok" => true})
         serve(test)
+    after
+      2_000 -> :ok
     end
   end
 
@@ -192,8 +195,10 @@ defmodule Xeito.TuiTest do
       assert Tui.event_to_msg(key(:c, [:alt]), tui()) == :ignore
     end
 
-    test "Enter submits, PgUp and PgDn scroll, a resize resizes, anything else is ignored" do
+    test "Enter submits, Up and Down recall prompts, PgUp and PgDn scroll, a resize resizes, the rest is ignored" do
       assert Tui.event_to_msg(key(:enter), tui()) == {:msg, :submit}
+      assert Tui.event_to_msg(key(:up), tui()) == {:msg, {:recall, :older}}
+      assert Tui.event_to_msg(key(:down), tui()) == {:msg, {:recall, :newer}}
       assert Tui.event_to_msg(key(:page_up), tui()) == {:msg, {:scroll, 10}}
       assert Tui.event_to_msg(key(:page_down), tui()) == {:msg, {:scroll, -10}}
       assert Tui.event_to_msg(%Event.Resize{width: 100, height: 30}, tui()) == {:msg, {:resize, 100, 30}}
@@ -268,6 +273,70 @@ defmodule Xeito.TuiTest do
       state = tui()
       {after_msg, []} = Tui.update(:nonsense, state)
       assert %{after_msg | blink: state.blink, blink_until: state.blink_until} == state
+    end
+  end
+
+  describe "recalling earlier prompts with Up and Down" do
+    # Submits a prompt and waits until it reaches the daemon.
+    defp sent(state, text) do
+      {state, []} = submit(state, text)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => ^text}}
+      state
+    end
+
+    defp up(state), do: state |> then(&Tui.update({:recall, :older}, &1)) |> elem(0)
+    defp down(state), do: state |> then(&Tui.update({:recall, :newer}, &1)) |> elem(0)
+    defp left(state, n), do: Enum.reduce(1..n, state, fn _, st -> elem(Tui.update({:input, key(:left)}, st), 0) end)
+
+    test "Up goes back through the prompts, newest first, and stops at the oldest; Down comes back to the draft" do
+      state = tui() |> sent("oldest") |> sent("middle") |> sent("newest")
+      assert value(state) == ""
+
+      older = Enum.scan(1..4, state, fn _, st -> up(st) end)
+      assert Enum.map(older, &value/1) == ["newest", "middle", "oldest", "oldest"]
+
+      newer = Enum.scan(1..4, List.last(older), fn _, st -> down(st) end)
+      assert Enum.map(newer, &value/1) == ["middle", "newest", "", ""]
+    end
+
+    test "a recalled prompt is edited at its end" do
+      state = tui() |> sent("hello world") |> up()
+      assert {value(state), state.input.cursor_col} == {"hello world", 11}
+    end
+
+    test "the line being typed comes back exactly, trailing space included" do
+      state = tui() |> sent("previous") |> typing("current draft ")
+      assert state |> up() |> value() == "previous"
+      assert state |> up() |> down() |> value() == "current draft "
+    end
+
+    test "with no earlier prompts, Up and Down leave the line and the cursor alone" do
+      typed = tui() |> typing("fix the ") |> left(3)
+      for moved <- [up(typed), down(typed), typed |> up() |> down()], do: assert(moved.input == typed.input)
+    end
+
+    test "Down while typing, with nothing newer, leaves the line alone" do
+      typed = tui() |> sent("old") |> typing("fix the ") |> left(3)
+      assert down(typed).input == typed.input
+    end
+
+    test "every non-empty line is remembered once in a row, local commands included" do
+      state = tui() |> sent("a") |> sent("b") |> sent("b")
+      {state, []} = Tui.update(:submit, state)
+      {state, []} = submit(state, "/statusbar off")
+      assert_receive {:request, %{"cmd" => "monitor"}}
+
+      assert state |> up() |> value() == "/statusbar off"
+      assert state |> up() |> up() |> value() == "b"
+      assert state |> up() |> up() |> up() |> value() == "a"
+    end
+
+    test "a recalled prompt sent again becomes the newest" do
+      state = tui() |> sent("a") |> sent("b") |> up() |> up()
+      {state, []} = Tui.update(:submit, state)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "a"}}
+      assert state |> up() |> value() == "a"
+      assert state |> up() |> up() |> value() == "b"
     end
   end
 

@@ -9,9 +9,10 @@ Xeito is at the design and early implementation stage. See [docs/implementation-
 
   ```bash
   mix deps.get
-  mix ci          # format check, warnings as errors, credo --strict, tests
-  mix dialyzer
+  mix ci          # format, warnings as errors, credo, dialyzer, tests with the CRAP gate, mutation testing
   ```
+
+  [docs/testing.md](docs/testing.md) describes each check, how to work test-first, and how to try a change by hand against a throwaway daemon (`scripts/try-local.sh`).
 
 - Local inference services (llama.cpp, Laya, Ollama) are optional for most work. [docs/architecture/09-reference-deployment.md](docs/architecture/09-reference-deployment.md) describes them, and `deploy/` holds example service units.
 

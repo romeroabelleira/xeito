@@ -105,7 +105,7 @@ The module computes gross prices …
 ✓ answered
 ```
 
-The typing position is a solid yellow block. It blinks while you're idle, and stays solid while you type.
+The typing position is a solid yellow block. It blinks while you're idle, and stays solid while you type. **Up** and **Down** recall earlier prompts, as in a shell; a half-typed line comes back when you go down past the newest one.
 
 Each `◆` line is a **typed decision**. Risk decisions are shown differently: the command they apply to gets a coloured dot in the left gutter, like a breakpoint, with the decision's confidence beside it in small digits. Green means safe, yellow means it waits for your review, red means forbidden:
 

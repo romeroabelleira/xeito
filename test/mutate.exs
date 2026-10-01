@@ -5,5 +5,6 @@
   "lib/xeito/budget.ex" => ["test/xeito/budget_test.exs"],
   "lib/xeito/decisions/risk.ex" => ["test/xeito/decision_test.exs"],
   "lib/xeito/machines/chat.ex" => [tests: ["test/xeito/chat_machine_test.exs"], section: "guards"],
-  "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"]
+  "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
+  "lib/xeito/tui.ex" => [tests: ["test/xeito/tui_test.exs"], section: "the prompt line"]
 }

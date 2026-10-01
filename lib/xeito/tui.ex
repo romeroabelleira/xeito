@@ -21,8 +21,8 @@ defmodule Xeito.Tui do
   solid again (with no timer running) after 10 s without a key.
 
   Keys: Enter sends (and steps a paused run when the prompt is empty); `y` / `n` answer a
-  pending review when the prompt is empty; PgUp / PgDn
-  scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
+  pending review when the prompt is empty; Up / Down recall earlier prompts (the line being typed
+  comes back past the newest); PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
   with `--session`).
 
   The TUI owns no run state: everything shown comes from daemon events, so it can crash, be
@@ -112,7 +112,12 @@ defmodule Xeito.Tui do
       # A Risk decision waiting for the line it marks: `{colour, confidence in superscript}`.
       marker: nil,
       blink: 0,
-      blink_until: 0
+      blink_until: 0,
+      # Earlier prompts for Up/Down, newest first; the one shown (-1: the line being typed,
+      # kept as the draft meanwhile).
+      prompt_history: [],
+      history_index: -1,
+      history_draft: ""
     }
   end
 
@@ -160,6 +165,8 @@ defmodule Xeito.Tui do
   end
 
   def event_to_msg(%Event.Key{key: :enter}, _state), do: {:msg, :submit}
+  def event_to_msg(%Event.Key{key: :up}, _state), do: {:msg, {:recall, :older}}
+  def event_to_msg(%Event.Key{key: :down}, _state), do: {:msg, {:recall, :newer}}
   def event_to_msg(%Event.Key{key: :page_up}, _state), do: {:msg, {:scroll, 10}}
   def event_to_msg(%Event.Key{key: :page_down}, _state), do: {:msg, {:scroll, -10}}
 
@@ -227,16 +234,8 @@ defmodule Xeito.Tui do
       "" ->
         {state, []}
 
-      # Handled here: it changes how this client shows things, never what runs.
-      quit when quit in ["/quit", "/exit"] ->
-        handle_update(:quit, state)
-
-      "/statusbar" <> args ->
-        handle_update({:statusbar, args}, state)
-
       text ->
-        request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
-        {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{text}\n"), []}
+        run_line(text, remember(state, text))
     end
   end
 
@@ -245,6 +244,13 @@ defmodule Xeito.Tui do
     request(state, %{"cmd" => cmd, "session" => state.session})
 
     {append(%{state | waiting: false}, "  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
+  end
+
+  defp handle_update({:recall, direction}, state) do
+    case recall(state, direction) do
+      {:ok, text, state} -> {%{state | input: put_text(state.input, text)}, []}
+      :none -> {state, []}
+    end
   end
 
   defp handle_update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
@@ -331,6 +337,41 @@ defmodule Xeito.Tui do
     me = self()
     Task.start(fn -> send(me, {:xeito_reply, Client.request(state.client, req)}) end)
   end
+
+  # --- the prompt line -----------------------------------------------------------------------
+
+  # Handled here: these change how this client shows things, never what runs.
+  defp run_line(quit, state) when quit in ["/quit", "/exit"], do: handle_update(:quit, state)
+  defp run_line("/statusbar" <> args, state), do: handle_update({:statusbar, args}, state)
+
+  defp run_line(text, state) do
+    request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
+    {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{text}\n"), []}
+  end
+
+  # Every line sent is remembered, as a shell does, but not twice in a row.
+  defp remember(%{prompt_history: [text | _]} = state, text), do: %{state | history_index: -1, history_draft: ""}
+
+  defp remember(state, text),
+    do: %{state | prompt_history: [text | state.prompt_history], history_index: -1, history_draft: ""}
+
+  # Up from the line being typed keeps it as the draft, and Down past the newest prompt brings it
+  # back. With nowhere to go, nothing changes, not even the cursor.
+  defp recall(%{history_index: -1, prompt_history: [newest | _]} = state, :older),
+    do: {:ok, newest, %{state | history_index: 0, history_draft: TextInput.get_value(state.input)}}
+
+  defp recall(%{history_index: i, prompt_history: history} = state, :older) when i >= 0 and i + 1 < length(history),
+    do: {:ok, Enum.at(history, i + 1), %{state | history_index: i + 1}}
+
+  defp recall(%{history_index: i} = state, :newer) when i >= 0 do
+    text = if i == 0, do: state.history_draft, else: Enum.at(state.prompt_history, i - 1)
+    {:ok, text, %{state | history_index: i - 1}}
+  end
+
+  defp recall(_state, _direction), do: :none
+
+  # TextInput.set_value/2 puts the cursor at the start; a recalled line is edited at its end.
+  defp put_text(input, text), do: %{TextInput.set_value(input, text) | cursor_col: String.length(text)}
 
   # --- daemon events -------------------------------------------------------------------------
 
