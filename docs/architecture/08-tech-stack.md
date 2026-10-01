@@ -148,5 +148,12 @@ Style is settled by tools, not by review:
 - **Change risk:** the tests run with a CRAP gate (Change Risk Anti-Patterns: `complexity² × (1 − coverage)³ + complexity` per function; `test/support/xeito/crap.ex`). The maximum is 30, the threshold the metric's authors proposed: a fully tested function may be as complex as 30, while an untested one reaches it at complexity 5.
   - Existing functions above it are listed in `test/crap_baseline.exs`. Each may not get worse, and its entry must go once the function is at or under 30. The list only shrinks; it has been empty since 2026-10-01.
   - The pre-commit hook (`scripts/check-crap.sh`) and CI enforce the gate.
+- **Mutation testing:** coverage says a line ran, not that a test would fail if it were wrong. `mix xeito.mutate` (`test/support/xeito/mutate.ex`) changes one place at a time, loads the mutant over the real module and reruns the tests in the same VM: a mutant they miss *survives*. Mutations:
+  - comparisons negated and moved across the boundary;
+  - boolean operators swapped, negations dropped, `in` negated, `if` and `unless` swapped, `+` and `-` swapped;
+  - a clause removed from a multi-clause function or from a `case`, `cond` or `fn`;
+  - an element removed from a literal list, a word from a `~w` sigil, including constants in module attributes.
+  
+  The sources in `test/mutate.exs`, security and decision logic first, are held to zero survivors; `mix ci` runs them (seconds, not minutes). Other files can be checked by hand: `mix xeito.mutate PATH`.
 
 Styler is pinned to a minor version (`~> 1.12.2`), so new rewrites arrive only through a deliberate upgrade. On an upgrade, run `mix format` across the project, read the diff, and update the disabled list in `.credo.exs` from Styler's docs. A few Styler rewrites can change behaviour (its README lists them), so the tests must pass on the rewritten code before it is committed.

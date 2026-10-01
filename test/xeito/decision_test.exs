@@ -191,6 +191,92 @@ defmodule Xeito.DecisionTest do
       end
     end
 
+    test "the tokenizer also splits on || and newlines, keeps escapes, and drops harmless redirects" do
+      assert Risk.segments("ls || echo none") == {:ok, ["ls", "echo none"]}
+      assert Risk.segments("ls\nrm -rf build") == {:ok, ["ls", "rm -rf build"]}
+      assert Risk.segments(~S(echo "a\"; b" \; c)) == {:ok, [~S(echo "a\"; b" \; c)]}
+
+      for quiet <- ["mix test &>/dev/null", "mix test >>/dev/null", "ls 1>/dev/null", "ls 0>/dev/null"],
+          do: assert(Risk.segments(quiet) == {:ok, [quiet |> String.split(~r/\s*\d?&?>/) |> hd()]}, quiet)
+    end
+
+    defp risk(command), do: Risk.classify(%{command: command})
+
+    test "every segment counts: a safe first command does not cover the next line" do
+      assert risk("ls\nrm -rf build") == nil
+    end
+
+    test "forbidden: deleting the root without its guard, and wiping history before deleting" do
+      assert risk("rm --no-preserve-root -rf /") == :forbidden
+      assert risk("history -c && rm -rf ~/.bash_history") == :forbidden
+    end
+
+    # The allowlist, spelled out: changing what counts as safe should change a test.
+    @safe_by_rule [
+      "ls -la",
+      "cat a.ex",
+      "head -5 a",
+      "tail -5 a",
+      "grep -rn x lib",
+      "rg x",
+      "pwd",
+      "echo hi",
+      "wc -l a",
+      "which mix",
+      "tree lib",
+      "stat a",
+      "du -sh .",
+      "df -h",
+      "diff a b",
+      "less a",
+      "file a",
+      "sort a",
+      "uniq a",
+      "cut -d, -f1 a",
+      "git status",
+      "git diff HEAD",
+      "git log --oneline",
+      "git show HEAD",
+      "git branch -a",
+      "git blame a.ex",
+      "mix test",
+      "mix compile",
+      "mix format --check-formatted",
+      "mix deps.get",
+      "mix credo --strict",
+      "npm test",
+      "npm run test",
+      "npm run lint",
+      "pytest -q",
+      "python -m pytest",
+      "python3 -m pytest",
+      "cargo test",
+      "cargo build",
+      "cargo check",
+      "go test ./...",
+      "go build ./...",
+      "make test",
+      "bundle exec rspec"
+    ]
+
+    test "the commands and prefixes that are safe by rule" do
+      assert Enum.reject(@safe_by_rule, &(risk(&1) == :safe)) == []
+    end
+
+    test "never safe: allowlisted commands that delete, execute, force, or touch secrets" do
+      for command <- [
+            "find . -name '*.beam' -delete",
+            ~S(find . -name x -exec rm {} \;),
+            "find . -fls out.txt",
+            "git branch --force main HEAD~1",
+            "cat ~/.ssh/id_rsa",
+            "cat ~/.aws/credentials",
+            "cat ~/.netrc",
+            "cat .env"
+          ],
+          do: assert(risk(command) == nil, command)
+    end
+
     test "the decider raises model output to the floor" do
       decision = Decider.decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [])
       assert %Decision{value: :review, actor: :none} = decision

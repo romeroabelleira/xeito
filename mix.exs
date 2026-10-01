@@ -13,8 +13,8 @@ defmodule Xeito.MixProject do
       # `mix test --cover` scores every function's CRAP (complexity and coverage) and fails above
       # the maximum (test/support/xeito/crap.ex).
       test_coverage: [tool: Xeito.Crap, crap_max: 30],
-      # Data for the CRAP gate, not a test file.
-      test_ignore_filters: ["test/crap_baseline.exs"],
+      # Data for the CRAP gate and mutation testing, not test files.
+      test_ignore_filters: ["test/crap_baseline.exs", "test/mutate.exs"],
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
@@ -26,7 +26,7 @@ defmodule Xeito.MixProject do
   end
 
   def cli do
-    [preferred_envs: [ci: :test]]
+    [preferred_envs: [ci: :test, "xeito.mutate": :test]]
   end
 
   def application do
@@ -62,7 +62,10 @@ defmodule Xeito.MixProject do
         "compile --warnings-as-errors",
         "credo --strict",
         # With coverage: the CRAP gate (test/support/xeito/crap.ex).
-        "test --cover"
+        "test --cover",
+        # No surviving mutants in the sources listed in test/mutate.exs. Its own VM: it reloads
+        # the test modules it runs.
+        "cmd mix xeito.mutate"
       ]
     ]
   end
