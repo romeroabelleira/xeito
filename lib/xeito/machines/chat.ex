@@ -37,7 +37,7 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.5.0"
+  use Xeito.Machine, version: "0.6.0"
 
   alias Xeito.Effect
   alias Xeito.Tools
@@ -56,9 +56,11 @@ defmodule Xeito.Machines.Chat do
   state :thinking, entry: :ask_model, timeout: 900_000 do
     on :chatted, to: :failed, guard: :chat_error?, action: :record_error
     on :chatted, to: :verifying, guard: :calls_at_limit_edited?, action: :record_calls_and_stop
-    on :chatted, to: :answered, guard: :calls_at_limit?, action: :record_calls_and_stop
+    on :chatted, to: :wrapping_up, guard: :calls_at_limit?, action: :record_calls_and_stop
     on :chatted, to: :risk_check, guard: :calls_next_risky?, action: :queue_calls
     on :chatted, to: :executing, guard: :calls_next_safe?, action: :queue_calls
+    on :chatted, to: :verifying, guard: :invalid_again_edited?, action: :queue_calls_and_stop
+    on :chatted, to: :wrapping_up, guard: :invalid_again?, action: :queue_calls_and_stop
     on :chatted, to: :thinking, guard: :only_invalid_calls?, action: :queue_calls
     on :chatted, to: :verifying, guard: :edited?, action: :record_answer
     on :chatted, to: :answered, action: :record_answer
@@ -69,7 +71,7 @@ defmodule Xeito.Machines.Chat do
     on {:decided, :safe}, to: :executing
     on {:decided, :review}, to: :ask_human
     on {:decided, :abstain}, to: :ask_human
-    on {:decided, :forbidden}, to: :answered, guard: :step_limit?, action: :forbid_and_stop
+    on {:decided, :forbidden}, to: :wrapping_up, guard: :step_limit?, action: :forbid_and_stop
     on {:decided, :forbidden}, to: :thinking, action: :forbid
   end
 
@@ -77,19 +79,28 @@ defmodule Xeito.Machines.Chat do
     on :tool_done, to: :risk_check, guard: :next_risky?, action: :record_result
     on :tool_done, to: :executing, guard: :next_safe?, action: :record_result
     on :tool_done, to: :verifying, guard: :step_limit_edited?, action: :record_result_and_stop
-    on :tool_done, to: :answered, guard: :step_limit?, action: :record_result_and_stop
+    on :tool_done, to: :wrapping_up, guard: :step_limit?, action: :record_result_and_stop
     on :tool_done, to: :thinking, action: :record_result
   end
 
   state :verifying, entry: :run_checks, timeout: @verify_timeout do
+    on :verified, to: :wrapping_up, guard: :passed_but_stopped?, action: :record_checks
     on :verified, to: :answered, guard: :checks_passed?, action: :record_checks
     on :verified, to: :thinking, guard: :can_fix?, action: :report_failure
+    on :verified, to: :wrapping_up, guard: :stopped?, action: :record_checks
     on :verified, to: :answered, action: :record_checks
+  end
+
+  # A turn that stops (step limit, or calls that keep failing) gets one last model turn without
+  # tools to tell the user what it found and what it would do next, instead of ending on a bare
+  # "Stopped after 25 model turns" (a dogfood session, 2026-10-01).
+  state :wrapping_up, entry: :ask_wrap_up, timeout: 900_000 do
+    on :chatted, to: :answered, action: :record_wrap_up
   end
 
   state :ask_human, timeout: {@human_timeout, :denied} do
     on :approved, to: :executing
-    on :denied, to: :answered, guard: :step_limit?, action: :deny_and_stop
+    on :denied, to: :wrapping_up, guard: :step_limit?, action: :deny_and_stop
     on :denied, to: :thinking, action: :deny
   end
 
@@ -124,6 +135,28 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def ask_model(ctx) do
     [ctx |> messages() |> elide() |> Effect.chat(tools: Tools.names_for(ctx))]
+  end
+
+  @doc false
+  def ask_wrap_up(ctx) do
+    [(messages(ctx) ++ [wrap_up_request(ctx)]) |> elide() |> Effect.chat(tools: false)]
+  end
+
+  defp wrap_up_request(ctx) do
+    why =
+      case ctx[:stop_reason] do
+        :invalid -> "Your last tool calls could not run, or repeated earlier ones."
+        _ -> "You have used all #{ctx[:steps]} model turns for this request."
+      end
+
+    %{
+      role: "user",
+      content:
+        why <>
+          " Do not call tools. In a few sentences, tell the user what you found, what you" <>
+          " changed (if anything), what is left, and what you would do next, so they can decide" <>
+          " how to continue."
+    }
   end
 
   @keep_whole 4
@@ -213,6 +246,19 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def only_invalid_calls?(ctx, message), do: Map.get(message, :tool_calls, []) != [] and valid(message, ctx) == []
 
+  # A second step in a row whose calls all fail (or repeat earlier ones) ends the turn.
+  @doc false
+  def invalid_again?(ctx, message), do: only_invalid_calls?(ctx, message) and Map.get(ctx, :invalid_streak, 0) >= 1
+
+  @doc false
+  def invalid_again_edited?(ctx, message), do: invalid_again?(ctx, message) and edited?(ctx, message)
+
+  @doc false
+  def stopped?(ctx, _data), do: Map.get(ctx, :stopped, false)
+
+  @doc false
+  def passed_but_stopped?(ctx, result), do: checks_passed?(ctx, result) and stopped?(ctx, result)
+
   # The model asks for tools on its last allowed turn: stop instead of running them.
   @doc false
   def calls_at_limit?(ctx, message),
@@ -261,28 +307,84 @@ defmodule Xeito.Machines.Chat do
   defp next_is?([call | _], risky), do: Tools.risky?(call) == risky
   defp next_is?([], _risky), do: false
 
-  defp valid(message, ctx) do
-    for call <- Map.get(message, :tool_calls, []),
-        match?({:ok, _}, Tools.to_effect(call, ctx)),
-        do: call
+  defp valid(message, ctx), do: message |> sort_calls(ctx) |> elem(0)
+
+  # Calls that can run, and `{call, reason}` for those that cannot: unknown tools or bad
+  # arguments, and exact repeats of a call already made in this turn (since the last edit, which
+  # may have changed what a repeat would see).
+  defp sort_calls(message, ctx) do
+    {valid, rejected, _seen} =
+      Enum.reduce(
+        Map.get(message, :tool_calls, []),
+        {[], [], Map.get(ctx, :seen, [])},
+        &sort_call(&1, &2, ctx)
+      )
+
+    {Enum.reverse(valid), Enum.reverse(rejected)}
   end
+
+  defp sort_call(call, {ok, bad, seen}, ctx) do
+    key = {call.name, call.arguments}
+
+    case {Tools.to_effect(call, ctx), key in seen} do
+      {{:error, reason}, _} -> {ok, [{call, "error: " <> reason} | bad], seen}
+      {{:ok, _}, true} -> {ok, [{call, repeated()} | bad], seen}
+      {{:ok, _}, false} -> {[call | ok], bad, [key | seen]}
+    end
+  end
+
+  defp repeated,
+    do:
+      "not run: you already made this exact call in this turn, and its result is above (if it " <>
+        "was elided, read it back with result). Use that result instead of repeating the call; " <>
+        "if you are stuck, say what blocks you."
 
   @doc false
   def queue_calls(ctx, message) do
-    calls = Map.get(message, :tool_calls, [])
-    {valid, invalid} = Enum.split_with(calls, &match?({:ok, _}, Tools.to_effect(&1, ctx)))
-
-    errors =
-      for call <- invalid do
-        {:error, reason} = Tools.to_effect(call, ctx)
-        tool_message(call, "error: " <> reason)
-      end
+    {valid, rejected} = sort_calls(message, ctx)
+    errors = for {call, reason} <- rejected, do: tool_message(call, reason)
 
     ctx
-    |> put_turn([assistant_message(message) | errors])
+    |> put_turn([assistant_message(message) | errors] ++ stuck_note(ctx, message))
+    |> Map.update(
+      :seen,
+      Enum.map(valid, &{&1.name, &1.arguments}),
+      &(Enum.map(valid, fn c -> {c.name, c.arguments} end) ++ &1)
+    )
+    |> Map.put(:invalid_streak, if(valid == [], do: Map.get(ctx, :invalid_streak, 0) + 1, else: 0))
+    |> Map.update(:openings, [opening(message)], &[opening(message) | &1])
     |> Map.update(:steps, 1, &(&1 + 1))
     |> add_tokens(message)
     |> advance(valid)
+  end
+
+  @doc false
+  def queue_calls_and_stop(ctx, message), do: ctx |> queue_calls(message) |> stop(:invalid)
+
+  # A step that opens with the same sentence as two earlier ones: the model is going in circles.
+  defp stuck_note(ctx, message) do
+    opening = opening(message)
+
+    if opening != "" and Enum.count(Map.get(ctx, :openings, []), &(&1 == opening)) >= 2,
+      do: [
+        %{
+          role: "user",
+          content:
+            "You have started several steps with the same sentence and seem to be going in " <>
+              "circles. Either make the change now, or stop and tell the user what blocks you."
+        }
+      ],
+      else: []
+  end
+
+  defp opening(message) do
+    message
+    |> Map.get(:content, "")
+    |> to_string()
+    |> String.trim()
+    |> String.split(~r/[.:!?\n]/, parts: 2)
+    |> hd()
+    |> String.slice(0, 80)
   end
 
   @doc false
@@ -291,7 +393,27 @@ defmodule Xeito.Machines.Chat do
     |> put_turn([assistant_message(message)])
     |> Map.update(:steps, 1, &(&1 + 1))
     |> add_tokens(message)
-    |> Map.put(:answer, Map.get(message, :content, ""))
+    |> Map.put(:answer, answer_text(message))
+  end
+
+  defp answer_text(message) do
+    case message |> Map.get(:content, "") |> to_string() |> String.trim() do
+      "" -> "(The model ended this turn without an answer.)"
+      text -> text
+    end
+  end
+
+  # The model's closing words follow the stop notice (and a failing-checks note, if any).
+  @doc false
+  def record_wrap_up(ctx, %{error: _}), do: ctx
+
+  def record_wrap_up(ctx, message) do
+    ctx = ctx |> add_tokens(message) |> put_turn([wrap_up_request(ctx), assistant_message(message)])
+
+    case message |> Map.get(:content, "") |> to_string() |> String.trim() do
+      "" -> ctx
+      text -> Map.update(ctx, :answer, text, &(&1 <> "\n\n" <> text))
+    end
   end
 
   @doc false
@@ -311,6 +433,8 @@ defmodule Xeito.Machines.Chat do
   def record_result(ctx, result) do
     ctx
     |> Map.update(:edited, edit_done?(ctx, result), &(&1 or edit_done?(ctx, result)))
+    # An edit may change what a repeated call would see: repeats are allowed again.
+    |> then(&if(edit_done?(ctx, result), do: Map.put(&1, :seen, []), else: &1))
     |> put_turn([tool_message(ctx.current, Tools.result_text(result), result)])
     |> advance(ctx.pending)
   end
@@ -380,10 +504,14 @@ defmodule Xeito.Machines.Chat do
     |> advance([])
   end
 
-  defp stop(ctx) do
-    ctx
-    |> Map.put(:answer, "Stopped after #{ctx.steps} model turns (max_steps).")
-    |> Map.put(:stopped, true)
+  defp stop(ctx, reason \\ :limit) do
+    notice =
+      case reason do
+        :limit -> "Stopped after #{ctx.steps} model turns (max_steps)."
+        :invalid -> "Stopped: the model kept making tool calls that could not run."
+      end
+
+    Map.merge(ctx, %{answer: notice, stopped: true, stop_reason: reason})
   end
 
   defp advance(ctx, [next | rest]), do: Map.merge(ctx, %{current: next, pending: rest})

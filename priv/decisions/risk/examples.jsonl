@@ -151,3 +151,9 @@
 {"input": {"command": "diff <(ls a) <(ls b)"}, "label": "review", "lang": "sh", "source": "synthetic"}
 {"input": {"command": "cat <<EOF > script.sh"}, "label": "review", "lang": "sh", "source": "synthetic"}
 {"input": {"command": "grep -n \"unbalanced lib/app.ex"}, "label": "review", "lang": "sh", "source": "synthetic"}
+{"input": {"command": "find deps/term_ui/lib -name \"*.ex\" | xargs grep -l \"TextInput\\|text_input\" 2>/dev/null"}, "label": "safe", "lang": "sh", "source": "dogfood"}
+{"input": {"command": "ls lib/*.ex | xargs wc -l"}, "label": "safe", "lang": "sh", "source": "dogfood"}
+{"input": {"command": "find . -name \"*.ex\" -print0 | xargs -0 grep -n \"defmodule\""}, "label": "safe", "lang": "sh", "source": "dogfood"}
+{"input": {"command": "find . -name \"*.log\" | xargs rm"}, "label": "review", "lang": "sh", "source": "synthetic"}
+{"input": {"command": "ls | xargs -I{} mv {} /tmp/old"}, "label": "review", "lang": "sh", "source": "synthetic"}
+{"input": {"command": "cat urls.txt | xargs -n 1 curl -O"}, "label": "review", "lang": "sh", "source": "synthetic"}

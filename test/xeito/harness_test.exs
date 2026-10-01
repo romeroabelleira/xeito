@@ -232,6 +232,151 @@ defmodule Xeito.HarnessTest do
     assert failure["content"] =~ "You have 4 more model turns"
   end
 
+  test "chat: a turn stopped at its step limit closes with the model's summary, without tools",
+       %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [
+        {"Looking.", [{"bash", %{"command" => "ls"}}]},
+        {"More.", [{"bash", %{"command" => "pwd"}}]},
+        {"Found two files; next I would read a.txt.", []}
+      ])
+
+    id = run_chat(log, ws, cfg, %{prompt: "Look around", max_steps: 2})
+    await_exit(id)
+    assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
+
+    assert ctx.answer ==
+             "Stopped after 2 model turns (max_steps).\n\nFound two files; next I would read a.txt."
+
+    requests =
+      for _ <- 1..3,
+          do:
+            (
+              assert_received({:chat_request, r})
+              r
+            )
+
+    wrap_up = List.last(requests)
+    assert wrap_up["tools"] == []
+    assert List.last(wrap_up["messages"])["content"] =~ "Do not call tools"
+  end
+
+  test "chat: an exact repeat of a call is not run again; the model is pointed to the result",
+       %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [
+        {"Look.", [{"bash", %{"command" => "ls"}}]},
+        {"Again.", [{"bash", %{"command" => "ls"}}]},
+        {"Done.", []}
+      ])
+
+    id = run_chat(log, ws, cfg, %{prompt: "Look around"})
+    await_exit(id)
+    assert {:ok, %{ctx: %{answer: "Done."}}} = Run.result(log, id)
+    assert kinds(log, id) == [:chat, :decide, :bash, :chat, :chat]
+
+    requests =
+      for _ <- 1..3,
+          do:
+            (
+              assert_received({:chat_request, r})
+              r
+            )
+
+    assert List.last(Enum.at(requests, 2)["messages"])["content"] =~ "you already made this exact call"
+  end
+
+  test "chat: tool calls that keep failing end the turn; an empty answer is noted", %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [
+        {"", [{"read", %{"path" => "a.txt"}}]},
+        {"", [{"read", %{"path" => "a.txt"}}]},
+        {"I cannot read files in this turn.", []}
+      ])
+
+    id = run_chat(log, ws, cfg, %{prompt: "go ahead", tools: false})
+    await_exit(id)
+    assert {:ok, %{ctx: ctx}} = Run.result(log, id)
+
+    assert ctx.answer ==
+             "Stopped: the model kept making tool calls that could not run.\n\nI cannot read files in this turn."
+
+    [_first, second | _] =
+      for _ <- 1..3,
+          do:
+            (
+              assert_received({:chat_request, r})
+              r
+            )
+
+    assert List.last(second["messages"])["content"] == "error: no tools are available in this turn; answer in text"
+
+    empty = run_chat(log, ws, ollama(self(), [{"  ", []}]), %{prompt: "hm"})
+    await_exit(empty)
+    assert {:ok, %{ctx: %{answer: "(The model ended this turn without an answer.)"}}} = Run.result(log, empty)
+  end
+
+  test "session: a go-ahead after an unfinished turn continues it with tools; only rule small talk drops tools",
+       %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(
+        self(),
+        [
+          {"Looking.", [{"bash", %{"command" => "ls"}}]},
+          {"More.", [{"bash", %{"command" => "pwd"}}]},
+          {"Found two files.", []},
+          {"Continuing: done.", []},
+          {"Interesting indeed.", []},
+          {"You're welcome.", []}
+        ],
+        %{"What does the user want" => "other"}
+      )
+
+    {:ok, id} =
+      Session.start(
+        cwd: ws,
+        log: log,
+        id: "ses-test-#{System.unique_integer([:positive])}",
+        chat: cfg,
+        decider: [deciders: [:large], tiers: [large: cfg]],
+        max_steps: 2
+      )
+
+    Session.subscribe(id)
+    :ok = Session.prompt(id, "investigate the files")
+    next_event("intent")
+    assert %{attrs: %{"answer" => "Stopped after 2 model turns" <> _}} = next_event("turn_finished")
+    for _ <- 1..3, do: assert_received({:chat_request, _})
+
+    # "go ahead" continues by rule, with tools (the model would have said `other`).
+    :ok = Session.prompt(id, "go ahead")
+    assert %{attrs: %{"actor" => :rule, "model" => "rule:continuation"}} = next_event("intent")
+    assert %{attrs: %{"answer" => "Continuing: done."}} = next_event("turn_finished")
+    assert_received {:chat_request, continued}
+    assert continued["tools"] != []
+
+    # The model's `other` keeps the tools; the small-talk rule drops them.
+    :ok = Session.prompt(id, "interesting")
+    assert %{attrs: %{"value" => :other, "actor" => :large}} = next_event("intent")
+    next_event("turn_finished")
+    assert_received {:chat_request, other}
+    assert other["tools"] != []
+
+    :ok = Session.prompt(id, "thanks")
+    assert %{attrs: %{"actor" => :rule}} = next_event("intent")
+    next_event("turn_finished")
+    assert_received {:chat_request, thanks}
+    assert thanks["tools"] == []
+  end
+
   test "chat: a turn without edits answers without running the checks", %{ws: ws} do
     log = start_log!()
     cfg = ollama(self(), [{"Just an answer.", []}])

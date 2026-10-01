@@ -34,6 +34,7 @@ defmodule Xeito.Session do
   use GenServer
 
   alias Xeito.Budget
+  alias Xeito.Decisions.Intent
   alias Xeito.Escalation
   alias Xeito.Events
   alias Xeito.Log
@@ -66,6 +67,9 @@ defmodule Xeito.Session do
   (chat-model overrides), `:test_cmd`, `:system` (replaces the default system prompt),
   `:idle_timeout` (ms).
   """
+
+  # --- server --------------------------------------------------------------------------------
+
   @spec start(keyword()) :: {:ok, String.t()} | {:error, term()}
   def start(opts) do
     id = Keyword.get_lazy(opts, :id, &new_id/0)
@@ -83,8 +87,6 @@ defmodule Xeito.Session do
 
   @doc false
   def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}, restart: :temporary}
-
-  # --- server --------------------------------------------------------------------------------
 
   @doc "Subscribes the caller to the session's events."
   @spec subscribe(String.t()) :: :ok
@@ -141,9 +143,13 @@ defmodule Xeito.Session do
       log: log,
       decider: Keyword.get(opts, :decider, []),
       chat: Keyword.get(opts, :chat, []),
+      # Model turns per chat turn (`Xeito.Machines.Chat`'s default when nil).
+      max_steps: Keyword.get(opts, :max_steps),
       test_cmd: Keyword.get_lazy(opts, :test_cmd, fn -> Router.test_command(cwd) end),
       system: Keyword.get_lazy(opts, :system, fn -> system_prompt(cwd) end),
       history: [],
+      # The last turn stopped before it was done (step limit): a short "go ahead" continues it.
+      unfinished: false,
       decisions: [],
       debug: %{step: false, breakpoints: []},
       live: MapSet.new(),
@@ -198,7 +204,14 @@ defmodule Xeito.Session do
            Log.read_run(s.log, run),
          {:ok, result} <- Run.result(s.log, run) do
       s = %{s | machine: machine, prompt: Map.get(input, :request) || Map.get(input, :prompt)}
-      %{s | history: remember(s, result, answer(machine, result)), machine: nil, prompt: nil}
+
+      %{
+        s
+        | history: remember(s, result, answer(machine, result)),
+          machine: nil,
+          prompt: nil,
+          unfinished: stopped?(result)
+      }
     else
       _ ->
         %{
@@ -233,7 +246,7 @@ defmodule Xeito.Session do
 
         case trimmed do
           "/" <> command -> {:reply, :ok, command(command, s)}
-          _ -> {:reply, :ok, decide_intent(text, s)}
+          _ -> {:reply, :ok, route_prompt(text, trimmed, s)}
         end
     end
   end
@@ -291,9 +304,10 @@ defmodule Xeito.Session do
     {machine, reason} = Router.route(decision.value, text)
     input = input_for(machine, text, s)
 
-    # Small talk needs no tools, and without tools the model's answer streams at once.
+    # Small talk needs no tools, and without tools the model's answer streams at once. Only when
+    # the small-talk rule says so: a model's `other` can be a reply to an unfinished turn.
     input =
-      if machine == Chat and decision.value == :other,
+      if machine == Chat and decision.value == :other and decision.actor == :rule and not s.unfinished,
         do: Map.put(input, :tools, false),
         else: input
 
@@ -334,6 +348,29 @@ defmodule Xeito.Session do
 
   def terminate(_reason, s), do: Budget.delete(s.id)
 
+  # A short go-ahead right after a turn that stopped unfinished continues it, with tools. Decided
+  # by rule: the Intent decision sees only the message, and took "go ahead" for small talk.
+  @continuations ~r/\A(go ahead|go on|continue|carry on|proceed|keep going|yes|yes,? (please|do it|go ahead)|do it|please do|ok,? (go ahead|continue|do it))[\s.!]*\z/i
+
+  defp route_prompt(text, trimmed, s),
+    do: if(continuation?(trimmed, s), do: continue(text, s), else: decide_intent(text, s))
+
+  defp continuation?(text, s), do: s.unfinished and Regex.match?(@continuations, text)
+
+  defp continue(text, s) do
+    decision = %Xeito.Decision{
+      type: Intent,
+      value: :edit,
+      confidence: 1.0,
+      actor: :rule,
+      model: "rule:continuation",
+      cost: %{}
+    }
+
+    send(self(), {:intent, text, decision})
+    %{s | root: :deciding}
+  end
+
   defp decide_intent(text, s) do
     me = self()
     id = "#{s.id}/t#{s.turn}/intent"
@@ -343,7 +380,7 @@ defmodule Xeito.Session do
         Keyword.take(s.decider, [:deciders, :policy, :tiers, :available?])
 
     Task.Supervisor.start_child(Xeito.EffectTasks, fn ->
-      decision = Escalation.decide(Xeito.Decisions.Intent, %{message: text}, opts)
+      decision = Escalation.decide(Intent, %{message: text}, opts)
       send(me, {:intent, text, decision})
     end)
 
@@ -435,20 +472,24 @@ defmodule Xeito.Session do
     :exit, _ -> :ignored
   end
 
+  # --- step mode -----------------------------------------------------------------------------
   # Skills are discovered on every turn, so a new or edited SKILL.md applies at once.
   defp input_for(Chat, text, s) do
     skills = Skills.discover(s.cwd)
 
-    %{
-      cwd: s.cwd,
-      prompt: text,
-      messages: s.history,
-      # A turn that edits files is checked before it answers (`Xeito.Machines.Chat`): the quick
-      # check (does it still build), not the full suite, which is the `check` machine's job.
-      verify: Router.quick_check_command(s.cwd),
-      system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(skills),
-      skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
-    }
+    # A turn that edits files is checked before it answers (`Xeito.Machines.Chat`): the quick
+    # check (does it still build), not the full suite, which is the `check` machine's job.
+    then(
+      %{
+        cwd: s.cwd,
+        prompt: text,
+        messages: s.history,
+        verify: Router.quick_check_command(s.cwd),
+        system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(skills),
+        skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
+      },
+      &if(s.max_steps, do: Map.put(&1, :max_steps, s.max_steps), else: &1)
+    )
   end
 
   defp input_for(Commit, text, s), do: %{cwd: s.cwd, request: text}
@@ -489,8 +530,6 @@ defmodule Xeito.Session do
     end
   end
 
-  # --- step mode -----------------------------------------------------------------------------
-
   defp track(run_id, %{type: "state_entered", attrs: %{"state" => :ask_human}}, s) do
     waiting = %{run: run_id, call: pending_call(run_id)}
     emit(s, "human_needed", run_id, %{"call" => waiting.call})
@@ -510,7 +549,14 @@ defmodule Xeito.Session do
     emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
     emit(s, "turn_finished", run_id, Map.put(event.attrs, "answer", answer))
 
-    %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer)}
+    %{
+      s
+      | root: nil,
+        machine: nil,
+        waiting: nil,
+        history: remember(s, result, answer),
+        unfinished: stopped?(result)
+    }
   end
 
   defp track(run_id, %{type: "paused"}, s), do: %{s | paused: run_id}
@@ -525,6 +571,9 @@ defmodule Xeito.Session do
   defp track(run_id, %{type: type}, s) when type != "delta", do: %{s | paused: unpause(s.paused, run_id)}
 
   defp track(_run_id, _event, s), do: s
+
+  defp stopped?(%{ctx: ctx}), do: Map.get(ctx, :stopped, false) == true
+  defp stopped?(_result), do: false
 
   defp unpause(run_id, run_id), do: nil
   defp unpause(paused, _run_id), do: paused

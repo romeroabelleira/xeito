@@ -120,6 +120,7 @@ defmodule Xeito.Tools do
       %Effect{} = effect -> {:ok, effect}
       {:error, reason} -> {:error, reason}
       nil -> {:error, "invalid arguments for #{name}: #{inspect(args)}"}
+      false when offered == [] -> {:error, "no tools are available in this turn; answer in text"}
       false -> {:error, "unknown tool #{inspect(name)}; available: #{Enum.join(offered, ", ")}"}
     end
   end

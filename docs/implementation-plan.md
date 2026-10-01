@@ -195,6 +195,12 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
     - `write`/`edit` refuse `deps/`, `_build/`, `node_modules/`, `.git/` and `.xeito/`. In the dogfood session, an edit to a dependency looked done but never took.
     - A quote-aware Risk tokenizer that treats read-only pipelines as safe. It decides 33 of that session's 35 commands by rule, where 13 were decided by rule before.
     - A project map in each chat turn's instructions (`Xeito.Source.RepoMap`): the project kind, top-level directories, modules with files (plus docs and public functions if they fit in 6,000 characters), and dependencies.
+    - From a dogfood session (2026-10-01; chat machine 0.6.0):
+      - Turns that stop at the step limit close with a tool-less summary turn.
+      - "go ahead" and similar after an unfinished turn continue it, by rule and with tools. Tools are dropped only for small talk the rule detects, not whenever the model says `other`.
+      - Exact repeat calls are not run again, and a model repeating its opening sentence gets a nudge.
+      - Two steps in a row of failing calls end the turn, and an empty answer is noted.
+      - `xargs` before a read-only command is read-only.
     - `read` gains `outline` (modules and functions with line ranges) and `symbol` (one definition by name) for Elixir files, and `write`/`edit` report a file that no longer parses in the same step (`Xeito.Source`, using Elixir's own parser). Other languages can follow through tree-sitter.
     - The chat machine (0.2.0) runs a quick check before answering a turn that edited files, and gives the model up to two tries to fix a failure. The check asks whether the code still builds (format and warnings for Mix, `cargo check`, `go build`, `tsc`), which takes about 0.5 s on this project. A `check.quick` alias or `check-quick` target overrides it.
   - Latency: `Intent` rules decide small talk and "run the tests" without a model, and small talk gets no tools, so its answer streams at once.

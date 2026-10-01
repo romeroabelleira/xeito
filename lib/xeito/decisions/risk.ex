@@ -135,6 +135,12 @@ defmodule Xeito.Decisions.Risk do
   defp read_only?("cd", segment),
     do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
 
+  # `xargs` feeding a read-only command (`find … | xargs grep -l x`) is as safe as that command.
+  defp read_only?("xargs", segment) do
+    rest = Regex.replace(~r/^xargs(\s+-(0|r|t|[nLP]\s*\d+|I\s*\S+|d\s*\S+))*\s+/, segment, "")
+    rest != segment and safe_segment?(rest)
+  end
+
   defp read_only?(_word, _segment), do: false
 
   # --- a small shell tokenizer -------------------------------------------------------------

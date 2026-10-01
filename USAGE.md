@@ -209,6 +209,8 @@ The full suite (tests, linters) is what "run the checks" and the `check` machine
 
 The model can't edit fetched dependencies, build output, git's data or Xeito's log (`deps/`, `_build/`, `node_modules/`, `.git/`, `.xeito/`). Dependencies aren't rebuilt from edited sources and are replaced on the next fetch, so such an edit would look done but never take. The model is told this and asked to change the project, or to propose a fork or an upstream patch.
 
+**When a turn runs out of steps,** the model gets one last turn without tools to tell you what it found, what's left and what it would do next. Then a short "go ahead" or "continue" picks the work up again, with tools. The model also doesn't get to repeat itself: an identical tool call already made in the same turn isn't run again, and a turn whose tool calls keep failing ends with the model's summary.
+
 The conversation carries over between turns in a session. An `AGENTS.md` at the project root is added to the model's instructions, so put conventions there, for example "run `mix format` after editing" or "never touch `priv/repo/migrations`".
 
 ### Run a command
