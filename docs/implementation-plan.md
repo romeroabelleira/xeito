@@ -250,6 +250,10 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
    - Status 2026-10-01: elision keeps the latest whole read of each of the last three project files read (chat machine 0.4.0, [bench 4 §7](../bench/4-harness.md#7-keeping-project-reads-whole-benchmark-d-rerun-2026-10-01)).
      - Tokens −47% against the project-map baseline; runs with an applied edit 3 of 3 (baseline 2 of 3); one run finished.
      - Remaining: the benchmark task is ambiguous ("prompt cursor": both finished runs blinked the `> ` marker), so the acceptance check comes with a reworded task. P4b exits once that check shows no loss of success with the savings.
+   - Status 2026-10-01: the task is reworded and has a behavioural acceptance check ([bench 4 §8](../bench/4-harness.md#8-an-unambiguous-task-and-an-acceptance-check-benchmark-d-rerun-2026-10-01)).
+     - Neither variant passes it within 25 steps (0 of 3 each), so "no loss of success" holds only trivially.
+     - Tokens −44%; runs reaching an edit 2 of 3 against 1 of 3.
+     - Both edited P4b runs stopped with code that does not compile. To make success measurable: the fix budget past the step limit, then dependency APIs in the map, or a larger step limit for the benchmark.
 
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 

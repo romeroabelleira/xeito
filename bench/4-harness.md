@@ -171,3 +171,34 @@ Findings:
 - **The finished run (F2), like C3 in §5, blinks the `> ` prompt marker instead of the text cursor.** "The TUI's prompt cursor" is ambiguous, and both readings compile. The benchmark needs an unambiguous task and a behavioural acceptance check before success rates mean anything.
 
 P4b status: the token half of the exit is nearly met (−47% against ≥ 50%), and the editing half is met.
+
+## 8. An unambiguous task and an acceptance check, benchmark D rerun (2026-10-01)
+
+§7's finished runs blinked the `> ` marker, not the text cursor. So the task now reads: "In the TUI (`lib/xeito/tui.ex`), make the text cursor of the input field blink like an editor's cursor: shown and hidden in turn, about twice a second. Keep the `> ` prompt marker as it is."
+
+Success is judged by [`bench/acceptance/cursor_blink_test.exs`](acceptance/cursor_blink_test.exs), copied into the workspace only after the run:
+- It drives `Xeito.Tui` the way TermUI's runtime does: `init` against a fake daemon, then the timer, interval and send_after commands and plain messages fed back.
+- It renders three seconds of frames.
+- It passes when the input's cursor cell is drawn in some frames and hidden in others (2–12 toggles), and every frame shows the marker.
+- Validated before use: current Xeito passes; the code before the cursor existed, F2's and C3's marker blinks all fail.
+
+Harness F (all of P4b, `3f54cea`) against C (project map only, `3fcb280`), three runs each, interleaved:
+
+| | C | F |
+|---|---|---|
+| Input tokens per run (mean) | 553k | 307k (−44%) |
+| Wall time per run (mean) | 162 s | 136 s |
+| Runs with an edit applied | 1 of 3 | 2 of 3 |
+| Step of the first edit | 23, —, — | —, 12, 18 |
+| Acceptance check passed | 0 of 3 | 0 of 3 |
+| Why the check failed | no blinking (3) | no blinking (1), does not compile: `undefined variable "state"` (2) |
+
+Findings:
+- **On the unambiguous task, neither variant succeeds within 25 steps.** The success half of P4b's exit ("no loss of success") holds, but trivially: there is no success to lose. With 0 of 3 on both sides, the benchmark cannot measure task success at this step budget and model size.
+- **P4b's effect on the way there is consistent with §7:** 44% fewer input tokens, shorter runs, and more runs reaching an edit (2 of 3 against 1 of 3).
+- **Both F runs that edited stopped at the step limit with code that does not compile.** The quick check reported it, but a stopped turn cannot fix anything. This is the case for the fix budget noted in §4: a couple of steps past the limit to repair a failing check.
+
+To make task success measurable, any of these would do:
+- the fix budget;
+- a larger step limit for this benchmark;
+- the dependency APIs in the project map, so fewer steps go into reading TermUI.
