@@ -254,6 +254,7 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
      - Neither variant passes it within 25 steps (0 of 3 each), so "no loss of success" holds only trivially.
      - Tokens −44%; runs reaching an edit 2 of 3 against 1 of 3.
      - Both edited P4b runs stopped with code that does not compile. To make success measurable: the fix budget past the step limit, then dependency APIs in the map, or a larger step limit for the benchmark.
+   - Status 2026-10-01: the fix budget is done (chat machine 0.5.0). A failing quick check gets up to two fixes, also at the step limit, with 4 model turns past `max_steps` shared between them.
 
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 

@@ -11,7 +11,7 @@ defmodule Xeito.Machines.Chat do
                                | verifying or answered (step limit)
       verifying ──verified──┬─ passed ─────────────────────→ answered
                             ├─ failed, fixes left ─────────→ thinking (told the output)
-                            └─ failed, none left or stopped → answered (with the failure noted)
+                            └─ failed, no fixes left → answered (with the failure noted)
       ask_human ──approved──→ executing · ──denied──→ thinking (told)
 
   One run is one user turn. The session (`Xeito.Session`) keeps the conversation and passes the
@@ -22,9 +22,10 @@ defmodule Xeito.Machines.Chat do
   **Verifying.** With `verify` (a quick check command, `Xeito.Session.Router.quick_check_command/1`,
   e.g. format and compile warnings), a turn that edited
   files (`write`/`edit`) does not end on the model's word: the checks run first. If they fail,
-  the model is shown the output and may fix it (twice at most); a turn that still fails, or that
-  stopped at the step limit, ends with the failure stated in the answer. So "it compiles" means
-  the code that actually runs was checked.
+  the model is shown the output and may fix it (twice at most), also when the turn reached its
+  step limit: fixing has a budget of @fix_budget model turns past `max_steps`. A turn that still
+  fails ends with the failure stated in the answer. So "it compiles" means the code that
+  actually runs was checked.
 
   The tool calls a model makes are *proposals*: each becomes an effect (`Xeito.Tools`), `bash`
   passes the `Risk` decision first, and invalid calls are answered with an error message rather
@@ -36,7 +37,7 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.4.0"
+  use Xeito.Machine, version: "0.5.0"
 
   alias Xeito.Effect
   alias Xeito.Tools
@@ -45,6 +46,9 @@ defmodule Xeito.Machines.Chat do
   @human_timeout 86_400_000
   @verify_timeout 900_000
   @max_fixes 2
+  # Model turns allowed past `max_steps` for fixing a failing check, shared by all fixes: a turn
+  # that runs out of steps with code that does not build gets to repair it (bench 4 §8).
+  @fix_budget 4
   @output_tail 4_000
 
   initial :thinking
@@ -212,7 +216,7 @@ defmodule Xeito.Machines.Chat do
   # The model asks for tools on its last allowed turn: stop instead of running them.
   @doc false
   def calls_at_limit?(ctx, message),
-    do: Map.get(message, :tool_calls, []) != [] and Map.get(ctx, :steps, 0) + 1 >= max_steps(ctx)
+    do: Map.get(message, :tool_calls, []) != [] and Map.get(ctx, :steps, 0) + 1 >= limit(ctx)
 
   @doc false
   def next_risky?(ctx, _result), do: next_is?(ctx.pending, true)
@@ -221,7 +225,7 @@ defmodule Xeito.Machines.Chat do
   def next_safe?(ctx, _result), do: next_is?(ctx.pending, false)
 
   @doc false
-  def step_limit?(ctx, _data), do: Map.get(ctx, :steps, 0) >= max_steps(ctx)
+  def step_limit?(ctx, _data), do: Map.get(ctx, :steps, 0) >= limit(ctx)
 
   # --- actions -----------------------------------------------------------------------------
   # Edits made in this turn and a check command to verify them with. `edited` is set when a
@@ -240,10 +244,9 @@ defmodule Xeito.Machines.Chat do
   def checks_passed?(_ctx, result), do: result.exit_status == 0
 
   @doc false
+  # Also at the step limit: fixing has its own budget past it.
   def can_fix?(ctx, _result),
-    do:
-      not Map.get(ctx, :stopped, false) and Map.get(ctx, :fixes, 0) < @max_fixes and
-        Map.get(ctx, :steps, 0) < max_steps(ctx)
+    do: Map.get(ctx, :fixes, 0) < @max_fixes and Map.get(ctx, :steps, 0) < max_steps(ctx) + @fix_budget
 
   defp verify?(ctx), do: is_binary(ctx[:verify]) and ctx.verify != ""
 
@@ -251,6 +254,9 @@ defmodule Xeito.Machines.Chat do
   defp edit_done?(_ctx, _result), do: false
 
   defp max_steps(ctx), do: Map.get(ctx, :max_steps, 25)
+
+  # While fixing a failing check, the fix budget extends the step limit.
+  defp limit(ctx), do: max_steps(ctx) + if(ctx[:fixing], do: @fix_budget, else: 0)
 
   defp next_is?([call | _], risky), do: Tools.risky?(call) == risky
   defp next_is?([], _risky), do: false
@@ -333,14 +339,15 @@ defmodule Xeito.Machines.Chat do
   def report_failure(ctx, result) do
     text = """
     The project's checks (`#{ctx.verify}`) fail after your edits, exit status #{result.exit_status}.
-    Fix the cause, or say why it cannot be fixed. Output (tail):
+    Fix the cause, or say why it cannot be fixed. You have #{max_steps(ctx) + @fix_budget - Map.get(ctx, :steps, 0)} more model turns for this. Output (tail):
     #{result[:shaped] || tail(result.output)}
     """
 
     ctx
     |> put_turn([%{role: "user", content: text}])
     |> Map.update(:fixes, 1, &(&1 + 1))
-    |> Map.delete(:answer)
+    |> Map.put(:fixing, true)
+    |> Map.drop([:answer, :stopped])
   end
 
   defp tail(output) when byte_size(output) > @output_tail,

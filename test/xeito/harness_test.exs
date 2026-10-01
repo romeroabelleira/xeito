@@ -198,6 +198,40 @@ defmodule Xeito.HarnessTest do
     assert failure["role"] == "user" and failure["content"] =~ "fail after your edits"
   end
 
+  test "chat: a turn stopped at its step limit with failing checks gets a budget to fix them",
+       %{ws: ws} do
+    log = start_log!()
+    File.write!(Path.join(ws, "a.txt"), "bug")
+    edit = fn old, new -> {"edit", %{"path" => "a.txt", "old_text" => old, "new_text" => new}} end
+
+    cfg =
+      ollama(self(), [
+        {"Editing.", [edit.("bug", "wip")]},
+        # The step limit (2) is reached with a call: it is not run, and the checks run instead.
+        {"More.", [edit.("wip", "wip2")]},
+        {"Fixing.", [edit.("wip", "fixed")]},
+        {"Fixed.", []}
+      ])
+
+    id = run_chat(log, ws, cfg, %{prompt: "Fix a.txt", verify: "grep -q fixed a.txt", max_steps: 2})
+
+    await_exit(id)
+    assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
+    assert ctx.answer == "Fixed."
+    assert ctx.checks.passed
+    assert ctx.steps == 4
+    assert File.read!(Path.join(ws, "a.txt")) == "fixed"
+
+    requests =
+      for _ <- 1..3 do
+        assert_received {:chat_request, request}
+        request
+      end
+
+    failure = requests |> List.last() |> Map.fetch!("messages") |> List.last()
+    assert failure["content"] =~ "You have 4 more model turns"
+  end
+
   test "chat: a turn without edits answers without running the checks", %{ws: ws} do
     log = start_log!()
     cfg = ollama(self(), [{"Just an answer.", []}])
