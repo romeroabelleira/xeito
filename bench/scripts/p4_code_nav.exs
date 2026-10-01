@@ -8,14 +8,20 @@
 # Risk, the quick check. Reviews are *denied* automatically (and counted), so no command a human
 # would have to approve ever runs and both variants are treated alike. Writes a JSON summary:
 # steps, tool calls by kind, reads by mode, bash commands, edited files, check outcome, tokens and
-# wall time.
+# wall time. The task's acceptance check (bench/acceptance/cursor_blink_test.exs) runs separately,
+# after the run, so the model never sees it.
 
 alias Xeito.{Log, Run, Session}
 
 [workspace, out] = System.argv()
 
 prompt =
-  System.get_env("BENCH_PROMPT", "Make the TUI's prompt cursor blink, like an editor's cursor.")
+  System.get_env(
+    "BENCH_PROMPT",
+    "In the TUI (lib/xeito/tui.ex), make the text cursor of the input field blink like an " <>
+      "editor's cursor: shown and hidden in turn, about twice a second. Keep the `> ` prompt " <>
+      "marker as it is."
+  )
 
 {:ok, id} = Session.start(cwd: workspace)
 Session.subscribe(id)
