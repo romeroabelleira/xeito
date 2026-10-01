@@ -84,6 +84,7 @@ If you already have a pre-commit hook, call the script from it. Never commit wit
 ```bash
 scripts/try-local.sh                       # the TUI in an empty scratch workspace
 scripts/try-local.sh --cwd ~/src/project   # in a real project (its session log goes to .xeito/ there)
+scripts/try-local.sh --cwd .               # in the directory you are in
 echo /help | scripts/try-local.sh --chat   # the line-mode client, scriptable: a quick smoke test
 ```
 

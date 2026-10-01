@@ -3,7 +3,8 @@
 # scratch workspace, so your real daemon, sessions and settings are never touched.
 #
 #   scripts/try-local.sh                  the TUI, in an empty scratch workspace
-#   scripts/try-local.sh --cwd DIR        the TUI, in DIR (its session log goes to DIR/.xeito)
+#   scripts/try-local.sh --cwd DIR        the TUI, in DIR, e.g. `--cwd .` for the directory you are
+#                                         in (its session log goes to DIR/.xeito)
 #   scripts/try-local.sh --chat           the line-mode client instead; reads stdin, so it also
 #                                         scripts a smoke test:  echo /help | scripts/try-local.sh --chat
 #   scripts/try-local.sh --no-models      without model tiers
@@ -13,7 +14,7 @@
 # $XEITO_TIERS_ENV or ~/.config/xeito/tiers.env (USAGE.md, "Model tiers"). Without them,
 # everything but model calls still works: the prompt line, slash commands, the status bar, `/run`.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+caller=$PWD
 
 client=xeito.tui
 cwd=""
@@ -27,6 +28,13 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# A relative --cwd is relative to where the script was started, not to the repository.
+if [ -n "$cwd" ]; then
+  resolved=$(cd "$caller" && cd "$cwd" 2>/dev/null && pwd) || { echo "no such directory: $cwd" >&2; exit 2; }
+  cwd=$resolved
+fi
+cd "$(dirname "$0")/.."
 
 tiers="${XEITO_TIERS_ENV:-$HOME/.config/xeito/tiers.env}"
 if [ "$models" = 1 ] && [ -f "$tiers" ]; then
