@@ -150,3 +150,24 @@ Findings:
 - **Token savings hold at 63%**, and most runs reach editing again. None of E's edits missed its text, so the nearest-match answer was never needed here.
 - **Editing still starts later than without P4b** (steps 18–22 against 12–13), and none of E's runs passed the quick check.
 - **The cause is visible in the reads.** The project file is now read whole, but elision later stubs that read, and the model re-reads the file in slices. One run read `lib/xeito/tui.ex` in eight line ranges. Elision should keep the latest read of a project file whole, eliding only older reads, reads of dependency sources, and shell output.
+
+## 7. Keeping project reads whole, benchmark D rerun (2026-10-01)
+
+Elision now keeps the latest whole read of each of the last three project files read (`3f54cea`, chat machine 0.4.0). The same setup, with harness F (all of P4b) against C (project map only), three runs each, interleaved:
+
+| | C | F |
+|---|---|---|
+| Input tokens per run (mean) | 597k | 314k (−47%) |
+| Wall time per run (mean) | 180 s | 158 s |
+| Runs with an edit applied | 2 of 3 | 3 of 3 |
+| Step of the first edit | 20, 17, — | 22, 12, 17 |
+| Edits that missed their text | 0 | 0 |
+| Finished within the step limit and passed the quick check | 0 of 3 | 1 of 3 |
+
+Findings:
+- **With all of P4b, runs reach editing as reliably as without it.** Editing starts no later, and one run finished in 22 steps.
+- **Savings fall from 63% (§6) to 47%**, because the latest read of the file being edited now stays in every request. That is just short of the "halved" exit target, and the trade is worth it: §5 and §6 showed what eliding that read costs.
+- **The model still reads parts of the file** it already has whole (two runs, four line ranges each), probably to anchor its edits. Most of the slicing seen in §6 is gone.
+- **The finished run (F2), like C3 in §5, blinks the `> ` prompt marker instead of the text cursor.** "The TUI's prompt cursor" is ambiguous, and both readings compile. The benchmark needs an unambiguous task and a behavioural acceptance check before success rates mean anything.
+
+P4b status: the token half of the exit is nearly met (−47% against ≥ 50%), and the editing half is met.
