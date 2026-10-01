@@ -16,7 +16,9 @@ defmodule Xeito.MixProject do
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
-        plt_add_apps: [:ex_unit, :mix, :term_ui]
+        ignore_warnings: ".dialyzer_ignore.exs",
+        # :tools for :cover (the CRAP gate in test/support, analysed when MIX_ENV=test as in CI).
+        plt_add_apps: [:ex_unit, :mix, :term_ui, :tools]
       ]
     ]
   end
