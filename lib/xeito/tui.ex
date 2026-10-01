@@ -36,7 +36,6 @@ defmodule Xeito.Tui do
   alias TermUI.Widgets.TextInput
   alias Xeito.Client
   alias Xeito.Client.Config
-  # --- init ----------------------------------------------------------------------------------
   alias Xeito.Client.Render
   alias Xeito.Client.StatusBar
 
@@ -45,23 +44,49 @@ defmodule Xeito.Tui do
   # an idle TUI stops waking up.
   @blink_ms 530
   @blink_for_ms 10_000
+  @placeholder "ask, or /help"
+
+  # --- init ----------------------------------------------------------------------------------
 
   @impl true
   def init(_runtime_opts) do
     opts = Application.get_env(:xeito, :tui, [])
     {:ok, client} = Client.connect(Keyword.fetch!(opts, :socket))
-
     {session, status} = open(client, opts)
-    {rows, cols} = TermUI.Platform.terminal_size()
-    earlier = if opts[:session], do: earlier_turns(client, session), else: []
-    prefs = Config.load()
-    {:ok, input} = TextInput.init(TextInput.new(placeholder: "ask, or /help", width: cols - 2))
 
-    %{
+    [
       client: client,
       session: session,
       cwd: status["cwd"] || opts[:cwd],
-      lines: earlier ++ ["session #{session} · /help · y/n answer a review · /quit"],
+      size: TermUI.Platform.terminal_size(),
+      earlier: if(opts[:session], do: earlier_turns(client, session), else: []),
+      prefs: Config.load(),
+      prefs_file: Config.path()
+    ]
+    |> Keyword.merge(Keyword.take(opts, [:status_bar]))
+    |> new()
+    |> wake_cursor()
+    |> tap(&if(&1.bar, do: Client.request(client, %{"cmd" => "monitor", "on" => true})))
+    |> tap(&Client.request(client, %{"cmd" => "workspace", "session" => &1.session}))
+  end
+
+  @doc """
+  An idle TUI state for a session: `client`, `session`, `cwd`, `size` (`{rows, cols}`), the
+  `earlier` transcript lines, the preferences and the file they are saved in (`prefs`,
+  `prefs_file`), and optionally `status_bar` to override the preferences' visibility.
+  """
+  @spec new(keyword()) :: map()
+  def new(opts) do
+    {rows, cols} = Keyword.fetch!(opts, :size)
+    prefs = Keyword.fetch!(opts, :prefs)
+    {:ok, input} = TextInput.init(TextInput.new(placeholder: @placeholder, width: cols - 2))
+    session = Keyword.fetch!(opts, :session)
+
+    %{
+      client: Keyword.fetch!(opts, :client),
+      session: session,
+      cwd: opts[:cwd],
+      lines: Keyword.get(opts, :earlier, []) ++ ["session #{session} · /help · y/n answer a review · /quit"],
       partial: "",
       input: TextInput.set_focused(input, true),
       width: cols,
@@ -78,6 +103,7 @@ defmodule Xeito.Tui do
       bar: Keyword.get(opts, :status_bar, prefs["status_bar"]["visible"]),
       hidden: prefs["status_bar"]["hidden"],
       prefs: prefs,
+      prefs_file: Keyword.fetch!(opts, :prefs_file),
       monitor: nil,
       workspace: nil,
       workspace_at: nil,
@@ -88,9 +114,6 @@ defmodule Xeito.Tui do
       blink: 0,
       blink_until: 0
     }
-    |> wake_cursor()
-    |> tap(&if(&1.bar, do: Client.request(client, %{"cmd" => "monitor", "on" => true})))
-    |> tap(&Client.request(client, %{"cmd" => "workspace", "session" => &1.session}))
   end
 
   defp open(client, opts) do
@@ -110,7 +133,6 @@ defmodule Xeito.Tui do
   defp earlier_turns(client, session) do
     case Client.request(client, %{"cmd" => "history", "session" => session}) do
       %{"ok" => true, "history" => history} ->
-        # --- events → messages ---------------------------------------------------------------------
         for %{"role" => role, "content" => content} <- history,
             role in ["user", "assistant"] and content not in [nil, ""],
             do: history_line(role, content)
@@ -125,9 +147,11 @@ defmodule Xeito.Tui do
 
   defp first_line(text), do: text |> String.split("\n") |> hd()
 
+  # --- events → messages ---------------------------------------------------------------------
+
   @impl true
   def event_to_msg(%Event.Key{key: key, modifiers: mods}, _state)
-      when key in [:c, "c", :d, "d", :t, "t"] and is_list(mods) and mods != [] do
+      when key in [:c, "c", :d, "d", :t, "t"] and mods != [] do
     cond do
       :ctrl not in mods -> :ignore
       key in [:t, "t"] -> {:msg, :toggle_bar}
@@ -217,7 +241,6 @@ defmodule Xeito.Tui do
   end
 
   defp handle_update({:review, answer}, state) do
-    # --- status bar preferences ----------------------------------------------------------
     cmd = if answer == "y", do: "approve", else: "deny"
     request(state, %{"cmd" => cmd, "session" => state.session})
 
@@ -242,6 +265,8 @@ defmodule Xeito.Tui do
     do: {%{state | width: w, height: h, input: Map.put(state.input, :width, w - 2)}, []}
 
   defp handle_update(_msg, state), do: {state, []}
+
+  # --- status bar preferences ----------------------------------------------------------------
 
   defp set_bar(state, bar) do
     request(state, %{"cmd" => "monitor", "on" => bar})
@@ -269,7 +294,6 @@ defmodule Xeito.Tui do
   end
 
   defp statusbar(["segments"], state) do
-    # --- daemon events -------------------------------------------------------------------------
     listed =
       Enum.map_join(StatusBar.segments(), " ", fn seg ->
         if seg in state.hidden, do: "·#{seg}", else: seg
@@ -293,7 +317,7 @@ defmodule Xeito.Tui do
     prefs =
       put_in(state.prefs, ["status_bar"], %{"visible" => state.bar, "hidden" => state.hidden})
 
-    case Config.save(prefs) do
+    case Config.save(prefs, state.prefs_file) do
       :ok ->
         %{state | prefs: prefs}
 
@@ -307,6 +331,8 @@ defmodule Xeito.Tui do
     me = self()
     Task.start(fn -> send(me, {:xeito_reply, Client.request(state.client, req)}) end)
   end
+
+  # --- daemon events -------------------------------------------------------------------------
 
   @doc false
   # A Risk decision is not a line of its own: it marks the line it applies to (the command, or
@@ -344,7 +370,6 @@ defmodule Xeito.Tui do
   defp track(state, "run_selected", %{"attrs" => a}),
     do: %{state | machine: short(a["machine"]), started: now(), decisions: 0, usd: 0.0}
 
-  # --- view ----------------------------------------------------------------------------------
   defp track(state, "state_entered", %{"run" => run, "attrs" => %{"state" => leaf}}) do
     if internal?(run), do: state, else: %{state | leaf: to_string(leaf)}
   end
@@ -366,6 +391,8 @@ defmodule Xeito.Tui do
   defp track(state, _type, _event), do: state
 
   defp internal?(run), do: String.ends_with?(run, "/esc") or String.ends_with?(run, "/intent")
+
+  # --- view ----------------------------------------------------------------------------------
 
   # Text arrives in pieces (streamed deltas); complete lines move into the transcript.
   @doc false
@@ -418,7 +445,6 @@ defmodule Xeito.Tui do
   # position is a solid block in a colour nothing else on screen uses. In the blink's off phase
   # the cell is drawn plain. Long input scrolls so the cursor stays visible; an empty line shows
   # the placeholder, dimmed, after the cursor.
-  @placeholder "ask, or /help"
 
   @doc false
   def input_line(state, width) do
@@ -476,7 +502,8 @@ defmodule Xeito.Tui do
     shown ++ List.duplicate("", height - length(shown))
   end
 
-  defp status_line(state) do
+  @doc false
+  def status_line(state) do
     elapsed =
       if state.started,
         do: " · #{Float.round((now() - state.started) / 1000, 1)} s",

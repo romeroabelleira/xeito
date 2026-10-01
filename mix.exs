@@ -13,6 +13,8 @@ defmodule Xeito.MixProject do
       # `mix test --cover` scores every function's CRAP (complexity and coverage) and fails above
       # the maximum (test/support/xeito/crap.ex).
       test_coverage: [tool: Xeito.Crap, crap_max: 30],
+      # Data for the CRAP gate, not a test file.
+      test_ignore_filters: ["test/crap_baseline.exs"],
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",

@@ -66,4 +66,66 @@ defmodule Xeito.Decision.EvalTest do
     assert c.small_share == 0.5
     assert Enum.all?(c.thresholds, &(&1 > 0.6 and &1 <= 0.95))
   end
+
+  describe "run/4: one result per example, for each kind of decider" do
+    alias Xeito.Decisions.Risk
+
+    # `ls` is decided by Risk's rule; the other command is left to the models.
+    @examples [
+      %{input: %{command: "ls"}, label: :safe, lang: "en", dangerous: false},
+      %{input: %{command: "frobnicate the widgets"}, label: :review, lang: "en", dangerous: false},
+      %{input: %{command: "frobnicate more widgets"}, label: :review, lang: "de", dangerous: true}
+    ]
+
+    defp predicted(results), do: Enum.map(results, & &1.predicted)
+
+    test "rules decide what they can and abstain on the rest" do
+      [ls, other, _] = Eval.run(Risk, :rules, @examples)
+      assert %{predicted: :safe, confidence: 1.0, label: :safe, lang: "en", dangerous: false} = ls
+      assert %{predicted: :abstain, confidence: nil, probabilities: %{}} = other
+      assert is_integer(ls.latency_ms)
+    end
+
+    test "the baseline falls back to the most frequent label" do
+      assert predicted(Eval.run(Risk, :baseline, @examples)) == [:safe, :review, :review]
+    end
+
+    test "a tier alone: its answer and model, or an abstention with the error" do
+      Req.Test.stub(:eval_large, &decision_response(&1, "review"))
+      large = [url: "http://large.test", plug: {Req.Test, :eval_large}, model: "big"]
+      [_, other, _] = Eval.run(Risk, :large, @examples, tiers: [large: large])
+      assert %{predicted: :review, model: "big"} = other
+      assert other.confidence > 0.9
+
+      Req.Test.stub(:eval_down, &Plug.Conn.send_resp(&1, 500, "down"))
+      down = [url: "http://down.test", plug: {Req.Test, :eval_down}, model: "big", retry: false]
+      [_, failed, _] = Eval.run(Risk, :large, @examples, tiers: [large: down])
+      assert %{predicted: :abstain, confidence: nil, error: _} = failed
+    end
+
+    test "the pipeline decides as a run does, and says who decided" do
+      # Without tiers, what no rule decides falls to Risk's floor: review.
+      [ls, other, _] = Eval.run(Risk, :pipeline, @examples, deciders: [])
+      assert %{predicted: :safe, actor: :rule} = ls
+      assert %{predicted: :review, actor: :none} = other
+    end
+
+    # Ollama's /api/chat with structured output and logprobs.
+    defp decision_response(conn, value) do
+      tokens = [~s({"), "value", ~s(":), ~s( "), value, ~s("})]
+
+      logprobs =
+        for t <- tokens do
+          tops = if t == value, do: [%{"token" => value, "logprob" => :math.log(0.97)}], else: []
+          %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
+        end
+
+      Req.Test.json(conn, %{
+        "message" => %{"content" => ~s({"value": "#{value}"})},
+        "prompt_eval_count" => 50,
+        "eval_count" => 5,
+        "logprobs" => logprobs
+      })
+    end
+  end
 end

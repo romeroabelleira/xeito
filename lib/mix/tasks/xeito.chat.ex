@@ -43,22 +43,19 @@ defmodule Mix.Tasks.Xeito.Chat do
   end
 
   defp open(client, opts) do
-    reply =
-      case opts[:session] do
-        nil ->
-          Client.request(client, %{"cmd" => "start", "cwd" => Path.expand(opts[:cwd] || ".")})
-
-        id ->
-          Client.request(client, %{
-            "cmd" => "attach",
-            "session" => id,
-            "cwd" => Path.expand(opts[:cwd] || ".")
-          })
-      end
-
-    case reply do
+    case Client.request(client, open_request(opts)) do
       %{"ok" => true, "session" => id} -> id
       %{"error" => error} -> Mix.raise("could not open a session: #{error}")
+    end
+  end
+
+  @doc false
+  def open_request(opts) do
+    cwd = Path.expand(opts[:cwd] || ".")
+
+    case opts[:session] do
+      nil -> %{"cmd" => "start", "cwd" => cwd}
+      id -> %{"cmd" => "attach", "session" => id, "cwd" => cwd}
     end
   end
 
@@ -79,20 +76,18 @@ defmodule Mix.Tasks.Xeito.Chat do
   end
 
   defp send_line(client, session, printer, line) do
-    req =
-      case line do
-        "" -> nil
-        "y" -> %{"cmd" => "approve", "session" => session}
-        "n" -> %{"cmd" => "deny", "session" => session}
-        text -> %{"cmd" => "prompt", "session" => session, "text" => text}
-      end
-
-    with %{} <- req,
+    with %{} = req <- request_for(line, session),
          %{"ok" => false, "error" => error} <- Client.request(client, req),
          do: IO.puts(IO.ANSI.red() <> error <> IO.ANSI.reset())
 
     input_loop(client, session, printer)
   end
+
+  @doc false
+  def request_for("", _session), do: nil
+  def request_for("y", session), do: %{"cmd" => "approve", "session" => session}
+  def request_for("n", session), do: %{"cmd" => "deny", "session" => session}
+  def request_for(text, session), do: %{"cmd" => "prompt", "session" => session, "text" => text}
 
   defp event_loop do
     receive do

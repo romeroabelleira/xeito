@@ -40,7 +40,19 @@ defmodule Xeito.Effects.Local do
   @max_output 65_536
 
   @impl true
-  def run(%Effect{kind: :bash, args: args} = effect, opts) do
+  def run(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
+  def run(%Effect{kind: :read, args: %{result: ref}}, opts), do: read_back(ref, opts)
+  def run(%Effect{kind: :read} = effect, _opts), do: read(effect)
+  def run(%Effect{kind: :write, args: args}, _opts), do: write(args)
+  def run(%Effect{kind: :edit, args: args}, _opts), do: edit(args)
+  def run(%Effect{kind: :chat} = effect, opts), do: chat(effect, opts)
+  def run(%Effect{kind: :machine} = effect, opts), do: machine(effect, opts)
+  def run(%Effect{kind: :decide} = effect, opts), do: decide(effect, opts)
+  def run(%Effect{kind: :tier, args: args}, opts), do: tier(args, opts)
+  def run(%Effect{kind: :probe, args: args}, opts), do: probe(args, opts)
+  def run(%Effect{kind: :swap, args: args}, opts), do: swap(args, opts)
+
+  defp bash(%Effect{args: args} = effect, opts) do
     cwd = workspace!(args)
 
     if File.dir?(cwd),
@@ -48,9 +60,7 @@ defmodule Xeito.Effects.Local do
       else: workspace_missing(cwd)
   end
 
-  def run(%Effect{kind: :read, args: %{result: ref}}, opts), do: read_back(ref, opts)
-
-  def run(%Effect{kind: :read, args: args} = effect, _opts) do
+  defp read(%Effect{args: args} = effect) do
     with {:ok, path} <- resolve(args),
          {:ok, content} <- File.read(path),
          {:ok, text} <- view(args, content) do
@@ -60,7 +70,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :write, args: args}, _opts) do
+  defp write(args) do
     with {:ok, path} <- resolve(args),
          :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.write(path, args.content) do
@@ -70,7 +80,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :edit, args: args}, _opts) do
+  defp edit(args) do
     with {:ok, path} <- resolve(args),
          {:ok, content} <- File.read(path),
          {:ok, updated} <- replace_once(content, args.old, args.new),
@@ -81,7 +91,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :chat, args: args} = effect, opts) do
+  defp chat(%Effect{args: args} = effect, opts) do
     tools =
       case args.tools do
         names when is_list(names) -> Tools.specs(names)
@@ -97,7 +107,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :machine, args: args} = effect, opts) do
+  defp machine(%Effect{args: args} = effect, opts) do
     log = Keyword.fetch!(opts, :log)
     id = effect.id <> "/run"
     runner = {__MODULE__, opts |> Keyword.put(:run_id, id) |> Keyword.delete(:debug)}
@@ -122,7 +132,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :decide, args: args} = effect, opts) do
+  defp decide(%Effect{args: args} = effect, opts) do
     decider = Keyword.get(opts, :decider, [])
 
     cond do
@@ -143,7 +153,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :tier, args: %{tier: tier} = args}, opts) do
+  defp tier(%{tier: tier} = args, opts) do
     type = Decision.type!(args.decision)
 
     case Tiers.run(tier, type, args.input, get_in(opts, [:tiers, tier]) || []) do
@@ -156,7 +166,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :probe, args: %{tier: tier} = args}, opts) do
+  defp probe(%{tier: tier} = args, opts) do
     case Tiers.config(tier, get_in(opts, [:tiers, tier]) || []) do
       nil ->
         %{loaded: false, swap_allowed: false, error: :tier_unavailable}
@@ -172,7 +182,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  def run(%Effect{kind: :swap, args: %{tier: tier} = args}, opts) do
+  defp swap(%{tier: tier} = args, opts) do
     with cfg when cfg != nil <- Tiers.config(tier, get_in(opts, [:tiers, tier]) || []),
          {:ok, ms} <- Ollama.load(cfg) do
       if args.parent, do: Budget.add(args.parent, :swaps, 1)

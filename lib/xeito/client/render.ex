@@ -33,39 +33,11 @@ defmodule Xeito.Client.Render do
     "#{pad}◆ #{type}: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
   end
 
-  defp render(%{"event" => "effect_requested", "attrs" => %{"kind" => kind, "args" => args}}, pad) do
-    case {to_string(kind), args} do
-      {"bash", %{"cmd" => cmd}} -> "#{pad}  $ #{cmd}\n"
-      {"read", %{"path" => _} = a} -> "#{pad}  #{read_label(a)}\n"
-      {"write", %{"path" => p} = a} -> "#{pad}  write #{p} (#{count_lines(a["content"])} lines)\n"
-      {"edit", %{"path" => p} = a} -> "#{pad}  edit #{p}\n" <> diff(a["old"], a["new"], pad)
-      {"machine", %{"machine" => m}} -> "#{pad}  ↳ delegating to #{short(m)}\n"
-      {"chat", _} -> pad
-      _ -> ""
-    end
-  end
+  defp render(%{"event" => "effect_requested", "attrs" => %{"kind" => kind, "args" => args}}, pad),
+    do: requested(to_string(kind), args, pad)
 
-  defp render(%{"event" => "effect_completed", "attrs" => %{"kind" => kind, "result" => r}}, pad) do
-    case {to_string(kind), r} do
-      {"bash", %{"exit_status" => status, "output" => out}} ->
-        "#{pad}    exit #{status}#{tail(out)}\n"
-
-      {"chat", %{"error" => error}} ->
-        "\n#{pad}  ✗ model error: #{inspect(error)}\n"
-
-      {"chat", _} ->
-        "\n"
-
-      {k, %{"ok" => false, "error" => error}} when k in ~w(read write edit) ->
-        "#{pad}    ✗ #{error}\n"
-
-      {k, %{"syntax_error" => error}} when k in ~w(write edit) ->
-        "#{pad}    ⚠ no longer parses: #{error}\n"
-
-      _ ->
-        ""
-    end
-  end
+  defp render(%{"event" => "effect_completed", "attrs" => %{"kind" => kind, "result" => r}}, pad),
+    do: completed(to_string(kind), r, pad)
 
   # The chat loop's own states are visible through its tool calls and streamed text.
   defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, _pad)
@@ -73,17 +45,8 @@ defmodule Xeito.Client.Render do
 
   defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad), do: "#{pad}· #{state}\n"
 
-  defp render(%{"event" => "human_needed", "attrs" => %{"call" => call}}, pad) do
-    what =
-      case call do
-        %{"tool" => "bash", "arguments" => %{"command" => cmd}} -> "run `#{cmd}`"
-        %{"summary" => summary} -> summary
-        %{"tool" => tool} -> tool
-        _ -> "continue"
-      end
-
-    "#{pad}? review: #{what} — approve with y, deny with n\n"
-  end
+  defp render(%{"event" => "human_needed", "attrs" => %{"call" => call}}, pad),
+    do: "#{pad}? review: #{review_what(call)} — approve with y, deny with n\n"
 
   # A chat answer was already streamed; other machines get a one-line summary.
   defp render(%{"event" => "paused", "attrs" => a}, pad) do
@@ -92,14 +55,7 @@ defmodule Xeito.Client.Render do
 
   defp render(%{"event" => "turn_finished", "attrs" => a}, _pad) do
     mark = if to_string(a["status"]) == "done", do: "✓", else: "✗"
-    answer = a["answer"]
-
-    summary =
-      if answer in [nil, ""] or to_string(a["final_state"]) == "answered",
-        do: "",
-        else: " · " <> first_line(answer)
-
-    "#{mark} #{a["final_state"]}#{summary}\n"
+    "#{mark} #{a["final_state"]}#{answer_summary(a)}\n"
   end
 
   defp render(%{"event" => "closed"}, _pad), do: "· session closed while idle; the next prompt resumes it from the log\n"
@@ -107,6 +63,37 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "notice", "attrs" => %{"text" => text}}, _pad), do: text <> "\n"
   defp render(%{"event" => "error", "attrs" => %{"text" => text}}, _pad), do: "✗ " <> text <> "\n"
   defp render(_event, _pad), do: ""
+
+  defp requested("bash", %{"cmd" => cmd}, pad), do: "#{pad}  $ #{cmd}\n"
+  defp requested("read", %{"path" => _} = a, pad), do: "#{pad}  #{read_label(a)}\n"
+  defp requested("write", %{"path" => p} = a, pad), do: "#{pad}  write #{p} (#{count_lines(a["content"])} lines)\n"
+  defp requested("edit", %{"path" => p} = a, pad), do: "#{pad}  edit #{p}\n" <> diff(a["old"], a["new"], pad)
+  defp requested("machine", %{"machine" => m}, pad), do: "#{pad}  ↳ delegating to #{short(m)}\n"
+  defp requested("chat", _args, pad), do: pad
+  defp requested(_kind, _args, _pad), do: ""
+
+  defp completed("bash", %{"exit_status" => status, "output" => out}, pad), do: "#{pad}    exit #{status}#{tail(out)}\n"
+  defp completed("chat", %{"error" => error}, pad), do: "\n#{pad}  ✗ model error: #{inspect(error)}\n"
+  defp completed("chat", _result, _pad), do: "\n"
+
+  defp completed(kind, %{"ok" => false, "error" => error}, pad) when kind in ~w(read write edit),
+    do: "#{pad}    ✗ #{error}\n"
+
+  defp completed(kind, %{"syntax_error" => error}, pad) when kind in ~w(write edit),
+    do: "#{pad}    ⚠ no longer parses: #{error}\n"
+
+  defp completed(_kind, _result, _pad), do: ""
+
+  defp review_what(%{"tool" => "bash", "arguments" => %{"command" => cmd}}), do: "run `#{cmd}`"
+  defp review_what(%{"summary" => summary}), do: summary
+  defp review_what(%{"tool" => tool}), do: tool
+  defp review_what(_call), do: "continue"
+
+  # A chat answer was already streamed.
+  defp answer_summary(%{"answer" => answer}) when answer in [nil, ""], do: ""
+  defp answer_summary(%{"final_state" => state}) when state in ["answered", :answered], do: ""
+  defp answer_summary(%{"answer" => answer}), do: " · " <> first_line(answer)
+  defp answer_summary(_attrs), do: ""
 
   defp read_label(%{"result" => r}), do: "read result #{r}"
   defp read_label(%{"path" => p, "lines" => l}), do: "read #{p} · lines #{l}"

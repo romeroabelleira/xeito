@@ -130,23 +130,25 @@ defmodule Xeito.Api.Connection do
   end
 
   # A followed session that closed while idle is resumed transparently from its workspace log.
-  defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace) do
+  defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
+    do: session_request(cmd, id, req, s)
+
+  defp handle(cmd, _req, s), do: {%{ok: false, error: "unknown or incomplete command #{cmd}"}, s}
+
+  defp session_request(cmd, id, req, s) do
     cond do
-      exists?(id) ->
-        {session_cmd(cmd, id, req), s}
-
-      cwd = s.sessions[id] ->
-        case handle("resume", %{"session" => id, "cwd" => cwd}, s) do
-          {%{ok: true}, s} -> {session_cmd(cmd, id, req), s}
-          failed -> failed
-        end
-
-      true ->
-        {%{ok: false, error: "no such session"}, s}
+      exists?(id) -> {session_cmd(cmd, id, req), s}
+      cwd = s.sessions[id] -> resume_then(cmd, id, req, cwd, s)
+      true -> {%{ok: false, error: "no such session"}, s}
     end
   end
 
-  defp handle(cmd, _req, s), do: {%{ok: false, error: "unknown or incomplete command #{cmd}"}, s}
+  defp resume_then(cmd, id, req, cwd, s) do
+    case handle("resume", %{"session" => id, "cwd" => cwd}, s) do
+      {%{ok: true}, s} -> {session_cmd(cmd, id, req), s}
+      failed -> failed
+    end
+  end
 
   defp session_cmd("prompt", id, req), do: result(Session.prompt(id, req["text"] || ""))
   defp session_cmd("approve", id, _req), do: result(Session.approve(id))
