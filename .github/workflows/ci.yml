@@ -34,5 +34,5 @@ jobs:
           restore-keys: ${{ runner.os }}-mix-
 
       - run: mix deps.get
+      # Includes Dialyzer, so a commit gated on `mix ci` locally is checked the same way.
       - run: mix ci
-      - run: mix dialyzer --format github

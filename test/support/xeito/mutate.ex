@@ -54,7 +54,7 @@ defmodule Xeito.Mutate do
   and records the mutant as `:killed` (a test failed), `:survived` or `:invalid` (it does not
   compile). The original code is loaded again at the end.
   """
-  @spec check([mutant()], (-> %{failures: non_neg_integer()})) :: [map()]
+  @spec check([mutant()], (-> %{:failures => non_neg_integer(), optional(atom()) => term()})) :: [map()]
   def check(mutants, run_tests) do
     previous = Code.get_compiler_option(:ignore_module_conflict)
     Code.put_compiler_option(:ignore_module_conflict, true)

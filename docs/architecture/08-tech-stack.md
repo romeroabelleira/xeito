@@ -144,7 +144,7 @@ elixir 1.20.4-otp-29
 Style is settled by tools, not by review:
 - **`mix format`** with the [Styler](https://hexdocs.pm/styler) plugin (`.formatter.exs`). Styler goes beyond layout: it orders module directives, lifts aliases, straightens pipes and rewrites some constructs. It deliberately has no per-rule configuration, which is the point.
 - **Credo** (`.credo.exs`, run with `--strict`) keeps the checks Styler cannot fix: warnings, design and complexity. The 28 Credo checks that Styler already rewrites are disabled, a list taken from Styler's "Styler & Credo" docs.
-- **One command:** `mix ci` runs the format check, compiling with warnings as errors (which includes the type checker), Credo and the tests with coverage. CI runs the same, plus Dialyzer.
+- **One command:** `mix ci` runs the format check, compiling with warnings as errors (which includes the type checker), Credo, Dialyzer, the tests with coverage and mutation testing. CI runs exactly that.
 - **Change risk:** the tests run with a CRAP gate (Change Risk Anti-Patterns: `complexity² × (1 − coverage)³ + complexity` per function; `test/support/xeito/crap.ex`). The maximum is 30, the threshold the metric's authors proposed: a fully tested function may be as complex as 30, while an untested one reaches it at complexity 5.
   - Existing functions above it are listed in `test/crap_baseline.exs`. Each may not get worse, and its entry must go once the function is at or under 30. The list only shrinks; it has been empty since 2026-10-01.
   - The pre-commit hook (`scripts/check-crap.sh`) and CI enforce the gate.

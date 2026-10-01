@@ -33,14 +33,16 @@ defmodule Mix.Tasks.Xeito.Mutate do
     Mix.Task.run("app.start")
     start_ex_unit(opts)
 
-    survived =
-      Enum.flat_map(plan, fn {path, section, tests} ->
-        run_tests = tests |> with_found_tests(path) |> load_tests() |> then(&fn -> ExUnit.run(&1) end)
-        if run_tests.().failures > 0, do: Mix.raise("the tests of #{path} fail on the real code; fix them first")
-        mutate(path, section, opts, run_tests)
-      end)
+    survived = Enum.flat_map(plan, &check_source(&1, opts))
 
     if survived != [], do: Mix.raise("#{length(survived)} mutants survived")
+  end
+
+  defp check_source({path, section, tests}, opts) do
+    modules = tests |> with_found_tests(path) |> load_tests()
+    run_tests = fn -> ExUnit.run(modules) end
+    if run_tests.().failures > 0, do: Mix.raise("the tests of #{path} fail on the real code; fix them first")
+    mutate(path, section, opts, run_tests)
   end
 
   defp mutate(path, section, opts, run_tests) do

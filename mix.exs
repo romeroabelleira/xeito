@@ -61,6 +61,7 @@ defmodule Xeito.MixProject do
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --strict",
+        "dialyzer",
         # With coverage: the CRAP gate (test/support/xeito/crap.ex).
         "test --cover",
         # No surviving mutants in the sources listed in test/mutate.exs. Its own VM: it reloads
