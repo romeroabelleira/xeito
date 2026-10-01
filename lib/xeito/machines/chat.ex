@@ -421,6 +421,8 @@ defmodule Xeito.Machines.Chat do
     |> Map.merge(whole_read(call, result))
   end
 
+  defp tool_message(call, text, _result), do: tool_message(call, text)
+
   # A whole read of one of the project's own files (not a part, outline or dependency source).
   defp whole_read(%{name: "read", arguments: %{"path" => path} = args}, %{ok: true})
        when is_binary(path) and path != "" do
@@ -429,8 +431,6 @@ defmodule Xeito.Machines.Chat do
   end
 
   defp whole_read(_call, _result), do: %{}
-
-  defp tool_message(call, text, _result), do: tool_message(call, text)
 
   defp about(%{name: "bash", arguments: %{"command" => cmd}}),
     do: "output of `" <> String.slice(cmd, 0, 80) <> if(String.length(cmd) > 80, do: "…`", else: "`")
