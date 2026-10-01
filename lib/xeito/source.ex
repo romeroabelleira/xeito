@@ -25,6 +25,7 @@ defmodule Xeito.Source do
           first: pos_integer(),
           last: pos_integer(),
           clauses: pos_integer(),
+          nodes: [Macro.t()],
           depth: non_neg_integer()
         }
 
@@ -156,6 +157,7 @@ defmodule Xeito.Source do
       first: meta[:line],
       last: last_line(meta, node),
       clauses: 1,
+      nodes: [node],
       depth: depth
     }
   end
@@ -205,7 +207,7 @@ defmodule Xeito.Source do
 
         e, %{kind: k, name: n, module: m} = acc
         when e.kind == k and e.name == n and e.module == m and k != :defmodule ->
-          {:cont, %{acc | last: max(acc.last, e.last), clauses: acc.clauses + 1}}
+          {:cont, %{acc | last: max(acc.last, e.last), clauses: acc.clauses + 1, nodes: acc.nodes ++ e.nodes}}
 
         e, acc ->
           {:cont, acc, e}

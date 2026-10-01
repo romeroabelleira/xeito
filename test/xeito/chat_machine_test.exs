@@ -84,4 +84,33 @@ defmodule Xeito.ChatMachineTest do
       assert Chat.record_answer(ctx(), message("")).answer == "(The model ended this turn without an answer.)"
     end
   end
+
+  describe "what a tool result was (for its stub if elided)" do
+    defp about(name, args) do
+      %{current: call(name, args), pending: []}
+      |> ctx()
+      |> Chat.record_result(%{ok: true, content: "x", ref: "ses/t1/e1"})
+      |> Map.fetch!(:turn)
+      |> List.last()
+      |> Map.fetch!(:about)
+    end
+
+    test "a shell command, shortened past 80 characters" do
+      assert about("bash", %{"command" => "ls"}) == "output of `ls`"
+      long = String.duplicate("a", 90)
+      assert about("bash", %{"command" => long}) == "output of `" <> String.duplicate("a", 80) <> "…`"
+    end
+
+    test "a read, with the part that was read" do
+      assert about("read", %{"path" => "lib/a.ex"}) == "read of lib/a.ex"
+      assert about("read", %{"path" => "lib/a.ex", "symbol" => "f/1"}) == "read of lib/a.ex (f/1)"
+      assert about("read", %{"path" => "lib/a.ex", "lines" => "1-9"}) == "read of lib/a.ex (1-9)"
+      assert about("read", %{"path" => "lib/a.ex", "outline" => true}) == "read of lib/a.ex (outline)"
+      assert about("read", %{"path" => "", "result" => "ses/t1/e3"}) == "full output of ses/t1/e3"
+    end
+
+    test "any other tool" do
+      assert about("write", %{"path" => "a", "content" => "b"}) == "write result"
+    end
+  end
 end

@@ -10,6 +10,9 @@ defmodule Xeito.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       aliases: aliases(),
+      # `mix test --cover` scores every function's CRAP (complexity and coverage) and fails above
+      # the maximum (test/support/xeito/crap.ex).
+      test_coverage: [tool: Xeito.Crap, crap_max: 30],
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
@@ -54,7 +57,8 @@ defmodule Xeito.MixProject do
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --strict",
-        "test"
+        # With coverage: the CRAP gate (test/support/xeito/crap.ex).
+        "test --cover"
       ]
     ]
   end
