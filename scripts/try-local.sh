@@ -6,24 +6,38 @@
 #   scripts/try-local.sh --cwd DIR        the TUI, in DIR (its session log goes to DIR/.xeito)
 #   scripts/try-local.sh --chat           the line-mode client instead; reads stdin, so it also
 #                                         scripts a smoke test:  echo /help | scripts/try-local.sh --chat
+#   scripts/try-local.sh --no-models      without model tiers
 #   XEITO_TRY_KEEP=1 scripts/try-local.sh keep the scratch directory (daemon log, workspace)
 #
-# Model tiers come from the environment, as for `mix xeito.daemon`: source your tiers file first
-# (USAGE.md, "Model tiers"). Without them, everything but model calls still works: the prompt
-# line, slash commands, the status bar, `/run`.
+# Model tiers (the chat model is the large tier) are loaded as the service unit loads them, from
+# $XEITO_TIERS_ENV or ~/.config/xeito/tiers.env (USAGE.md, "Model tiers"). Without them,
+# everything but model calls still works: the prompt line, slash commands, the status bar, `/run`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 client=xeito.tui
 cwd=""
+models=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --chat) client=xeito.chat ;;
     --cwd) cwd="$2"; shift ;;
-    *) echo "usage: scripts/try-local.sh [--chat] [--cwd DIR]" >&2; exit 2 ;;
+    --no-models) models=0 ;;
+    *) echo "usage: scripts/try-local.sh [--chat] [--cwd DIR] [--no-models]" >&2; exit 2 ;;
   esac
   shift
 done
+
+tiers="${XEITO_TIERS_ENV:-$HOME/.config/xeito/tiers.env}"
+if [ "$models" = 1 ] && [ -f "$tiers" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  . "$tiers"
+  set +a
+  echo "model tiers from $tiers" >&2
+elif [ "$models" = 1 ]; then
+  echo "no tiers file at $tiers (set XEITO_TIERS_ENV): model calls will fail" >&2
+fi
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/xeito-try.XXXXXX")
 socket="$scratch/xeito.sock"

@@ -87,7 +87,7 @@ scripts/try-local.sh --cwd ~/src/project   # in a real project (its session log 
 echo /help | scripts/try-local.sh --chat   # the line-mode client, scriptable: a quick smoke test
 ```
 
-Without model tiers, everything but model calls works. To test with models, source your tiers file first ([USAGE.md](../USAGE.md#model-tiers)).
+Model tiers are loaded as the service unit loads them, from `$XEITO_TIERS_ENV` or `~/.config/xeito/tiers.env` ([USAGE.md](../USAGE.md#model-tiers)); the chat model is the large tier. With `--no-models`, or without that file, everything but model calls works.
 
 What to check after a TUI change:
 - **Typing:** the cursor is a solid block while typing and blinks when idle. Long lines scroll.
