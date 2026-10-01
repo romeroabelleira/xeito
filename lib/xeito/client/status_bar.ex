@@ -121,6 +121,9 @@ defmodule Xeito.Client.StatusBar do
     queue: 2
   ]
 
+  # Which segments win when the line is too narrow for all of them, most important first.
+  @priority ~w(decision reply tokens gpu models git cost budget det calls cpu queue)a
+
   @doc "The segment names, in display order."
   @spec segments() :: [String.t()]
   def segments, do: Enum.map(@segments, fn {name, _} -> Atom.to_string(name) end)
@@ -144,6 +147,38 @@ defmodule Xeito.Client.StatusBar do
   end
 
   defp join(texts), do: texts |> Enum.reject(&(&1 == "")) |> Enum.join(" │ ")
+
+  @doc """
+  The bar as one line of at most `width` characters: segments are taken in priority order
+  (`@priority`) while they fit, and shown in display order. `hidden` lists segment names not to
+  show. Returns `""` when there is nothing to show.
+  """
+  @spec line(usage(), map() | nil, map() | nil, [String.t()], pos_integer()) :: String.t()
+  def line(usage, monitor, workspace, hidden, width) do
+    texts =
+      for {name, _} <- @segments,
+          Atom.to_string(name) not in hidden,
+          text = segment(name, usage, monitor, workspace),
+          text != "",
+          into: %{},
+          do: {name, text}
+
+    chosen =
+      Enum.reduce(@priority, [], fn name, chosen ->
+        with text when is_binary(text) <- texts[name],
+             candidate = [name | chosen],
+             true <- String.length(render(candidate, texts)) <= width do
+          candidate
+        else
+          _ -> chosen
+        end
+      end)
+
+    render(chosen, texts)
+  end
+
+  defp render(names, texts),
+    do: @segments |> Enum.map(&elem(&1, 0)) |> Enum.filter(&(&1 in names)) |> Enum.map(&texts[&1]) |> join()
 
   defp segment(:gpu, _u, nil, _w), do: "status: waiting for the daemon's monitor…"
   defp segment(:gpu, _u, m, _w), do: gpu(m["system"]["gpus"])

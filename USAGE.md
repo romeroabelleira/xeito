@@ -105,15 +105,23 @@ The module computes gross prices …
 ✓ answered
 ```
 
-Each `◆` line is a **typed decision**. It shows its value, the tier that decided and its confidence. Everything the model does goes through a small set of tools (`read`, `write`, `edit`, `bash`), and each tool call is a logged effect.
+The typing position is a solid yellow block. It blinks while you're idle, and stays solid while you type.
+
+Each `◆` line is a **typed decision**. Risk decisions are shown differently: the command they apply to gets a coloured dot in the left gutter, like a breakpoint, with the decision's confidence beside it in small digits. Green means safe, yellow means it waits for your review, red means forbidden:
+
+```
+●¹⁰⁰ $ grep -rn "cursor" lib
+●⁹⁴ ? review: run `rm -rf _build` — approve with y, deny with n
+```
+
+Other `◆` lines are other typed decisions. It shows its value, the tier that decided and its confidence. Everything the model does goes through a small set of tools (`read`, `write`, `edit`, `bash`), and each tool call is a logged effect.
 
 ### The status bar
 
-Above the status line, the TUI shows two more lines. Toggle them with **Ctrl-T** or `/statusbar`, or start without them using `--no-status-bar`:
+Above the status line, the TUI shows one more line, the status bar. Toggle it with **Ctrl-T** or `/statusbar`, or start without it using `--no-status-bar`. It is filled in priority order until it fills the terminal's width: the latest decision and reply, tokens, GPU, models and git come first; queues and CPU are the first to give way on a narrow terminal.
 
 ```
- GPU 20.8/24.0 GiB 94% 289 W 73°C │ large qwen3.6:27b unload 4:58 │ small ✓ 0/4 │ S1 ✓ │ CPU 39% load 0.34 RAM 15.9/62.0 GiB │ git main 2 changed ↑1
- chat 2 · large 1 · rule 1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ risk rule 3 ms │ reply 1.1 s (first 291 ms) │ det 50% │ $0.0000 · ~157 J │ budget $0.50/0.50 │ queue large 1
+ large qwen3.6:27b unload 4:58 │ git main 2 changed ↑1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ risk rule 3 ms │ reply 1.1 s (first 291 ms)
 ```
 
 | Part | Meaning |

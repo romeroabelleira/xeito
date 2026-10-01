@@ -1,0 +1,87 @@
+defmodule Xeito.ChatMachineTest do
+  @moduledoc "Unit tests of the chat machine's guards and actions, on contexts, without a model."
+  use ExUnit.Case, async: true
+
+  alias Xeito.Machines.Chat
+
+  defp call(name, args), do: %{name: name, arguments: args}
+  defp message(content, calls \\ []), do: %{content: content, tool_calls: calls}
+  defp ctx(extra \\ %{}), do: Map.merge(%{cwd: "/w", prompt: "p", steps: 3}, extra)
+
+  describe "repeated and invalid calls" do
+    test "an exact repeat of a call made in this turn is not valid; a different one is" do
+      seen = ctx(%{seen: [{"bash", %{"command" => "ls"}}]})
+      refute Chat.calls_next_risky?(seen, message("", [call("bash", %{"command" => "ls"})]))
+      assert Chat.calls_next_risky?(seen, message("", [call("bash", %{"command" => "pwd"})]))
+    end
+
+    test "queue_calls answers a repeat with a pointer to the earlier result and counts the streak" do
+      seen = ctx(%{seen: [{"bash", %{"command" => "ls"}}]})
+      after_repeat = Chat.queue_calls(seen, message("Again.", [call("bash", %{"command" => "ls"})]))
+      assert List.last(after_repeat.turn).content =~ "you already made this exact call"
+      assert after_repeat.invalid_streak == 1
+      assert Chat.invalid_again?(after_repeat, message("", [call("bash", %{"command" => "ls"})]))
+
+      fresh = Chat.queue_calls(after_repeat, message("New.", [call("bash", %{"command" => "pwd"})]))
+      assert fresh.invalid_streak == 0
+    end
+
+    test "without tools, a call is answered so, not with an empty list of tools" do
+      no_tools = ctx(%{tools: false})
+      queued = Chat.queue_calls(no_tools, message("", [call("read", %{"path" => "a"})]))
+      assert List.last(queued.turn).content == "error: no tools are available in this turn; answer in text"
+    end
+
+    test "a third step opening with the same sentence gets a nudge" do
+      twice = ctx(%{openings: ["Since the widget hardcodes the style", "Since the widget hardcodes the style"]})
+
+      queued =
+        Chat.queue_calls(
+          twice,
+          message("Since the widget hardcodes the style. Let me grep.", [call("bash", %{"command" => "pwd"})])
+        )
+
+      assert Enum.any?(queued.turn, &(&1.role == "user" and &1.content =~ "going in circles"))
+
+      once = ctx(%{openings: ["Since the widget hardcodes the style"]})
+
+      queued =
+        Chat.queue_calls(
+          once,
+          message("Since the widget hardcodes the style. Again.", [call("bash", %{"command" => "pwd"})])
+        )
+
+      refute Enum.any?(queued.turn, &(&1.role == "user" and &1.content =~ "going in circles"))
+    end
+  end
+
+  describe "stopping and wrapping up" do
+    test "guards: stopped, and passed but stopped" do
+      assert Chat.stopped?(ctx(%{stopped: true}), nil)
+      refute Chat.stopped?(ctx(), nil)
+      assert Chat.passed_but_stopped?(ctx(%{stopped: true}), %{exit_status: 0})
+      refute Chat.passed_but_stopped?(ctx(%{stopped: true}), %{exit_status: 1})
+    end
+
+    test "the wrap-up answer follows the stop notice; an error or an empty reply keeps the notice" do
+      stopped = ctx(%{stopped: true, answer: "Stopped after 3 model turns (max_steps)."})
+      wrapped = Chat.record_wrap_up(stopped, message("Found it; next, edit tui.ex."))
+      assert wrapped.answer == "Stopped after 3 model turns (max_steps).\n\nFound it; next, edit tui.ex."
+      assert Chat.record_wrap_up(stopped, %{error: :timeout}) == stopped
+      assert Chat.record_wrap_up(stopped, message("  ")).answer == stopped.answer
+    end
+
+    test "the wrap-up request asks for a summary without tools, and says why" do
+      [effect] = Chat.ask_wrap_up(ctx(%{stop_reason: :invalid}))
+      assert effect.args.tools == false
+      assert List.last(effect.args.messages).content =~ "could not run"
+
+      [effect] = Chat.ask_wrap_up(ctx(%{stop_reason: :limit}))
+      assert List.last(effect.args.messages).content =~ "used all 3 model turns"
+    end
+
+    test "an empty final answer is noted" do
+      assert Chat.record_answer(ctx(), message("")).answer == "(The model ended this turn without an answer.)"
+    end
+  end
+end

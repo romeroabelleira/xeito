@@ -83,6 +83,8 @@ defmodule Xeito.Tui do
       workspace_at: nil,
       usage: StatusBar.new(),
       cursor_on: true,
+      # A Risk decision waiting for the line it marks: `{colour, confidence in superscript}`.
+      marker: nil,
       blink: 0,
       blink_until: 0
     }
@@ -307,11 +309,37 @@ defmodule Xeito.Tui do
   end
 
   @doc false
+  # A Risk decision is not a line of its own: it marks the line it applies to (the command, or
+  # the review asking about it) with a coloured dot in the gutter, like a breakpoint.
+  def apply_event(state, %{"event" => "decision_made", "attrs" => %{"decision_type" => type} = a} = event)
+      when type in ["Xeito.Decisions.Risk", "Elixir.Xeito.Decisions.Risk"] do
+    track(%{state | usage: StatusBar.count(state.usage, event), marker: risk_marker(a)}, "decision_made", event)
+  end
+
   def apply_event(state, %{"event" => type} = event) do
     %{state | usage: StatusBar.count(state.usage, event)}
     |> track(type, event)
     |> append(Render.line(event))
   end
+
+  @risk_colors %{"safe" => :green, "review" => :yellow, "abstain" => :yellow, "forbidden" => :red}
+
+  # The dot's colour is the decision; beside it, in superscript (a terminal's small font), its
+  # confidence in percent.
+  defp risk_marker(a) do
+    value = to_string(a["value"])
+    conf = if is_number(a["confidence"]), do: round(a["confidence"] * 100)
+    {Map.get(@risk_colors, value, :white), superscript(conf)}
+  end
+
+  defp superscript(nil), do: ""
+
+  defp superscript(n),
+    do:
+      n
+      |> Integer.to_string()
+      |> String.graphemes()
+      |> Enum.map_join(&Enum.at(~w(⁰ ¹ ² ³ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹), String.to_integer(&1)))
 
   defp track(state, "run_selected", %{"attrs" => a}),
     do: %{state | machine: short(a["machine"]), started: now(), decisions: 0, usd: 0.0}
@@ -351,7 +379,8 @@ defmodule Xeito.Tui do
         %{state | partial: first}
 
       {complete, [partial]} ->
-        lines = Enum.take(state.lines ++ [first | complete], -@max_lines)
+        {complete, state} = mark([first | complete], state)
+        lines = Enum.take(state.lines ++ complete, -@max_lines)
         %{state | lines: lines, partial: partial}
     end
   end
@@ -359,9 +388,13 @@ defmodule Xeito.Tui do
   @impl true
   def view(state) do
     bar =
-      if state.bar,
-        do: StatusBar.lines(state.usage, state.monitor, state.workspace, state.hidden),
-        else: []
+      with true <- state.bar,
+           line when line != "" <-
+             StatusBar.line(state.usage, state.monitor, state.workspace, state.hidden, state.width - 1) do
+        [line]
+      else
+        _ -> []
+      end
 
     body_height = max(state.height - 3 - length(bar), 1)
 
@@ -370,21 +403,66 @@ defmodule Xeito.Tui do
         pad(" xeito · #{state.cwd} · #{state.machine || "ready"}", state.width),
         header_style()
       ),
-      stack(:vertical, Enum.map(visible(state, body_height), &text/1)),
+      stack(:vertical, Enum.map(visible(state, body_height), &line_node/1)),
       stack(:horizontal, [
         text("> "),
-        TextInput.render(input_view(state), %{width: state.width - 2, height: 1})
+        input_line(state, state.width - 2)
       ]),
       stack(:vertical, Enum.map(bar, &text(pad(" " <> &1, state.width), bar_style()))),
       text(pad(status_line(state), state.width), status_style(state))
     ])
   end
 
-  # In the blink's off phase the input is drawn from a copy whose cursor row is off-screen, so
-  # TextInput draws no cursor cell; the stored input (and typing) is unaffected.
+  # The input line is drawn here; TermUI's TextInput keeps the text and handles editing. Its own
+  # cursor (reverse video) was easy to miss, and its style cannot be changed, so the typing
+  # position is a solid block in a colour nothing else on screen uses. In the blink's off phase
+  # the cell is drawn plain. Long input scrolls so the cursor stays visible; an empty line shows
+  # the placeholder, dimmed, after the cursor.
+  @placeholder "ask, or /help"
+
   @doc false
-  def input_view(%{cursor_on: true, input: input}), do: input
-  def input_view(%{input: input}), do: %{input | cursor_row: -1}
+  def input_line(state, width) do
+    value = TextInput.get_value(state.input)
+    col = min(state.input.cursor_col, String.length(value))
+    start = max(col - (width - 1), 0)
+    shown = String.slice(value, start, width)
+    {before, rest} = String.split_at(shown, col - start)
+    {at, after_cursor} = if rest == "", do: {" ", ""}, else: String.split_at(rest, 1)
+
+    hint =
+      if value == "",
+        do: [text(" " <> String.slice(@placeholder, 0, max(width - 2, 0)), placeholder_style())],
+        else: []
+
+    stack(
+      :horizontal,
+      [text(before), text(at, if(state.cursor_on, do: cursor_style())), text(after_cursor)] ++ hint
+    )
+  end
+
+  defp cursor_style, do: Style.new(fg: :black, bg: :yellow)
+  defp placeholder_style, do: Style.new(attrs: [:dim])
+
+  # A pending risk marker goes in the gutter of the next complete line that is not a state line
+  # (`· ask_human`): the command, or the review asking about it.
+  defp mark(lines, %{marker: {color, small}} = state) do
+    case Enum.find_index(lines, &(not (&1 |> String.trim_leading() |> String.starts_with?("·")))) do
+      nil ->
+        {lines, state}
+
+      i ->
+        marked = {:marked, color, small, lines |> Enum.at(i) |> String.trim_leading()}
+        {List.replace_at(lines, i, marked), %{state | marker: nil}}
+    end
+  end
+
+  defp mark(lines, state), do: {lines, state}
+
+  @doc false
+  def line_node({:marked, color, small, text}),
+    do: stack(:horizontal, [text("●", Style.new(fg: color)), text(small, Style.new(attrs: [:dim])), text(" " <> text)])
+
+  def line_node(text) when is_binary(text), do: text(text)
 
   defp visible(state, height) do
     lines = state.lines ++ if(state.partial == "", do: [], else: [state.partial])
@@ -416,6 +494,13 @@ defmodule Xeito.Tui do
     cost = if state.usd > 0, do: " · $#{Float.round(state.usd, 4)}", else: ""
 
     " state #{state.leaf}#{elapsed}#{tier} · #{state.decisions} decisions#{cost}#{review}#{scroll}"
+  end
+
+  # A marked line wraps after its gutter; its continuation lines are indented to match.
+  defp wrap({:marked, color, small, text}, width) do
+    gutter = 2 + String.length(small)
+    [first | rest] = wrap(text, max(width - gutter, 1))
+    [{:marked, color, small, first} | Enum.map(rest, &(String.duplicate(" ", gutter) <> &1))]
   end
 
   defp wrap("", _width), do: [""]

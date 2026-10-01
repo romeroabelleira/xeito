@@ -9,8 +9,9 @@
 #     `handle_info/2`;
 #   * every state is rendered with `view/1` for three seconds.
 #
-# It passes when the input's cursor cell (TextInput draws it in reverse video; the header is
-# reverse video too, so it shows as one more reverse-styled node) is drawn in some frames and
+# It passes when the input's cursor cell (TextInput draws it in reverse video, a TUI may draw its
+# own with a background colour; the header is reverse video too, so the cursor shows as one more
+# highlighted node) is drawn in some frames and
 # hidden in others, toggling between 2 and 12 times in three seconds (about 0.3 to 2 Hz), and
 # every frame shows the `> ` marker.
 defmodule Xeito.AcceptanceCursorBlinkTest do
@@ -114,6 +115,8 @@ defmodule Xeito.AcceptanceCursorBlinkTest do
 
   defp frame(state) do
     tree = state |> Xeito.Tui.view() |> inspect(limit: :infinity, printable_limit: :infinity)
-    %{reverse: length(String.split(tree, ":reverse")) - 1, marker: String.contains?(tree, ~s("> "))}
+    # Reverse video (TextInput's cursor) or any background colour (a cursor drawn by the TUI).
+    highlighted = length(String.split(tree, ":reverse")) - 1 + length(String.split(tree, "bg: :")) - 1
+    %{reverse: highlighted, marker: String.contains?(tree, ~s("> "))}
   end
 end
