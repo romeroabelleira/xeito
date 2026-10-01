@@ -1,6 +1,7 @@
 defmodule Xeito.TuiTest do
   use ExUnit.Case, async: true
 
+  alias TermUI.Component.RenderNode
   alias TermUI.Event
   alias TermUI.Widgets.TextInput
   alias Xeito.Client.Config
@@ -442,6 +443,41 @@ defmodule Xeito.TuiTest do
       assert %{leaf: "idle", waiting: false, paused: false, started: nil} = done
       assert Tui.status_line(done) == " state idle · tier rule · 1 decisions"
       assert Tui.apply_event(done, event("disconnected", %{})).leaf == "disconnected"
+    end
+  end
+
+  describe "view/1: the screen" do
+    # The rows a view draws, top to bottom: text for a line, :row for one of several nodes side by side.
+    defp screen(%RenderNode{type: :stack, direction: :vertical, children: children}),
+      do: Enum.flat_map(children, &screen/1)
+
+    defp screen(%RenderNode{type: :text, content: content}), do: [content]
+    defp screen(_horizontal), do: [:row]
+
+    defp border?(row), do: is_binary(row) and row != "" and String.trim(row, "─") == ""
+
+    test "the prompt line sits between two full-width, dim border lines" do
+      state = tui()
+      rows = screen(Tui.view(state))
+      i = Enum.find_index(rows, &border?/1)
+
+      assert [border, :row, border] = Enum.slice(rows, i, 3)
+      assert border == String.duplicate("─", state.width)
+      borders = for %RenderNode{type: :text, content: ^border} = node <- Tui.view(state).children, do: node.style.attrs
+      assert borders == [MapSet.new([:dim]), MapSet.new([:dim])]
+    end
+
+    test "the screen fills the terminal exactly, with or without the status bar" do
+      for bar <- [false, true], height <- [24, 10] do
+        state = %{tui(status_bar: bar) | height: height}
+        assert length(screen(Tui.view(state))) == height, "status bar #{bar}, #{height} rows"
+      end
+    end
+
+    test "the status line stays at the bottom, below the border, and shows a pending review" do
+      rows = %{tui(status_bar: false) | waiting: true} |> Tui.view() |> screen()
+      assert border?(Enum.at(rows, -2))
+      assert List.last(rows) =~ ~r/^ state idle .* review: y \/ n/
     end
   end
 end

@@ -6,12 +6,14 @@ defmodule Xeito.Tui do
       ┌ xeito · ~/src/shop · FixFailingTest ─────────────────────────────┐
       │ transcript (Xeito.Client.Render): intent, decisions, tool calls,  │
       │ streamed model output                                             │
+      │ ───────────────────────────────────────────────────────────────── │
       │ > prompt                                                          │
+      │ ───────────────────────────────────────────────────────────────── │
       │ state verifying · 14.2 s · 3 decisions · review: y/n              │
       └───────────────────────────────────────────────────────────────────┘
 
   A toggleable **status bar** (Ctrl-T, or `/statusbar`; segments with `/statusbar show|hide`,
-  saved in `Xeito.Client.Config`) adds two lines: GPU, model services and
+  saved in `Xeito.Client.Config`) adds one line, above the status line: GPU, model services and
   CPU from the daemon's `Xeito.Monitor`, and the session's usage, determinism budget, spend and
   queues (`Xeito.Client.StatusBar`). While it is hidden, the daemon does not poll for it.
 
@@ -464,7 +466,8 @@ defmodule Xeito.Tui do
         _ -> []
       end
 
-    body_height = max(state.height - 3 - length(bar), 1)
+    # The header, the prompt line between its two borders, the bar and the status line.
+    body_height = max(state.height - 5 - length(bar), 1)
 
     stack(:vertical, [
       text(
@@ -472,10 +475,12 @@ defmodule Xeito.Tui do
         header_style()
       ),
       stack(:vertical, Enum.map(visible(state, body_height), &line_node/1)),
+      border(state.width),
       stack(:horizontal, [
         text("> "),
         input_line(state, state.width - 2)
       ]),
+      border(state.width),
       stack(:vertical, Enum.map(bar, &text(pad(" " <> &1, state.width), bar_style()))),
       text(pad(status_line(state), state.width), status_style(state))
     ])
@@ -581,6 +586,8 @@ defmodule Xeito.Tui do
   end
 
   defp pad(text, width), do: text |> String.slice(0, width) |> String.pad_trailing(width)
+
+  defp border(width), do: text(String.duplicate("─", width), Style.new(attrs: [:dim]))
 
   defp header_style, do: Style.new(attrs: [:reverse])
   defp bar_style, do: Style.new(fg: :cyan)

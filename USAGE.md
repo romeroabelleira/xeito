@@ -91,7 +91,7 @@ mix xeito.tui --cwd ~/src/my-project
 The screen has four parts:
 - a header with the project and the active machine
 - the transcript
-- the prompt line
+- the prompt line, between two thin lines
 - a status line with state, elapsed time, tier, number of decisions and spend
 
 Type a request and press Enter:
