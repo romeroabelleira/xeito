@@ -113,4 +113,48 @@ defmodule Xeito.ChatMachineTest do
       assert about("write", %{"path" => "a", "content" => "b"}) == "write result"
     end
   end
+
+  describe "guards on a model message" do
+    defp bad, do: message("", [call("no_such_tool", %{})])
+    defp good, do: message("", [call("bash", %{"command" => "ls"})])
+
+    test "only invalid calls: there are calls, and none of them is valid" do
+      refute Chat.only_invalid_calls?(ctx(), message("Done."))
+      refute Chat.only_invalid_calls?(ctx(), good())
+      assert Chat.only_invalid_calls?(ctx(), bad())
+    end
+
+    test "invalid again: only invalid calls right after a step with only invalid calls" do
+      refute Chat.invalid_again?(ctx(), bad())
+      refute Chat.invalid_again?(ctx(%{invalid_streak: 1}), good())
+      assert Chat.invalid_again?(ctx(%{invalid_streak: 1}), bad())
+    end
+
+    test "invalid again after an edit, which then still gets its checks" do
+      edited = %{edited: true, verify: "mix test"}
+      refute Chat.invalid_again_edited?(ctx(%{invalid_streak: 1}), bad())
+      refute Chat.invalid_again_edited?(ctx(edited), bad())
+      assert Chat.invalid_again_edited?(ctx(Map.put(edited, :invalid_streak, 1)), bad())
+    end
+
+    test "calls on the last allowed step stop instead of running" do
+      refute Chat.calls_at_limit?(ctx(%{max_steps: 5, steps: 4}), message("Done."))
+      refute Chat.calls_at_limit?(ctx(%{max_steps: 5, steps: 3}), good())
+      assert Chat.calls_at_limit?(ctx(%{max_steps: 5, steps: 4}), good())
+    end
+
+    test "the step limit is reached at max_steps" do
+      refute Chat.step_limit?(ctx(%{max_steps: 5, steps: 4}), nil)
+      assert Chat.step_limit?(ctx(%{max_steps: 5, steps: 5}), nil)
+    end
+
+    test "a model call sends the system prompt and the prompt first, then the turn so far" do
+      [first] = Chat.ask_model(ctx(%{system: "S"}))
+      assert [%{role: "system", content: "S"}, %{role: "user", content: "p"}] = first.args.messages
+
+      turn = [%{role: "system", content: "S"}, %{role: "user", content: "p"}, %{role: "assistant", content: "a"}]
+      [later] = Chat.ask_model(ctx(%{turn: turn}))
+      assert later.args.messages == turn
+    end
+  end
 end

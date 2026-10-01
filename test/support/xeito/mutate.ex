@@ -106,16 +106,51 @@ defmodule Xeito.Mutate do
       "#{result.path}:#{result.line}  #{result.description}  #{source_lines |> Enum.at(result.line - 1, "") |> String.trim()}"
 
   @doc """
-  The sources to mutate and the tests to run against them, from the given `paths` and `tests`
-  and the configuration (`%{source => [test file]}`, `test/mutate.exs`). Without paths, every
-  configured source; without tests, the configured ones (an empty list means: find them).
+  What to mutate: `{source, section or nil, test files}` for the given `paths` and `tests` and the
+  configuration (`test/mutate.exs`): `%{source => [test file]}`, or
+  `%{source => [tests: [...], section: name]}` for one section of it. Without paths, every
+  configured source; without tests, each source's configured ones (an empty list means: find
+  them). Each source runs only its own tests, so the configuration says what covers it.
   """
-  @spec plan([Path.t()], [Path.t()], %{Path.t() => [Path.t()]}) :: {[Path.t()], [Path.t()]}
-  def plan([], [], config), do: {config |> Map.keys() |> Enum.sort(), tests_of(Map.keys(config), config)}
-  def plan(paths, [], config), do: {paths, tests_of(paths, config)}
-  def plan(paths, tests, _config), do: {paths, tests}
+  @spec plan([Path.t()], [Path.t()], map()) :: [{Path.t(), String.t() | nil, [Path.t()]}]
+  def plan([], [], config), do: config |> Map.keys() |> Enum.sort() |> plan([], config)
 
-  defp tests_of(paths, config), do: paths |> Enum.flat_map(&Map.get(config, &1, [])) |> Enum.uniq() |> Enum.sort()
+  def plan(paths, tests, config) do
+    for path <- paths do
+      entry = entry(config, path)
+      {path, entry[:section], if(tests == [], do: Enum.sort(entry[:tests] || []), else: tests)}
+    end
+  end
+
+  defp entry(config, path) do
+    case Map.get(config, path, []) do
+      [{:tests, _} | _] = entry -> entry
+      [{:section, _} | _] = entry -> entry
+      tests -> [tests: tests]
+    end
+  end
+
+  @doc """
+  The lines of a section: from its marker comment (`# --- name ---`) to the line before the next
+  marker, or the end of the file.
+  """
+  @spec section_lines(String.t(), String.t()) :: Range.t()
+  def section_lines(source, name) do
+    lines = String.split(source, "\n")
+    markers = for {line, n} <- Enum.with_index(lines, 1), marker = marker(line), do: {marker, n}
+
+    case Enum.split_while(markers, fn {marker, _} -> marker != name end) do
+      {_, [{_, first} | rest]} -> first..(if(rest == [], do: length(lines) + 1, else: elem(hd(rest), 1)) - 1)
+      {_, []} -> raise ArgumentError, "no section #{inspect(name)} (a `# --- #{name} ---` comment)"
+    end
+  end
+
+  defp marker(line) do
+    case Regex.run(~r/^\s*# --- (.+?) -*\s*$/, line) do
+      [_, name] -> name
+      nil -> nil
+    end
+  end
 
   @doc "The modules a source file defines, by full name (nested modules included)."
   @spec modules(String.t()) :: [String.t()]

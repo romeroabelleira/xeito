@@ -174,16 +174,31 @@ defmodule Xeito.MutateTest do
   end
 
   describe "plan/3: which sources to mutate, against which tests" do
-    @config %{"lib/a.ex" => ["test/a_test.exs"], "lib/b.ex" => ["test/b_test.exs", "test/a_test.exs"]}
+    @config %{
+      "lib/a.ex" => ["test/a_test.exs"],
+      "lib/b.ex" => ["test/b_test.exs", "test/a_test.exs"],
+      "lib/c.ex" => [tests: ["test/c_test.exs"], section: "guards"]
+    }
 
-    test "without paths, the configured sources and all their tests" do
-      assert Mutate.plan([], [], @config) == {["lib/a.ex", "lib/b.ex"], ["test/a_test.exs", "test/b_test.exs"]}
+    test "without paths, each configured source with its section and its own tests" do
+      assert Mutate.plan([], [], @config) == [
+               {"lib/a.ex", nil, ["test/a_test.exs"]},
+               {"lib/b.ex", nil, ["test/a_test.exs", "test/b_test.exs"]},
+               {"lib/c.ex", "guards", ["test/c_test.exs"]}
+             ]
     end
 
     test "given paths use the given tests, else their configured ones, else none (to be found)" do
-      assert Mutate.plan(["lib/x.ex"], ["test/x_test.exs"], @config) == {["lib/x.ex"], ["test/x_test.exs"]}
-      assert Mutate.plan(["lib/b.ex"], [], @config) == {["lib/b.ex"], ["test/a_test.exs", "test/b_test.exs"]}
-      assert Mutate.plan(["lib/x.ex"], [], @config) == {["lib/x.ex"], []}
+      assert Mutate.plan(["lib/x.ex"], ["test/x_test.exs"], @config) == [{"lib/x.ex", nil, ["test/x_test.exs"]}]
+      assert Mutate.plan(["lib/c.ex"], [], @config) == [{"lib/c.ex", "guards", ["test/c_test.exs"]}]
+      assert Mutate.plan(["lib/x.ex"], [], @config) == [{"lib/x.ex", nil, []}]
     end
+  end
+
+  test "section_lines/2: from a section's marker comment to the next one, or the end" do
+    source = "defmodule M do\n  # --- guards ----\n  def a, do: 1\n\n  # --- actions ---\n  def b, do: 2\nend\n"
+    assert Mutate.section_lines(source, "guards") == 2..4
+    assert Mutate.section_lines(source, "actions") == 5..8
+    assert_raise ArgumentError, ~r/no section "nope"/, fn -> Mutate.section_lines(source, "nope") end
   end
 end

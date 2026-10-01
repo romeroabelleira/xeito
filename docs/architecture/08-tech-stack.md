@@ -154,6 +154,11 @@ Style is settled by tools, not by review:
   - a clause removed from a multi-clause function or from a `case`, `cond` or `fn`;
   - an element removed from a literal list, a word from a `~w` sigil, including constants in module attributes.
   
-  The sources in `test/mutate.exs`, security and decision logic first, are held to zero survivors; `mix ci` runs them (seconds, not minutes). Other files can be checked by hand: `mix xeito.mutate PATH`.
+  The sources in `test/mutate.exs` are held to zero survivors; `mix ci` runs them (seconds, not minutes):
+  - Risk, Policy, Budget, and the chat machine's guards (an entry can name one `# --- section ---` of a file).
+  - Each source runs only the tests listed for it, so the list says truthfully what covers it.
+  - A mutant that cannot change behaviour (an *equivalent* mutant) usually marks dead code: remove the code rather than excuse the mutant.
+  
+  Other files can be checked by hand: `mix xeito.mutate PATH`.
 
 Styler is pinned to a minor version (`~> 1.12.2`), so new rewrites arrive only through a deliberate upgrade. On an upgrade, run `mix format` across the project, read the diff, and update the disabled list in `.credo.exs` from Styler's docs. A few Styler rewrites can change behaviour (its README lists them), so the tests must pass on the rewritten code before it is committed.

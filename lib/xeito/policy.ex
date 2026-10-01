@@ -46,7 +46,7 @@ defmodule Xeito.Policy do
   def for_type(%Type{} = type, opts \\ []) do
     @defaults
     |> Map.merge(Map.new(Application.get_env(:xeito, :policy, [])))
-    |> Map.merge(Map.new(type.policy || []))
+    |> Map.merge(Map.new(type.policy))
     |> Map.merge(Map.new(Keyword.get(opts, :policy, [])))
     |> enforce_type(type)
   end
@@ -64,7 +64,7 @@ defmodule Xeito.Policy do
 
   # A type-level :forbidden cannot be relaxed by configuration or request options.
   defp enforce_type(policy, type) do
-    if Keyword.get(type.policy || [], :remote) == :forbidden,
+    if Keyword.get(type.policy, :remote) == :forbidden,
       do: %{policy | remote: :forbidden},
       else: policy
   end

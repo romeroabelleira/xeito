@@ -77,4 +77,30 @@ defmodule Xeito.PolicyTest do
     assert {0, 2} = Agent.get(counter, & &1)
     assert Queue.status(:test_tier) == {0, 0}
   end
+
+  test "by default only configured tiers are available" do
+    assert Policy.plan(Policy.for_type(Decision.type!(Triage)), [:no_such_tier]) == [:rules]
+  end
+
+  test "off-box spend is allowed below the per-run limit, not at it" do
+    open =
+      Policy.for_type(Decision.type!(Triage), policy: [remote: :allowed, locality: :public, max_usd_per_run: 0.5])
+
+    run = "policy-usd-#{System.unique_integer([:positive])}"
+    assert Policy.remote_allowed?(open, nil)
+    Budget.add(run, :usd, 0.25)
+    assert Policy.remote_allowed?(open, run)
+    Budget.add(run, :usd, 0.25)
+    refute Policy.remote_allowed?(open, run)
+  end
+
+  test "large-model swaps are allowed below the per-run limit, not at it" do
+    policy = Policy.for_type(Decision.type!(Triage), policy: [max_swaps_per_run: 2])
+    run = "policy-swaps-#{System.unique_integer([:positive])}"
+    assert Policy.swap_allowed?(policy, nil)
+    Budget.add(run, :swaps, 1)
+    assert Policy.swap_allowed?(policy, run)
+    Budget.add(run, :swaps, 1)
+    refute Policy.swap_allowed?(policy, run)
+  end
 end
