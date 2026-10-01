@@ -1,9 +1,14 @@
 defmodule Xeito.DecisionTest do
   use ExUnit.Case, async: true
 
-  alias Xeito.{Decider, Decision}
-  alias Xeito.Decision.{Eval, Prompt, Scoring, Type}
-  alias Xeito.Decisions.{Risk, Triage}
+  alias Xeito.Decider
+  alias Xeito.Decision
+  alias Xeito.Decision.Eval
+  alias Xeito.Decision.Prompt
+  alias Xeito.Decision.Scoring
+  alias Xeito.Decision.Type
+  alias Xeito.Decisions.Risk
+  alias Xeito.Decisions.Triage
 
   defp compile(body) do
     name = "Xeito.DecisionTest.D#{System.unique_integer([:positive])}"
@@ -67,7 +72,7 @@ defmodule Xeito.DecisionTest do
   describe "Prompt" do
     test "the JSON schema is a closed enum with the value first and no rationale" do
       schema = Prompt.json_schema(Decision.type!(Triage))
-      assert schema["properties"] |> Map.keys() == ["value"]
+      assert Map.keys(schema["properties"]) == ["value"]
 
       assert schema["properties"]["value"]["enum"] == [
                "flaky",

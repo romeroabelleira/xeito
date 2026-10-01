@@ -36,13 +36,8 @@ defmodule Xeito.Decisions.Intent do
 
   @doc false
   def run_tests?(%{message: message}),
-    do:
-      Regex.match?(
-        ~r/\A\s*(please\s+)?run\s+(the\s+|all\s+)?(tests?|test suite|specs?)[\s.!]*\z/i,
-        message
-      )
+    do: Regex.match?(~r/\A\s*(please\s+)?run\s+(the\s+|all\s+)?(tests?|test suite|specs?)[\s.!]*\z/i, message)
 
   @doc false
-  def slash_run?(%{message: message}),
-    do: String.starts_with?(String.trim_leading(message), "/run ")
+  def slash_run?(%{message: message}), do: String.starts_with?(String.trim_leading(message), "/run ")
 end

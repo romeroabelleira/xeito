@@ -1,16 +1,20 @@
 defmodule Xeito.TiersTest do
   use ExUnit.Case, async: true
 
-  alias Xeito.{Decider, Decision}
+  alias Xeito.Decider
+  alias Xeito.Decision
   alias Xeito.Decisions.Triage
-  alias Xeito.Tiers.{Large, OpenRouter, Remote, Small, SystemOne}
+  alias Xeito.Tiers.Large
+  alias Xeito.Tiers.OpenRouter
+  alias Xeito.Tiers.Remote
+  alias Xeito.Tiers.Small
+  alias Xeito.Tiers.SystemOne
 
   @input %{test: "CheckoutTest", output: "left: 107.0 right: 108.0", diff_stat: "lib/pricing.ex"}
 
   defp type, do: Decision.type!(Triage)
 
-  defp cfg(stub, extra \\ []),
-    do: [url: "http://tier.test", api_key: "k", plug: {Req.Test, stub}] ++ extra
+  defp cfg(stub, extra \\ []), do: [url: "http://tier.test", api_key: "k", plug: {Req.Test, stub}] ++ extra
 
   defp body(conn) do
     {:ok, raw, conn} = Plug.Conn.read_body(conn)
@@ -67,8 +71,7 @@ defmodule Xeito.TiersTest do
           Req.Test.json(conn, %{
             "completion_probabilities" => [
               %{
-                "top_logprobs" =>
-                  Enum.map(tops, fn {t, p} -> %{"token" => t, "logprob" => :math.log(p)} end)
+                "top_logprobs" => Enum.map(tops, fn {t, p} -> %{"token" => t, "logprob" => :math.log(p)} end)
               }
             ]
           })
@@ -86,7 +89,7 @@ defmodule Xeito.TiersTest do
   test "Large reads logprobs at the value position" do
     Req.Test.stub(:ollama, fn conn ->
       {req, conn} = body(conn)
-      assert req["format"]["properties"]["value"]["enum"] |> length() == 4
+      assert length(req["format"]["properties"]["value"]["enum"]) == 4
       assert req["logprobs"] == true
 
       tokens = [
@@ -106,8 +109,7 @@ defmodule Xeito.TiersTest do
             %{
               "token" => t,
               "logprob" => -0.01,
-              "top_logprobs" =>
-                Enum.map(tops, fn {tt, p} -> %{"token" => tt, "logprob" => :math.log(p)} end)
+              "top_logprobs" => Enum.map(tops, fn {tt, p} -> %{"token" => tt, "logprob" => :math.log(p)} end)
             }
           end)
       })
@@ -136,7 +138,7 @@ defmodule Xeito.TiersTest do
       assert req["output_config"]["effort"] == "low"
       assert req["output_config"]["format"]["type"] == "json_schema"
 
-      assert req["output_config"]["format"]["schema"]["properties"]["value"]["enum"] |> length() ==
+      assert length(req["output_config"]["format"]["schema"]["properties"]["value"]["enum"]) ==
                4
 
       Req.Test.json(conn, %{
@@ -190,8 +192,7 @@ defmodule Xeito.TiersTest do
       assert req["response_format"]["type"] == "json_schema"
       assert req["response_format"]["json_schema"]["strict"] == true
 
-      assert req["response_format"]["json_schema"]["schema"]["properties"]["value"]["enum"]
-             |> length() == 4
+      assert length(req["response_format"]["json_schema"]["schema"]["properties"]["value"]["enum"]) == 4
 
       assert req["logprobs"] == true and req["top_logprobs"] == 20
       assert req["temperature"] == 0
@@ -238,8 +239,7 @@ defmodule Xeito.TiersTest do
       })
     end)
 
-    assert {:ok,
-            %{value: :flaky, confidence: nil, terminal: true, model: "openrouter:some/model"}} =
+    assert {:ok, %{value: :flaky, confidence: nil, terminal: true, model: "openrouter:some/model"}} =
              OpenRouter.decide(type(), @input, cfg(:openrouter_plain, model: "some/model"))
 
     Req.Test.stub(:openrouter_refusal, fn conn ->
@@ -297,9 +297,7 @@ defmodule Xeito.TiersTest do
 
     test "rules decide before any tier" do
       decision =
-        Decider.decide(Triage, %{test: "t", output: "** (Mix) could not be found"},
-          deciders: [:system_one]
-        )
+        Decider.decide(Triage, %{test: "t", output: "** (Mix) could not be found"}, deciders: [:system_one])
 
       assert %Decision{value: :env_problem, actor: :rule, confidence: 1.0} = decision
     end

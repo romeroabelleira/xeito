@@ -41,8 +41,7 @@ defmodule Xeito.Client.Config do
     end
   end
 
-  defp deep_merge(a, b) when is_map(a) and is_map(b),
-    do: Map.merge(a, b, fn _k, x, y -> deep_merge(x, y) end)
+  defp deep_merge(a, b) when is_map(a) and is_map(b), do: Map.merge(a, b, fn _k, x, y -> deep_merge(x, y) end)
 
   defp deep_merge(_a, b), do: b
 end

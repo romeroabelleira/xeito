@@ -33,9 +33,22 @@ defmodule Xeito.Session do
 
   use GenServer
 
-  alias Xeito.{Budget, Escalation, Events, Log, Policy, Run, RunSupervisor, Skills}
-  alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
-  alias Xeito.Session.{Git, Router}
+  alias Xeito.Budget
+  alias Xeito.Escalation
+  alias Xeito.Events
+  alias Xeito.Log
+  alias Xeito.Machines.Chat
+  # --- client API ----------------------------------------------------------------------------
+  alias Xeito.Machines.Check
+  alias Xeito.Machines.Commit
+  alias Xeito.Machines.FixFailingTest
+  alias Xeito.Machines.RunTests
+  alias Xeito.Policy
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
+  alias Xeito.Session.Git
+  alias Xeito.Session.Router
+  alias Xeito.Skills
   alias Xeito.Source.RepoMap
 
   # The history window trims with slack: past 80 messages it drops back to 60, so its first
@@ -45,8 +58,6 @@ defmodule Xeito.Session do
   @max_history 80
   @trimmed_history 60
   @agents_max_bytes 16_384
-
-  # --- client API ----------------------------------------------------------------------------
 
   @doc """
   Starts a session. Options: `:cwd` (workspace, required), `:id`, `:log` (default: the
@@ -71,12 +82,9 @@ defmodule Xeito.Session do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: via(opts[:id]))
 
   @doc false
-  def child_spec(opts),
-    do: %{
-      id: {__MODULE__, opts[:id]},
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :temporary
-    }
+  def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}, restart: :temporary}
+
+  # --- server --------------------------------------------------------------------------------
 
   @doc "Subscribes the caller to the session's events."
   @spec subscribe(String.t()) :: :ok
@@ -115,8 +123,6 @@ defmodule Xeito.Session do
   def topic(id), do: "session:" <> id
 
   defp via(id), do: {:via, Registry, {Xeito.SessionRegistry, id}}
-
-  # --- server --------------------------------------------------------------------------------
 
   @impl true
   def init(opts) do
@@ -160,8 +166,7 @@ defmodule Xeito.Session do
 
   defp now, do: System.monotonic_time(:millisecond)
 
-  defp schedule_idle_check(s),
-    do: Process.send_after(self(), :idle_check, max(div(s.idle_timeout, 4), 10))
+  defp schedule_idle_check(s), do: Process.send_after(self(), :idle_check, max(div(s.idle_timeout, 4), 10))
 
   defp busy?(s), do: s.root != nil or s.waiting != nil or s.paused != nil
 
@@ -233,8 +238,7 @@ defmodule Xeito.Session do
     end
   end
 
-  defp handle_request({:human, _answer}, _from, %{waiting: nil} = s),
-    do: {:reply, {:error, :nothing_to_approve}, s}
+  defp handle_request({:human, _answer}, _from, %{waiting: nil} = s), do: {:reply, {:error, :nothing_to_approve}, s}
 
   defp handle_request({:human, answer}, _from, s) do
     case answer_human(s.waiting.run, answer) do
@@ -261,6 +265,7 @@ defmodule Xeito.Session do
 
   defp handle_request(:workspace, _from, s) do
     attrs = workspace_attrs(s)
+    # --- prompts -------------------------------------------------------------------------------
     emit(s, "workspace", nil, attrs)
     {:reply, attrs, s}
   end
@@ -320,8 +325,7 @@ defmodule Xeito.Session do
   # crash records nothing; the next time the workspace log opens, it marks the session
   # `interrupted` (`Xeito.Log`).
   @impl true
-  def terminate(reason, s)
-      when reason in [:normal, :shutdown] or (is_tuple(reason) and elem(reason, 0) == :shutdown) do
+  def terminate(reason, s) when reason in [:normal, :shutdown] or (is_tuple(reason) and elem(reason, 0) == :shutdown) do
     Budget.delete(s.id)
     Log.put_object(s.log, s.id, "session", %{status: "closed"}, "status")
   catch
@@ -329,8 +333,6 @@ defmodule Xeito.Session do
   end
 
   def terminate(_reason, s), do: Budget.delete(s.id)
-
-  # --- prompts -------------------------------------------------------------------------------
 
   defp decide_intent(text, s) do
     me = self()
@@ -349,8 +351,7 @@ defmodule Xeito.Session do
     %{s | root: :deciding}
   end
 
-  defp command(command, s),
-    do: command(String.split(command, ~r/\s+/, parts: 2) ++ [""], command, s)
+  defp command(command, s), do: command(String.split(command, ~r/\s+/, parts: 2) ++ [""], command, s)
 
   defp command(["machine", rest | _], _raw, s), do: machine_command(rest, s)
   defp command(["skill:" <> name, rest | _], _raw, s), do: skill_command(name, rest, s)
@@ -369,8 +370,7 @@ defmodule Xeito.Session do
   defp command(["next" | _], _raw, s), do: step(:next, s)
   defp command(["decide", value | _], _raw, s) when value != "", do: step({:decide, value}, s)
 
-  defp command(["break", "clear" | _], _raw, s),
-    do: set_debug(%{s.debug | breakpoints: []}, s)
+  defp command(["break", "clear" | _], _raw, s), do: set_debug(%{s.debug | breakpoints: []}, s)
 
   defp command(["break", spec | _], _raw, s) when spec != "", do: add_breakpoint(spec, s)
   defp command(_parts, raw, s), do: error(s, "unknown command /#{raw}; try /help")
@@ -410,8 +410,7 @@ defmodule Xeito.Session do
     end
   end
 
-  defp human_command(answer, %{waiting: nil} = s),
-    do: error(s, "nothing is waiting for #{answer}")
+  defp human_command(answer, %{waiting: nil} = s), do: error(s, "nothing is waiting for #{answer}")
 
   defp human_command(answer, s) do
     case answer_human(s.waiting.run, answer) do
@@ -425,6 +424,7 @@ defmodule Xeito.Session do
   @fallback %{approved: :answered, denied: :abort}
 
   defp answer_human(run, answer) do
+    # --- run tracking --------------------------------------------------------------------------
     with :ignored <- Run.send_event(run, answer, %{}, :human),
          :ignored <- Run.send_event(run, @fallback[answer], %{}, :human) do
       :ignored
@@ -453,11 +453,9 @@ defmodule Xeito.Session do
 
   defp input_for(Commit, text, s), do: %{cwd: s.cwd, request: text}
 
-  defp input_for(Check, _text, s),
-    do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
+  defp input_for(Check, _text, s), do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
 
-  defp input_for(FixFailingTest, _text, s),
-    do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
+  defp input_for(FixFailingTest, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
 
   defp input_for(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
 
@@ -491,7 +489,7 @@ defmodule Xeito.Session do
     end
   end
 
-  # --- run tracking --------------------------------------------------------------------------
+  # --- step mode -----------------------------------------------------------------------------
 
   defp track(run_id, %{type: "state_entered", attrs: %{"state" => :ask_human}}, s) do
     waiting = %{run: run_id, call: pending_call(run_id)}
@@ -510,7 +508,7 @@ defmodule Xeito.Session do
     # `turn_finished` is the turn's last event and nothing (git) still runs in the workspace
     # once a client sees it.
     emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
-    emit(s, "turn_finished", run_id, Map.merge(event.attrs, %{"answer" => answer}))
+    emit(s, "turn_finished", run_id, Map.put(event.attrs, "answer", answer))
 
     %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer)}
   end
@@ -524,8 +522,7 @@ defmodule Xeito.Session do
   defp track(run_id, %{type: "run_finished"}, s),
     do: %{s | live: MapSet.delete(s.live, run_id), paused: unpause(s.paused, run_id)}
 
-  defp track(run_id, %{type: type}, s) when type != "delta",
-    do: %{s | paused: unpause(s.paused, run_id)}
+  defp track(run_id, %{type: type}, s) when type != "delta", do: %{s | paused: unpause(s.paused, run_id)}
 
   defp track(_run_id, _event, s), do: s
 
@@ -547,10 +544,7 @@ defmodule Xeito.Session do
     }
   end
 
-  defp internal?(run_id),
-    do: String.ends_with?(run_id, "/esc") or String.ends_with?(run_id, "/intent")
-
-  # --- step mode -----------------------------------------------------------------------------
+  defp internal?(run_id), do: String.ends_with?(run_id, "/esc") or String.ends_with?(run_id, "/intent")
 
   defp set_debug(debug, s) do
     Enum.each(s.live, &debug_run(&1, debug))
@@ -629,7 +623,7 @@ defmodule Xeito.Session do
     :exit, _ -> nil
   end
 
-  defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || Map.get(ctx, :error) |> to_text()
+  defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || ctx |> Map.get(:error) |> to_text()
 
   defp answer(FixFailingTest, %{state: state, ctx: ctx}) do
     fix = get_in(ctx, [:fix, :answer])
@@ -640,7 +634,7 @@ defmodule Xeito.Session do
     ctx = Map.get(result, :ctx, %{})
 
     Map.get(ctx, :answer) ||
-      to_text(Map.get(ctx, :error)) |> default("#{inspect(machine)} ended in #{state}")
+      ctx |> Map.get(:error) |> to_text() |> default("#{inspect(machine)} ended in #{state}")
   end
 
   defp default("", fallback), do: fallback
@@ -651,17 +645,13 @@ defmodule Xeito.Session do
   defp to_text(other), do: inspect(other)
 
   # Chat turns keep their full message list; other machines leave a short exchange.
-  defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer),
-    do: window(messages)
+  defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer), do: window(messages)
 
   defp remember(s, _result, answer) do
-    (s.history ++
-       [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
-    |> window()
+    window(s.history ++ [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
   end
 
-  defp window(messages) when length(messages) > @max_history,
-    do: Enum.take(messages, -@trimmed_history)
+  defp window(messages) when length(messages) > @max_history, do: Enum.take(messages, -@trimmed_history)
 
   defp window(messages), do: messages
 
@@ -683,6 +673,7 @@ defmodule Xeito.Session do
         [s.id <> "/%"]
       )
 
+    # --- context -------------------------------------------------------------------------------
     lines =
       for [type, value, conf, actor, model, ms] <- own ++ rows do
         "#{String.replace_prefix(type, "Xeito.Decisions.", "")}: #{value} by #{actor} " <>
@@ -706,7 +697,7 @@ defmodule Xeito.Session do
   defp budget(usd, s) do
     case Float.parse(usd) do
       {value, _} when value >= 0 ->
-        policy = Keyword.merge(Keyword.get(s.decider, :policy, []), max_usd_per_run: value)
+        policy = Keyword.put(Keyword.get(s.decider, :policy, []), :max_usd_per_run, value)
         s = %{s | decider: Keyword.put(s.decider, :policy, policy)}
         notice(s, "off-box budget per run: $#{value}")
 
@@ -769,10 +760,7 @@ defmodule Xeito.Session do
     s
   end
 
-  defp emit(s, type, run, attrs),
-    do: Events.notify(topic(s.id), %{type: type, run: run, attrs: attrs})
-
-  # --- context -------------------------------------------------------------------------------
+  defp emit(s, type, run, attrs), do: Events.notify(topic(s.id), %{type: type, run: run, attrs: attrs})
 
   @doc false
   def system_prompt(cwd) do
@@ -786,6 +774,5 @@ defmodule Xeito.Session do
     end
   end
 
-  defp new_id,
-    do: "ses-" <> Base.encode32(:crypto.strong_rand_bytes(8), case: :lower, padding: false)
+  defp new_id, do: "ses-" <> Base.encode32(:crypto.strong_rand_bytes(8), case: :lower, padding: false)
 end

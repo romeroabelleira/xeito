@@ -20,7 +20,8 @@ defmodule Xeito.Decision.Eval do
   its accuracy is within `margin` of the large tier and at least `margin` above the static rule.
   """
 
-  alias Xeito.{Decider, Decision}
+  alias Xeito.Decider
+  alias Xeito.Decision
   alias Xeito.Decision.Type
 
   @doc "Loads the labelled examples of a decision type."
@@ -223,8 +224,8 @@ defmodule Xeito.Decision.Eval do
     baseline = get_in(metrics_by_decider, [:baseline, :accuracy])
 
     for candidate <- [:system_one, :small], m = metrics_by_decider[candidate], m != nil do
-      vs_large = if large, do: m.accuracy >= large - margin, else: nil
-      vs_baseline = if baseline, do: m.accuracy >= baseline + margin, else: nil
+      vs_large = if large, do: m.accuracy >= large - margin
+      vs_baseline = if baseline, do: m.accuracy >= baseline + margin
 
       %{
         candidate: candidate,

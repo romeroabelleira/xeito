@@ -1,5 +1,6 @@
 defmodule XeitoTest do
   use ExUnit.Case, async: true
+
   doctest Xeito
 
   test "every top-level namespace is a loadable, documented module" do

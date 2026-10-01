@@ -15,8 +15,9 @@ defmodule Xeito.Decider do
   step 2 in P3.
   """
 
-  alias Xeito.{Decision, Tiers}
+  alias Xeito.Decision
   alias Xeito.Decision.Type
+  alias Xeito.Tiers
 
   @doc """
   Decides `type_module` for `input`. Options: `:deciders` (tier list), `:tiers` (config
@@ -163,12 +164,9 @@ defmodule Xeito.Decider do
   defp apply_floor(decision, %Type{severity: nil}), do: decision
 
   # The floor bounds what a *model* may decide. Rules and humans are authoritative.
-  defp apply_floor(%Decision{actor: actor} = decision, _type) when actor in [:rule, :human],
-    do: decision
+  defp apply_floor(%Decision{actor: actor} = decision, _type) when actor in [:rule, :human], do: decision
 
-  defp apply_floor(%Decision{value: value} = decision, %Type{
-         severity: %{order: order, floor: floor}
-       }) do
+  defp apply_floor(%Decision{value: value} = decision, %Type{severity: %{order: order, floor: floor}}) do
     raised =
       if value == :abstain,
         do: floor,

@@ -46,8 +46,7 @@ defmodule Xeito.Decision.Type do
 
   @doc "Maps a string produced by a model back to one of the type's values."
   @spec cast(t(), String.t() | atom()) :: {:ok, atom()} | :error
-  def cast(type, value) when is_atom(value),
-    do: if(value in values(type), do: {:ok, value}, else: :error)
+  def cast(type, value) when is_atom(value), do: if(value in values(type), do: {:ok, value}, else: :error)
 
   def cast(type, value) when is_binary(value) do
     case Enum.find(values(type), &(Atom.to_string(&1) == value)) do
@@ -80,10 +79,8 @@ defmodule Xeito.Decision.Type do
   @doc "A stable hash of the type version and normalised input (cache and replay key)."
   @spec input_hash(t(), map()) :: String.t()
   def input_hash(type, normalized) do
-    :crypto.hash(
-      :sha256,
-      :erlang.term_to_binary({type.name, type.version, Enum.sort(normalized)})
-    )
+    :sha256
+    |> :crypto.hash(:erlang.term_to_binary({type.name, type.version, Enum.sort(normalized)}))
     |> Base.encode16(case: :lower)
     |> binary_part(0, 16)
   end
@@ -95,9 +92,7 @@ defmodule Xeito.Decision.Type do
   defp truncate(text, %{max_bytes: max}) when byte_size(text) <= max, do: text
   defp truncate(text, %{max_bytes: max, keep: :head}), do: valid_utf8(binary_part(text, 0, max))
 
-  defp truncate(text, %{max_bytes: max, keep: :tail}),
-    do: valid_utf8(binary_part(text, byte_size(text) - max, max))
+  defp truncate(text, %{max_bytes: max, keep: :tail}), do: valid_utf8(binary_part(text, byte_size(text) - max, max))
 
-  defp valid_utf8(bin),
-    do: bin |> String.chunk(:valid) |> Enum.filter(&String.valid?/1) |> Enum.join()
+  defp valid_utf8(bin), do: bin |> String.chunk(:valid) |> Enum.filter(&String.valid?/1) |> Enum.join()
 end

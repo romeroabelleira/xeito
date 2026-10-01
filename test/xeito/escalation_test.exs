@@ -2,15 +2,21 @@ defmodule Xeito.EscalationTest do
   # Tier calls happen inside supervised effect tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.{Budget, Escalation, Log, Run, RunSupervisor}
-  alias Xeito.Decisions.{Risk, Triage}
+  alias Xeito.Budget
+  alias Xeito.Decisions.Risk
+  alias Xeito.Decisions.Triage
+
+  # --- stubs -------------------------------------------------------------------------------
+
+  alias Xeito.Escalation
+  alias Xeito.Log
   alias Xeito.Machines.FixFailingTest
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
 
   setup {Req.Test, :set_req_test_to_shared}
 
   @input %{test: "CheckoutTest", output: "left: 107.0 right: 108.0", diff_stat: "lib/pricing.ex"}
-
-  # --- stubs -------------------------------------------------------------------------------
 
   defp small(conf) do
     Req.Test.stub(:esc_small, fn conn ->
@@ -24,8 +30,7 @@ defmodule Xeito.EscalationTest do
           Req.Test.json(conn, %{
             "completion_probabilities" => [
               %{
-                "top_logprobs" =>
-                  Enum.map(tops, fn {t, p} -> %{"token" => t, "logprob" => :math.log(p)} end)
+                "top_logprobs" => Enum.map(tops, fn {t, p} -> %{"token" => t, "logprob" => :math.log(p)} end)
               }
             ]
           })
@@ -123,6 +128,8 @@ defmodule Xeito.EscalationTest do
 
       %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
     end
+
+    # --- tests -------------------------------------------------------------------------------
   end
 
   defp decide(type, input, opts) do
@@ -132,8 +139,7 @@ defmodule Xeito.EscalationTest do
     {decision, log, parent}
   end
 
-  defp states(log, id),
-    do: for({_, "state_entered", {:state_entered, s}} <- Log.read_run(log, id), do: s)
+  defp states(log, id), do: for({_, "state_entered", {:state_entered, s}} <- Log.read_run(log, id), do: s)
 
   defp only_run(log, parent) do
     [[id]] =
@@ -145,8 +151,6 @@ defmodule Xeito.EscalationTest do
 
     id
   end
-
-  # --- tests -------------------------------------------------------------------------------
 
   test "a rule decides at once; the escalation is a child run related to its parent" do
     {d, log, parent} =
@@ -356,12 +360,14 @@ defmodule Xeito.EscalationTest do
       end)
 
     id =
-      eventually(fn ->
-        Log.query(log, "SELECT ocel_source_id FROM object_object WHERE ocel_target_id = ?1", [
+      fn ->
+        log
+        |> Log.query("SELECT ocel_source_id FROM object_object WHERE ocel_target_id = ?1", [
           parent
         ])
         |> List.first()
-      end)
+      end
+      |> eventually()
       |> hd()
 
     eventually(fn -> Run.whereis(id) && Run.snapshot(id).leaf == :human end)

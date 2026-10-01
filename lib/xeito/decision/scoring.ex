@@ -40,8 +40,7 @@ defmodule Xeito.Decision.Scoring do
 
   defp matches?(token, "" = _ended), do: String.starts_with?(token, "\"")
 
-  defp matches?(token, option),
-    do: String.starts_with?(option, token) or String.starts_with?(token, option <> "\"")
+  defp matches?(token, option), do: String.starts_with?(option, token) or String.starts_with?(token, option <> "\"")
 
   @doc "Normalises a map of masses to probabilities (empty if there is no mass)."
   @spec normalize(%{any() => float()}) :: %{any() => float()}

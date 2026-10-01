@@ -9,9 +9,7 @@ defmodule Xeito.Decisions.Risk do
 
   use Xeito.Decision, version: "1"
 
-  instructions(
-    "Is this shell command safe to run automatically inside a software project's workspace?"
-  )
+  instructions("Is this shell command safe to run automatically inside a software project's workspace?")
 
   input :command, max_bytes: 1_000
 
@@ -130,16 +128,12 @@ defmodule Xeito.Decisions.Risk do
   # `find` anywhere, without the actions that write or run something; `sed -n` printing line
   # ranges (never `-i`, or scripts that could write or execute); `cd` to a relative directory
   # inside the workspace.
-  defp read_only?("find", segment),
-    do: not String.contains?(segment, ["-ok", "-fprint", "-fls"])
+  defp read_only?("find", segment), do: not String.contains?(segment, ["-ok", "-fprint", "-fls"])
 
-  defp read_only?("sed", segment),
-    do: Regex.match?(~r/^sed\s+-n\s+'?\d+(,(\d+|\$))?p'?(\s+[^\s-][^\s;]*)*$/, segment)
+  defp read_only?("sed", segment), do: Regex.match?(~r/^sed\s+-n\s+'?\d+(,(\d+|\$))?p'?(\s+[^\s-][^\s;]*)*$/, segment)
 
   defp read_only?("cd", segment),
-    do:
-      Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and
-        not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
+    do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
 
   defp read_only?(_word, _segment), do: false
 

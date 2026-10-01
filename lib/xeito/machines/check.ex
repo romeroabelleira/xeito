@@ -59,8 +59,10 @@ defmodule Xeito.Machines.Check do
     """
 
     input =
-      %{cwd: ctx.cwd, prompt: prompt, max_steps: Map.get(ctx, :max_steps, 25)}
-      |> then(&if(ctx[:system], do: Map.put(&1, :system, ctx.system), else: &1))
+      then(
+        %{cwd: ctx.cwd, prompt: prompt, max_steps: Map.get(ctx, :max_steps, 25)},
+        &if(ctx[:system], do: Map.put(&1, :system, ctx.system), else: &1)
+      )
 
     [Effect.machine(Xeito.Machines.Chat, input, timeout: @fix_timeout)]
   end
@@ -69,8 +71,7 @@ defmodule Xeito.Machines.Check do
   def passed?(_ctx, result), do: result.exit_status == 0
 
   @doc false
-  def attempts_left?(ctx, _result),
-    do: Map.get(ctx, :attempts, 0) < Map.get(ctx, :max_attempts, 3)
+  def attempts_left?(ctx, _result), do: Map.get(ctx, :attempts, 0) < Map.get(ctx, :max_attempts, 3)
 
   @doc false
   def record_failure(ctx, result) do

@@ -23,7 +23,7 @@ defmodule Xeito.Monitor.Host do
       cpu: %{
         busy_pct: busy_pct(prev, counters),
         load1: load1(proc),
-        cores: :erlang.system_info(:logical_processors_available) |> cores()
+        cores: :logical_processors_available |> :erlang.system_info() |> cores()
       },
       mem: mem(proc),
       gpus: gpus(sys)
@@ -88,7 +88,7 @@ defmodule Xeito.Monitor.Host do
       |> Enum.sort()
       |> Enum.map(&gpu(Path.dirname(&1)))
 
-    primary = cards |> Enum.max_by(&(&1.vram_total_bytes || 0), fn -> nil end)
+    primary = Enum.max_by(cards, &(&1.vram_total_bytes || 0), fn -> nil end)
     Enum.map(cards, &Map.put(&1, :primary, &1 == primary))
   end
 

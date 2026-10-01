@@ -74,8 +74,7 @@ defmodule Xeito.Machines.FixFailingTest do
   final :failed
 
   @doc false
-  def run_tests(ctx),
-    do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd, timeout: @tests_timeout)]
+  def run_tests(ctx), do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd, timeout: @tests_timeout)]
 
   @doc false
   def maybe_delegate(%{delegate: true} = ctx) do
@@ -95,8 +94,10 @@ defmodule Xeito.Machines.FixFailingTest do
     #{Map.get(ctx, :last_failure, "")}
     """
 
-    %{cwd: ctx.cwd, prompt: prompt, max_steps: Map.get(ctx, :max_steps, 25)}
-    |> then(&if(ctx[:system], do: Map.put(&1, :system, ctx.system), else: &1))
+    then(
+      %{cwd: ctx.cwd, prompt: prompt, max_steps: Map.get(ctx, :max_steps, 25)},
+      &if(ctx[:system], do: Map.put(&1, :system, ctx.system), else: &1)
+    )
   end
 
   @doc false
@@ -117,8 +118,7 @@ defmodule Xeito.Machines.FixFailingTest do
   def failed?(ctx, result), do: not passed?(ctx, result)
 
   @doc false
-  def attempts_left?(ctx, _result),
-    do: Map.get(ctx, :attempts, 0) + 1 < Map.get(ctx, :max_attempts, 3)
+  def attempts_left?(ctx, _result), do: Map.get(ctx, :attempts, 0) + 1 < Map.get(ctx, :max_attempts, 3)
 
   @doc false
   def count_attempt(ctx, _result), do: Map.update(ctx, :attempts, 1, &(&1 + 1))
@@ -126,8 +126,7 @@ defmodule Xeito.Machines.FixFailingTest do
   @doc false
   def reruns_left?(ctx, _result), do: Map.get(ctx, :reruns, 0) < Map.get(ctx, :max_reruns, 2)
   @doc false
-  def count_rerun_and_record(ctx, result),
-    do: ctx |> Map.update(:reruns, 1, &(&1 + 1)) |> record_failure(result)
+  def count_rerun_and_record(ctx, result), do: ctx |> Map.update(:reruns, 1, &(&1 + 1)) |> record_failure(result)
 
   @doc false
   def record_failure(ctx, result), do: Map.put(ctx, :last_failure, Map.get(result, :output, ""))

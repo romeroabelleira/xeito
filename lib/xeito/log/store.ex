@@ -24,7 +24,9 @@ defmodule Xeito.Log.Store do
   Logs written before this layout have plain terms and read as they are.
   """
 
-  alias Xeito.Log.{Codec, Event, Sql}
+  alias Xeito.Log.Codec
+  alias Xeito.Log.Event
+  alias Xeito.Log.Sql
 
   @type db :: Exqlite.Sqlite3.db()
 
@@ -49,8 +51,7 @@ defmodule Xeito.Log.Store do
   end
 
   defp column?(db, table, column),
-    do:
-      Sql.select(db, "SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2", [table, column]) != []
+    do: Sql.select(db, "SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2", [table, column]) != []
 
   # The first layout kept only the Erlang term. Ids do not change (they hash the term).
   defp migrate_messages(db) do
@@ -104,6 +105,7 @@ defmodule Xeito.Log.Store do
   @doc "Reads a stored message JSON (decoded) back into a chat message."
   @spec from_json(map()) :: map()
   def from_json(%{} = message) do
+    # --- writing -------------------------------------------------------------------------------
     message
     |> atomize(@message_keys)
     |> Map.replace_lazy(:tool_calls, fn
@@ -125,8 +127,6 @@ defmodule Xeito.Log.Store do
 
   defp atomize(map, keys), do: Map.new(map, fn {k, v} -> {Map.get(keys, k, k), v} end)
 
-  # --- writing -------------------------------------------------------------------------------
-
   @doc """
   Prepares a batch of events of one run for storage, writing the message chains they refer to.
   Takes `[{seq, event}]` and returns `[{seq, event_with_stored_attrs, term_blob, chain_heads}]`.
@@ -141,8 +141,7 @@ defmodule Xeito.Log.Store do
         {term, heads} = chains_in_term(db, term)
         attrs = Map.new(attrs, fn {k, v} -> {k, chains_in_attr(v)} end)
 
-        {{seq, %{event | attrs: attrs}, pack(term), Enum.uniq(heads)},
-         completed_result(event, seq) || last_result}
+        {{seq, %{event | attrs: attrs}, pack(term), Enum.uniq(heads)}, completed_result(event, seq) || last_result}
       end)
 
     encoded
@@ -166,12 +165,10 @@ defmodule Xeito.Log.Store do
 
   # An event carrying exactly the result of the `effect_completed` just before it (in the same
   # batch) refers to that event instead of repeating the payload.
-  defp dedupe(run_id, %Event{type: "event_received", term: {:event, name, data, actor}} = e, last)
-       when last != nil do
+  defp dedupe(run_id, %Event{type: "event_received", term: {:event, name, data, actor}} = e, last) when last != nil do
     case last do
       {^data, seq} ->
-        {{:event, name, {:xeito_same_as, seq}, actor},
-         Map.put(e.attrs, "data", %{"same_as" => "#{run_id}:#{seq}"})}
+        {{:event, name, {:xeito_same_as, seq}, actor}, Map.put(e.attrs, "data", %{"same_as" => "#{run_id}:#{seq}"})}
 
       _ ->
         {e.term, e.attrs}
@@ -180,8 +177,7 @@ defmodule Xeito.Log.Store do
 
   defp dedupe(_run_id, event, _last), do: {event.term, event.attrs}
 
-  defp completed_result(%Event{type: "effect_completed", term: {:effect_completed, _, r}}, seq),
-    do: {r, seq}
+  defp completed_result(%Event{type: "effect_completed", term: {:effect_completed, _, r}}, seq), do: {r, seq}
 
   defp completed_result(_event, _seq), do: nil
 
@@ -222,6 +218,9 @@ defmodule Xeito.Log.Store do
 
   defp message?(%{role: role}) when is_binary(role), do: true
   defp message?(%{"role" => role}) when is_binary(role), do: true
+
+  # --- reading -------------------------------------------------------------------------------
+
   defp message?(_), do: false
 
   @doc "Writes a chain of messages (those not stored yet) and returns the id of its last one."
@@ -259,12 +258,11 @@ defmodule Xeito.Log.Store do
   end
 
   defp hash(parent, message) do
-    :crypto.hash(:sha256, [parent || "", :erlang.term_to_binary(message, [:deterministic])])
+    :sha256
+    |> :crypto.hash([parent || "", :erlang.term_to_binary(message, [:deterministic])])
     |> binary_part(0, 16)
     |> Base.encode16(case: :lower)
   end
-
-  # --- reading -------------------------------------------------------------------------------
 
   @doc "Reads stored rows `[[seq, type, blob]]` of one run back into `[{seq, type, term}]`."
   @spec decode(db(), [[term()]]) :: [{pos_integer(), String.t(), term()}]
@@ -280,6 +278,7 @@ defmodule Xeito.Log.Store do
   end
 
   defp resolve_same_as({:event, name, {:xeito_same_as, seq}, actor}, by_seq) do
+    # --- retention -----------------------------------------------------------------------------
     {:effect_completed, _id, result} = Map.fetch!(by_seq, seq)
     {:event, name, result, actor}
   end
@@ -297,13 +296,12 @@ defmodule Xeito.Log.Store do
     end)
   end
 
-  defp chain(_db, head, _count, chains) when is_map_key(chains, head),
-    do: {Map.fetch!(chains, head), chains}
+  defp chain(_db, head, _count, chains) when is_map_key(chains, head), do: {Map.fetch!(chains, head), chains}
 
   defp chain(db, head, count, chains) do
     messages = read_chain(db, head)
 
-    unless length(messages) == count,
+    if length(messages) != count,
       do: raise("message chain #{head} has #{length(messages)} messages, expected #{count}")
 
     {messages, Map.put(chains, head, messages)}
@@ -312,8 +310,8 @@ defmodule Xeito.Log.Store do
   @doc "The messages of the chain ending at `head`, oldest first."
   @spec read_chain(db(), String.t()) :: [map()]
   def read_chain(db, head) do
-    Sql.select(
-      db,
+    db
+    |> Sql.select(
       """
       WITH RECURSIVE c(id, parent, depth, json, term) AS (
         SELECT id, parent, depth, json, term FROM xeito_message WHERE id = ?1
@@ -328,8 +326,6 @@ defmodule Xeito.Log.Store do
       [_json, blob] -> :erlang.binary_to_term(blob)
     end)
   end
-
-  # --- retention -----------------------------------------------------------------------------
 
   @doc "Deletes messages no stored event refers to (directly or as an ancestor). Returns the count."
   @spec sweep(db()) :: non_neg_integer()

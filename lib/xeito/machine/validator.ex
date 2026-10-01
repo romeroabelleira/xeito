@@ -105,8 +105,7 @@ defmodule Xeito.Machine.Validator do
   end
 
   defp transition_functions(t) do
-    [{t.guard, 2, "guard"}, {t.action, 2, "action"}]
-    |> Enum.reject(fn {fun, _, _} -> is_nil(fun) end)
+    Enum.reject([{t.guard, 2, "guard"}, {t.action, 2, "action"}], fn {fun, _, _} -> is_nil(fun) end)
   end
 
   defp check_decisions(machine, defines?) do
@@ -171,7 +170,8 @@ defmodule Xeito.Machine.Validator do
   defp leaves(machine), do: Enum.reject(machine.order, &Machine.compound?(machine, &1))
 
   defp reachable(machine, from) do
-    Stream.unfold({[from], MapSet.new([from])}, fn
+    {[from], MapSet.new([from])}
+    |> Stream.unfold(fn
       {[], _seen} ->
         nil
 

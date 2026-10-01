@@ -53,14 +53,12 @@ defmodule Xeito.Tools do
           },
           symbol: %{
             type: "string",
-            description:
-              ~s(read only this definition, e.g. "init/1", "init" or "MyApp.Mod.init/1")
+            description: ~s(read only this definition, e.g. "init/1", "init" or "MyApp.Mod.init/1")
           },
           lines: %{type: "string", description: ~s(read only these lines, e.g. "120-400")},
           result: %{
             type: "string",
-            description:
-              ~s(instead of a file: the full output of an earlier tool call, e.g. "e12")
+            description: ~s(instead of a file: the full output of an earlier tool call, e.g. "e12")
           }
         },
         []
@@ -133,8 +131,7 @@ defmodule Xeito.Tools do
     end
   end
 
-  defp effect(name, args, ctx) when is_map(ctx),
-    do: effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
+  defp effect(name, args, ctx) when is_map(ctx), do: effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
 
   defp effect("read", %{"result" => r}, opts) when is_binary(r) and r != "" and is_list(opts),
     do: Effect.read("", [result: r] ++ opts)
@@ -148,16 +145,14 @@ defmodule Xeito.Tools do
     end
   end
 
-  defp effect("write", %{"path" => p, "content" => c}, opts)
-       when is_binary(p) and is_binary(c) and is_list(opts),
-       do: protected(p, opts) || Effect.write(p, c, opts)
+  defp effect("write", %{"path" => p, "content" => c}, opts) when is_binary(p) and is_binary(c) and is_list(opts),
+    do: protected(p, opts) || Effect.write(p, c, opts)
 
   defp effect("edit", %{"path" => p, "old_text" => o, "new_text" => n}, opts)
        when is_binary(p) and is_binary(o) and is_binary(n) and is_list(opts),
        do: protected(p, opts) || Effect.edit(p, o, n, opts)
 
-  defp effect("bash", %{"command" => c}, opts) when is_binary(c) and is_list(opts),
-    do: Effect.bash(c, opts)
+  defp effect("bash", %{"command" => c}, opts) when is_binary(c) and is_list(opts), do: Effect.bash(c, opts)
 
   defp effect(_name, _args, opts) when is_list(opts), do: nil
 
@@ -197,8 +192,7 @@ defmodule Xeito.Tools do
   @spec result_text(map()) :: String.t()
   def result_text(%{shaped: text}) when is_binary(text), do: text
 
-  def result_text(%{exit_status: status, output: output}),
-    do: "exit status #{status}\n#{output}"
+  def result_text(%{exit_status: status, output: output}), do: "exit status #{status}\n#{output}"
 
   def result_text(%{ok: true, content: content}), do: content
 

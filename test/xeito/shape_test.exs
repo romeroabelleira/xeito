@@ -1,9 +1,11 @@
 defmodule Xeito.ShapeTest do
   use Xeito.Case, async: true
 
-  alias Xeito.{Effect, Log, Tools}
+  alias Xeito.Effect
   alias Xeito.Effects.Local
+  alias Xeito.Log
   alias Xeito.Log.Event
+  alias Xeito.Tools
   alias Xeito.Tools.Shape
 
   defp bash(cmd, output, status \\ 0) do
@@ -202,11 +204,9 @@ defmodule Xeito.ShapeTest do
       content =
         Keyword.get(opts, :content, "exit status 0\n" <> String.duplicate("line #{n}\n", 60))
 
-      %{role: "tool", tool_name: Keyword.get(opts, :name, "bash"), content: content}
-      |> Map.merge(
-        if opts[:ref] == false,
-          do: %{},
-          else: %{ref: "ses-x/t1/e#{n}", about: "output of `cmd #{n}`"}
+      Map.merge(
+        %{role: "tool", tool_name: Keyword.get(opts, :name, "bash"), content: content},
+        if(opts[:ref] == false, do: %{}, else: %{ref: "ses-x/t1/e#{n}", about: "output of `cmd #{n}`"})
       )
     end
 
@@ -215,8 +215,7 @@ defmodule Xeito.ShapeTest do
         [%{role: "system", content: "s"}, %{role: "user", content: "task"}] ++
           Enum.flat_map(tools, &[%{role: "assistant", content: "", tool_calls: []}, &1])
 
-    defp stubbed(messages),
-      do: for(%{role: "tool", content: "[elided" <> _} = m <- messages, do: m.ref)
+    defp stubbed(messages), do: for(%{role: "tool", content: "[elided" <> _} = m <- messages, do: m.ref)
 
     test "old tool output is elided in batches; the last outputs stay whole" do
       assert stubbed(Chat.elide(conversation(Enum.map(1..9, &tool/1)))) == []

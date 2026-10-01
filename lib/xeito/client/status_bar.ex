@@ -84,8 +84,7 @@ defmodule Xeito.Client.StatusBar do
 
   defp short_type(nil), do: "decision"
 
-  defp short_type(type),
-    do: type |> to_string() |> String.split(".") |> List.last() |> Macro.underscore()
+  defp short_type(type), do: type |> to_string() |> String.split(".") |> List.last() |> Macro.underscore()
 
   defp call(usage, actor), do: %{usage | calls: Map.update(usage.calls, actor, 1, &(&1 + 1))}
 
@@ -163,19 +162,18 @@ defmodule Xeito.Client.StatusBar do
   defp segment(:decision, u, _m, _w), do: last_decision(u.last_decision)
   defp segment(:reply, u, _m, _w), do: last_reply(u.last_reply)
 
-  defp segment(:cost, u, _m, _w),
-    do: "$#{:erlang.float_to_binary(u.usd * 1.0, decimals: 4)} · ~#{energy(u.joules)}"
+  defp segment(:cost, u, _m, _w), do: "$#{:erlang.float_to_binary(u.usd * 1.0, decimals: 4)} · ~#{energy(u.joules)}"
 
   defp segment(:budget, _u, _m, w), do: budget(w && w["budget"])
   defp segment(:queue, _u, m, _w), do: queues(m)
 
   @doc false
   def system_line(monitor, workspace \\ nil),
-    do: lines(new(), monitor, workspace, ~w(calls tokens det cost budget queue)) |> List.first("")
+    do: new() |> lines(monitor, workspace, ~w(calls tokens det cost budget queue)) |> List.first("")
 
   @doc false
   def usage_line(usage, monitor, workspace \\ nil),
-    do: lines(usage, monitor, workspace, ~w(gpu models cpu git)) |> List.first("")
+    do: usage |> lines(monitor, workspace, ~w(gpu models cpu git)) |> List.first("")
 
   defp calls(usage) do
     case usage.calls |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(fn {a, n} -> "#{a} #{n}" end) do
@@ -184,14 +182,12 @@ defmodule Xeito.Client.StatusBar do
     end
   end
 
-  defp last_decision(%{ms: ms} = d) when is_number(ms),
-    do: "#{d.type} #{d.actor} #{duration(ms)}"
+  defp last_decision(%{ms: ms} = d) when is_number(ms), do: "#{d.type} #{d.actor} #{duration(ms)}"
 
   defp last_decision(_), do: ""
 
   defp last_reply(%{ms: ms, first_ms: first}) when is_number(ms),
-    do:
-      "reply #{duration(ms)}" <> if(is_number(first), do: " (first #{duration(first)})", else: "")
+    do: "reply #{duration(ms)}" <> if(is_number(first), do: " (first #{duration(first)})", else: "")
 
   defp last_reply(_), do: ""
 
@@ -267,8 +263,7 @@ defmodule Xeito.Client.StatusBar do
   defp ctx(nil, _monitor), do: ""
 
   defp ctx(tokens, %{"models" => %{"large" => %{"loaded" => [%{"context" => window} | _]}}})
-       when is_integer(window) and window > 0,
-       do: " · ctx #{k(tokens)}/#{k(window)}"
+       when is_integer(window) and window > 0, do: " · ctx #{k(tokens)}/#{k(window)}"
 
   defp ctx(tokens, _monitor), do: " · ctx #{k(tokens)}"
 
@@ -294,8 +289,7 @@ defmodule Xeito.Client.StatusBar do
   defp k(n) when n >= 1000, do: "#{Float.round(n / 1000, 1)}k"
   defp k(n), do: "#{n}"
 
-  defp mmss(s),
-    do: "#{div(s, 60)}:#{s |> rem(60) |> Integer.to_string() |> String.pad_leading(2, "0")}"
+  defp mmss(s), do: "#{div(s, 60)}:#{s |> rem(60) |> Integer.to_string() |> String.pad_leading(2, "0")}"
 
   defp energy(j) when j >= 1000, do: "#{Float.round(j / 1000, 1)} kJ"
   defp energy(j), do: "#{round(j)} J"

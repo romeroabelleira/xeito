@@ -4,7 +4,8 @@ defmodule Xeito.Api.Connection do
   use GenServer, restart: :temporary
 
   alias Xeito.Log.Codec
-  alias Xeito.{Monitor, Session}
+  alias Xeito.Monitor
+  alias Xeito.Session
   alias Xeito.Session.Router
 
   @max_line 4_194_304
@@ -13,8 +14,7 @@ defmodule Xeito.Api.Connection do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
   @impl true
-  def init(opts),
-    do: {:ok, %{socket: opts[:socket], buffer: "", defaults: opts[:session], sessions: %{}}}
+  def init(opts), do: {:ok, %{socket: opts[:socket], buffer: "", defaults: opts[:session], sessions: %{}}}
 
   @impl true
   def handle_info(:go, s) do
@@ -75,7 +75,7 @@ defmodule Xeito.Api.Connection do
   end
 
   defp handle("start", req, s) do
-    opts = Keyword.merge(s.defaults, cwd: req["cwd"] || File.cwd!())
+    opts = Keyword.put(s.defaults, :cwd, req["cwd"] || File.cwd!())
 
     case Session.start(opts) do
       {:ok, id} -> {%{ok: true, session: id}, follow(s, id, opts[:cwd])}
@@ -130,8 +130,7 @@ defmodule Xeito.Api.Connection do
   end
 
   # A followed session that closed while idle is resumed transparently from its workspace log.
-  defp handle(cmd, %{"session" => id} = req, s)
-       when cmd in ~w(prompt approve deny status history workspace) do
+  defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace) do
     cond do
       exists?(id) ->
         {session_cmd(cmd, id, req), s}
@@ -163,7 +162,7 @@ defmodule Xeito.Api.Connection do
 
   # Remembers the workspace of every followed session, so it can be resumed after an idle close.
   defp follow(s, id, cwd) do
-    unless Map.has_key?(s.sessions, id), do: Session.subscribe(id)
+    if !Map.has_key?(s.sessions, id), do: Session.subscribe(id)
     %{s | sessions: Map.put(s.sessions, id, cwd)}
   end
 

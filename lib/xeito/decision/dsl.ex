@@ -108,7 +108,7 @@ defmodule Xeito.Decision.DSL do
       if(length(values) >= 2, do: [], else: ["at least two values are required"]),
       if(:abstain in values, do: ["`:abstain` is implicit and cannot be declared"], else: []),
       if(length(Enum.uniq(values)) == length(values), do: [], else: ["values must be unique"]),
-      if(type.inputs != [], do: [], else: ["at least one input is required"]),
+      if(type.inputs == [], do: ["at least one input is required"], else: []),
       for(
         %{fun: fun} <- type.rules,
         not defines?.({fun, 1}),

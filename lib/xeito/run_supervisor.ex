@@ -9,12 +9,10 @@ defmodule Xeito.RunSupervisor do
   alias Xeito.Run
 
   @doc false
-  def start_link(opts),
-    do: DynamicSupervisor.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
+  def start_link(opts), do: DynamicSupervisor.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
 
   @impl true
-  def init(:ok),
-    do: DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 10, max_seconds: 5)
+  def init(:ok), do: DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 10, max_seconds: 5)
 
   @doc """
   Starts a run of `machine` with `input`. Options: `:run_id` (generated if absent), `:log`,
@@ -39,9 +37,7 @@ defmodule Xeito.RunSupervisor do
 
   @doc "Resumes a logged run that is not running (for example after a node restart)."
   @spec resume_run(module(), Run.run_id(), keyword()) :: {:ok, Run.run_id()} | {:error, term()}
-  def resume_run(machine, run_id, opts \\ []),
-    do: start_run(machine, %{}, Keyword.put(opts, :run_id, run_id))
+  def resume_run(machine, run_id, opts \\ []), do: start_run(machine, %{}, Keyword.put(opts, :run_id, run_id))
 
-  defp new_run_id,
-    do: "run-" <> Base.encode32(:crypto.strong_rand_bytes(10), case: :lower, padding: false)
+  defp new_run_id, do: "run-" <> Base.encode32(:crypto.strong_rand_bytes(10), case: :lower, padding: false)
 end

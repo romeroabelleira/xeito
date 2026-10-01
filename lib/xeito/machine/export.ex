@@ -69,8 +69,7 @@ defmodule Xeito.Machine.Export do
   defp event_label({:decided, value}), do: "decided #{value}"
   defp event_label(event) when is_atom(event), do: Atom.to_string(event)
 
-  defp event_label(event) when is_tuple(event),
-    do: event |> Tuple.to_list() |> Enum.map_join(" ", &to_string/1)
+  defp event_label(event) when is_tuple(event), do: event |> Tuple.to_list() |> Enum.map_join(" ", &to_string/1)
 
   @doc "W3C SCXML document. Guards become `cond` names; tuple events are dot-joined."
   @spec scxml(Machine.t()) :: String.t()
@@ -115,8 +114,7 @@ defmodule Xeito.Machine.Export do
 
   defp scxml_event(event) when is_atom(event), do: Atom.to_string(event)
 
-  defp scxml_event(event) when is_tuple(event),
-    do: event |> Tuple.to_list() |> Enum.map_join(".", &to_string/1)
+  defp scxml_event(event) when is_tuple(event), do: event |> Tuple.to_list() |> Enum.map_join(".", &to_string/1)
 
   defp esc(text) do
     text

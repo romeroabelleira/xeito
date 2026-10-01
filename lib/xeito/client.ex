@@ -15,8 +15,7 @@ defmodule Xeito.Client do
 
   @doc "Sends a request (a map with `\"cmd\"`) and waits for its reply."
   @spec request(pid(), map(), timeout()) :: map()
-  def request(client, req, timeout \\ 30_000),
-    do: GenServer.call(client, {:request, req}, timeout)
+  def request(client, req, timeout \\ 30_000), do: GenServer.call(client, {:request, req}, timeout)
 
   @impl true
   def init({path, owner}) do

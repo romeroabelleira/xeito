@@ -25,8 +25,9 @@ defmodule Xeito.Policy do
     * `:human_timeout` — how long a human prompt waits (default 10 minutes)
   """
 
-  alias Xeito.{Budget, Tiers}
+  alias Xeito.Budget
   alias Xeito.Decision.Type
+  alias Xeito.Tiers
 
   @off_box [:openrouter, :remote]
 
@@ -77,9 +78,7 @@ defmodule Xeito.Policy do
     models =
       tiers
       |> Enum.uniq()
-      |> Enum.filter(
-        &((&1 not in @off_box or remote_allowed?(policy, parent_run)) and available?.(&1))
-      )
+      |> Enum.filter(&((&1 not in @off_box or remote_allowed?(policy, parent_run)) and available?.(&1)))
 
     [:rules] ++ models ++ if(policy.human, do: [:human], else: [])
   end

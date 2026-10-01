@@ -67,8 +67,7 @@ defmodule Xeito.Events do
 
   defp dispatch(topic, message) do
     if Process.whereis(@registry),
-      do:
-        Registry.dispatch(@registry, topic, &Enum.each(&1, fn {pid, _} -> send(pid, message) end))
+      do: Registry.dispatch(@registry, topic, &Enum.each(&1, fn {pid, _} -> send(pid, message) end))
 
     :ok
   end

@@ -13,8 +13,7 @@ defmodule Xeito.Tiers.Queue do
   @defaults %{rules: :infinity, system_one: 1, small: 4, large: 1, openrouter: 4, remote: 4}
 
   @doc false
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
+  def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
 
   @doc "Runs `fun` once a slot for `tier` is free. Returns `fun`'s result."
   @spec run(atom(), (-> result), timeout()) :: result when result: term()

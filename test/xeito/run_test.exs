@@ -1,9 +1,12 @@
 defmodule Xeito.RunTest do
   use Xeito.Case, async: true
 
-  alias Xeito.{Log, Run, RunSupervisor}
+  alias Xeito.Log
   alias Xeito.Log.Event
-  alias Xeito.Machines.{FixFailingTest, RunTests}
+  alias Xeito.Machines.FixFailingTest
+  alias Xeito.Machines.RunTests
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
   alias Xeito.TestMachines.Sleepy
 
   @ctx %{cwd: "/tmp", test_cmd: "mix test"}
@@ -15,8 +18,7 @@ defmodule Xeito.RunTest do
     id
   end
 
-  defp wait_for_leaf(id, expected),
-    do: eventually(fn -> Run.whereis(id) && Run.snapshot(id).leaf == expected end)
+  defp wait_for_leaf(id, expected), do: eventually(fn -> Run.whereis(id) && Run.snapshot(id).leaf == expected end)
 
   test "run_tests finishes :done when the command passes" do
     log = start_log!()
@@ -182,8 +184,7 @@ defmodule Xeito.RunTest do
     assert Enum.any?(
              Log.read_run(log, id),
              &match?(
-               {_, "transition",
-                {:transition, :triage, :ask_human, {:decided, :env_problem}, :rule}},
+               {_, "transition", {:transition, :triage, :ask_human, {:decided, :env_problem}, :rule}},
                &1
              )
            )

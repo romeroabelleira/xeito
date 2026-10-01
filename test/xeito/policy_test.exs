@@ -1,8 +1,11 @@
 defmodule Xeito.PolicyTest do
   use ExUnit.Case, async: true
 
-  alias Xeito.{Budget, Decision, Policy}
-  alias Xeito.Decisions.{Risk, Triage}
+  alias Xeito.Budget
+  alias Xeito.Decision
+  alias Xeito.Decisions.Risk
+  alias Xeito.Decisions.Triage
+  alias Xeito.Policy
   alias Xeito.Tiers.Queue
 
   defp all_available(_tier), do: true

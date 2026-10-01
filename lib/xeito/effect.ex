@@ -115,18 +115,15 @@ defmodule Xeito.Effect do
 
   @doc "Ask whether a tier's model is resident (large tier)."
   @spec probe(atom(), map()) :: t()
-  def probe(tier, args),
-    do: %__MODULE__{kind: :probe, args: Map.put(args, :tier, tier), reply: :probed}
+  def probe(tier, args), do: %__MODULE__{kind: :probe, args: Map.put(args, :tier, tier), reply: :probed}
 
   @doc "Load a tier's model (large tier): a swap."
   @spec swap(atom(), map()) :: t()
-  def swap(tier, args),
-    do: %__MODULE__{kind: :swap, args: Map.put(args, :tier, tier), reply: :swapped}
+  def swap(tier, args), do: %__MODULE__{kind: :swap, args: Map.put(args, :tier, tier), reply: :swapped}
 
   @doc "Turns a runner result into the `{event_name, event_data}` delivered to the run."
   @spec to_event(t(), term()) :: {term(), term()}
-  def to_event(%__MODULE__{kind: :decide}, %{value: value} = result),
-    do: {{:decided, value}, result}
+  def to_event(%__MODULE__{kind: :decide}, %{value: value} = result), do: {{:decided, value}, result}
 
   def to_event(%__MODULE__{reply: reply}, result), do: {reply, result}
 end

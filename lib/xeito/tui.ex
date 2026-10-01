@@ -36,15 +36,15 @@ defmodule Xeito.Tui do
   alias TermUI.Widgets.TextInput
   alias Xeito.Client
   alias Xeito.Client.Config
-  alias Xeito.Client.{Render, StatusBar}
+  # --- init ----------------------------------------------------------------------------------
+  alias Xeito.Client.Render
+  alias Xeito.Client.StatusBar
 
   @max_lines 5_000
   # Blink half-period and how long the cursor keeps blinking after the last key (as GTK does), so
   # an idle TUI stops waking up.
   @blink_ms 530
   @blink_for_ms 10_000
-
-  # --- init ----------------------------------------------------------------------------------
 
   @impl true
   def init(_runtime_opts) do
@@ -108,6 +108,7 @@ defmodule Xeito.Tui do
   defp earlier_turns(client, session) do
     case Client.request(client, %{"cmd" => "history", "session" => session}) do
       %{"ok" => true, "history" => history} ->
+        # --- events → messages ---------------------------------------------------------------------
         for %{"role" => role, "content" => content} <- history,
             role in ["user", "assistant"] and content not in [nil, ""],
             do: history_line(role, content)
@@ -121,8 +122,6 @@ defmodule Xeito.Tui do
   defp history_line(_role, content), do: first_line(content)
 
   defp first_line(text), do: text |> String.split("\n") |> hd()
-
-  # --- events → messages ---------------------------------------------------------------------
 
   @impl true
   def event_to_msg(%Event.Key{key: key, modifiers: mods}, _state)
@@ -162,8 +161,7 @@ defmodule Xeito.Tui do
 
   def handle_info({:xeito_event, event}, state), do: {apply_event(state, event), []}
 
-  def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state),
-    do: {append(state, "✗ #{error}\n"), []}
+  def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state), do: {append(state, "✗ #{error}\n"), []}
 
   # Only the timer of the latest key counts; older ones are stale.
   def handle_info({:blink, gen}, %{blink: gen} = state) do
@@ -212,16 +210,16 @@ defmodule Xeito.Tui do
 
       text ->
         request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
-        {%{state | input: TextInput.clear(state.input), scroll: 0} |> append("> #{text}\n"), []}
+        {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{text}\n"), []}
     end
   end
 
   defp handle_update({:review, answer}, state) do
+    # --- status bar preferences ----------------------------------------------------------
     cmd = if answer == "y", do: "approve", else: "deny"
     request(state, %{"cmd" => cmd, "session" => state.session})
 
-    {%{state | waiting: false}
-     |> append("  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
+    {append(%{state | waiting: false}, "  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
   end
 
   defp handle_update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
@@ -243,17 +241,15 @@ defmodule Xeito.Tui do
 
   defp handle_update(_msg, state), do: {state, []}
 
-  # --- status bar preferences ----------------------------------------------------------
-
   defp set_bar(state, bar) do
     request(state, %{"cmd" => "monitor", "on" => bar})
-    %{state | bar: bar, monitor: if(bar, do: state.monitor, else: nil)}
+    %{state | bar: bar, monitor: if(bar, do: state.monitor)}
   end
 
-  defp statusbar([], state), do: set_bar(state, not state.bar) |> save_prefs()
-  defp statusbar(["on"], state), do: set_bar(state, true) |> save_prefs()
-  defp statusbar(["off"], state), do: set_bar(state, false) |> save_prefs()
-  defp statusbar(["reset"], state), do: %{set_bar(state, true) | hidden: []} |> save_prefs()
+  defp statusbar([], state), do: state |> set_bar(not state.bar) |> save_prefs()
+  defp statusbar(["on"], state), do: state |> set_bar(true) |> save_prefs()
+  defp statusbar(["off"], state), do: state |> set_bar(false) |> save_prefs()
+  defp statusbar(["reset"], state), do: save_prefs(%{set_bar(state, true) | hidden: []})
 
   defp statusbar([verb | names], state) when verb in ["show", "hide"] and names != [] do
     case names -- StatusBar.segments() do
@@ -271,6 +267,7 @@ defmodule Xeito.Tui do
   end
 
   defp statusbar(["segments"], state) do
+    # --- daemon events -------------------------------------------------------------------------
     listed =
       Enum.map_join(StatusBar.segments(), " ", fn seg ->
         if seg in state.hidden, do: "·#{seg}", else: seg
@@ -309,8 +306,6 @@ defmodule Xeito.Tui do
     Task.start(fn -> send(me, {:xeito_reply, Client.request(state.client, req)}) end)
   end
 
-  # --- daemon events -------------------------------------------------------------------------
-
   @doc false
   def apply_event(state, %{"event" => type} = event) do
     %{state | usage: StatusBar.count(state.usage, event)}
@@ -321,6 +316,7 @@ defmodule Xeito.Tui do
   defp track(state, "run_selected", %{"attrs" => a}),
     do: %{state | machine: short(a["machine"]), started: now(), decisions: 0, usd: 0.0}
 
+  # --- view ----------------------------------------------------------------------------------
   defp track(state, "state_entered", %{"run" => run, "attrs" => %{"state" => leaf}}) do
     if internal?(run), do: state, else: %{state | leaf: to_string(leaf)}
   end
@@ -336,8 +332,7 @@ defmodule Xeito.Tui do
   defp track(state, "human_needed", _event), do: %{state | waiting: true}
   defp track(state, "paused", _event), do: %{state | paused: true}
 
-  defp track(state, "turn_finished", _event),
-    do: %{state | leaf: "idle", waiting: false, paused: false, started: nil}
+  defp track(state, "turn_finished", _event), do: %{state | leaf: "idle", waiting: false, paused: false, started: nil}
 
   defp track(state, "disconnected", _event), do: %{state | leaf: "disconnected"}
   defp track(state, _type, _event), do: state
@@ -360,8 +355,6 @@ defmodule Xeito.Tui do
         %{state | lines: lines, partial: partial}
     end
   end
-
-  # --- view ----------------------------------------------------------------------------------
 
   @impl true
   def view(state) do

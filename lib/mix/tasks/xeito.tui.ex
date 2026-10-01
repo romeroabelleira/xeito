@@ -21,7 +21,7 @@ defmodule Mix.Tasks.Xeito.Tui do
 
     socket = opts[:socket] || Xeito.Api.default_socket()
 
-    unless File.exists?(socket),
+    if !File.exists?(socket),
       do: Mix.raise("no daemon at #{socket}; start one with `mix xeito.daemon`")
 
     Application.put_env(:xeito, :tui,

@@ -22,16 +22,14 @@ defmodule Xeito.Log.Codec do
   def jsonable(value) when is_boolean(value) or is_nil(value) or is_number(value), do: value
   def jsonable(value) when is_atom(value), do: Atom.to_string(value)
 
-  def jsonable(value) when is_binary(value),
-    do: if(String.valid?(value), do: value, else: inspect(value))
+  def jsonable(value) when is_binary(value), do: if(String.valid?(value), do: value, else: inspect(value))
 
   def jsonable(value) when is_list(value), do: Enum.map(value, &jsonable/1)
   def jsonable(value) when is_tuple(value), do: value |> Tuple.to_list() |> jsonable()
 
   def jsonable(%_{} = struct), do: struct |> Map.from_struct() |> jsonable()
 
-  def jsonable(value) when is_map(value),
-    do: Map.new(value, fn {k, v} -> {key(k), jsonable(v)} end)
+  def jsonable(value) when is_map(value), do: Map.new(value, fn {k, v} -> {key(k), jsonable(v)} end)
 
   def jsonable(value), do: inspect(value)
 

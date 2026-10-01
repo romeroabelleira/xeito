@@ -26,8 +26,7 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "intent", "attrs" => a}, pad),
     do: "#{pad}◆ intent: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
 
-  defp render(%{"event" => "run_selected", "attrs" => a}, pad),
-    do: "#{pad}  → #{short(a["machine"])} · #{a["reason"]}\n"
+  defp render(%{"event" => "run_selected", "attrs" => a}, pad), do: "#{pad}  → #{short(a["machine"])} · #{a["reason"]}\n"
 
   defp render(%{"event" => "decision_made", "attrs" => a}, pad) do
     type = a["decision_type"] |> to_string() |> short() |> Macro.underscore()
@@ -70,11 +69,9 @@ defmodule Xeito.Client.Render do
 
   # The chat loop's own states are visible through its tool calls and streamed text.
   defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, _pad)
-       when state in ["risk_check", "thinking", "executing", "answered"],
-       do: ""
+       when state in ["risk_check", "thinking", "executing", "answered"], do: ""
 
-  defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad),
-    do: "#{pad}· #{state}\n"
+  defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad), do: "#{pad}· #{state}\n"
 
   defp render(%{"event" => "human_needed", "attrs" => %{"call" => call}}, pad) do
     what =
@@ -105,8 +102,7 @@ defmodule Xeito.Client.Render do
     "#{mark} #{a["final_state"]}#{summary}\n"
   end
 
-  defp render(%{"event" => "closed"}, _pad),
-    do: "· session closed while idle; the next prompt resumes it from the log\n"
+  defp render(%{"event" => "closed"}, _pad), do: "· session closed while idle; the next prompt resumes it from the log\n"
 
   defp render(%{"event" => "notice", "attrs" => %{"text" => text}}, _pad), do: text <> "\n"
   defp render(%{"event" => "error", "attrs" => %{"text" => text}}, _pad), do: "✗ " <> text <> "\n"
@@ -121,8 +117,7 @@ defmodule Xeito.Client.Render do
   defp paused_what(%{"summary" => %{"decision" => d, "value" => v} = sm}),
     do: "#{d |> to_string() |> short()}: #{v} (#{sm["actor"]} #{conf(sm["confidence"])})"
 
-  defp paused_what(%{"summary" => %{"exit_status" => status}, "kind" => kind}),
-    do: "#{kind} exit #{status}"
+  defp paused_what(%{"summary" => %{"exit_status" => status}, "kind" => kind}), do: "#{kind} exit #{status}"
 
   defp paused_what(a), do: "#{a["kind"]} result"
 
@@ -163,6 +158,5 @@ defmodule Xeito.Client.Render do
     |> then(&" · #{String.slice(&1, 0, 100)}")
   end
 
-  defp first_line(text),
-    do: text |> String.trim() |> String.split("\n") |> hd() |> String.slice(0, 160)
+  defp first_line(text), do: text |> String.trim() |> String.split("\n") |> hd() |> String.slice(0, 160)
 end

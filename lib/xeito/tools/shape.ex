@@ -23,7 +23,8 @@ defmodule Xeito.Tools.Shape do
   alone.
   """
 
-  alias Xeito.{Effect, Source}
+  alias Xeito.Effect
+  alias Xeito.Source
 
   # Shell output longer than this keeps its first @head and last @tail lines.
   @max_lines 120
@@ -45,8 +46,7 @@ defmodule Xeito.Tools.Shape do
 
   @doc "The result, with `:shaped` text added when shaping shortens it enough to matter."
   @spec shape(Effect.t(), map()) :: map()
-  def shape(%Effect{kind: :bash, args: args} = effect, %{output: output} = result)
-      when is_binary(output) do
+  def shape(%Effect{kind: :bash, args: args} = effect, %{output: output} = result) when is_binary(output) do
     {text, before, now} = bash(args.cmd, output)
 
     if shorter?(output, text),
@@ -59,16 +59,15 @@ defmodule Xeito.Tools.Shape do
       else: result
   end
 
-  def shape(%Effect{kind: :read, args: args}, %{ok: true, content: content} = result)
-      when is_binary(content) do
+  # --- shell output --------------------------------------------------------------------------
+  def shape(%Effect{kind: :read, args: args}, %{ok: true, content: content} = result) when is_binary(content) do
     if explicit?(args), do: result, else: read(args.path, content, result)
   end
 
   def shape(_effect, result), do: result
 
   # A read of an outline, a symbol, a line range or a stored result is exactly what was asked for.
-  defp explicit?(args),
-    do: Enum.any?([:outline, :symbol, :lines, :result], &Map.has_key?(args, &1))
+  defp explicit?(args), do: Enum.any?([:outline, :symbol, :lines, :result], &Map.has_key?(args, &1))
 
   defp shorter?(original, shaped), do: byte_size(shaped) < byte_size(original) * 0.8
 
@@ -79,19 +78,20 @@ defmodule Xeito.Tools.Shape do
   defp ref(%Effect{id: id}) when is_binary(id), do: id
   defp ref(_effect), do: "?"
 
-  # --- shell output --------------------------------------------------------------------------
-
   @doc false
   @spec bash(String.t(), String.t()) :: {String.t(), non_neg_integer(), non_neg_integer()}
   def bash(cmd, output) do
     lines = output |> clean() |> String.split("\n") |> drop_trailing_blank()
 
-    shaped =
+    cond_result =
       cond do
         search?(cmd, lines) -> grep(lines)
         length(lines) > @min_structured and structured?(lines) -> structured(lines)
         true -> lines
       end
+
+    shaped =
+      cond_result
       |> collapse()
       |> head_tail()
       |> Enum.map(&truncate/1)
@@ -112,6 +112,7 @@ defmodule Xeito.Tools.Shape do
   defp drop_trailing_blank(lines),
     do: lines |> Enum.reverse() |> Enum.drop_while(&(String.trim(&1) == "")) |> Enum.reverse()
 
+  # --- search results ------------------------------------------------------------------------
   defp truncate(line) do
     if String.length(line) > @max_line_chars,
       do: String.slice(line, 0, @max_line_chars) <> " …",
@@ -139,8 +140,6 @@ defmodule Xeito.Tools.Shape do
 
   defp head_tail(lines), do: lines
 
-  # --- search results ------------------------------------------------------------------------
-
   defp search?(cmd, lines) do
     Regex.match?(~r/(^|[|;&]\s*)(grep|rg|git grep)\b/, String.trim(cmd)) and length(lines) > 20 and
       Enum.count(lines, &match_line/1) * 2 >= length(lines)
@@ -166,6 +165,7 @@ defmodule Xeito.Tools.Shape do
   end
 
   defp grep(lines) do
+    # --- test and compiler output --------------------------------------------------------------
     groups =
       lines
       |> Enum.map(&match_line/1)
@@ -196,8 +196,6 @@ defmodule Xeito.Tools.Shape do
   defp plural(1, word), do: word
   defp plural(_n, word), do: word <> "es"
 
-  # --- test and compiler output --------------------------------------------------------------
-
   defp structured?(lines), do: Enum.any?(lines, &(summary?(&1) or problem?(&1)))
 
   defp summary?(line),
@@ -215,6 +213,8 @@ defmodule Xeito.Tools.Shape do
       )
 
   # Problems with the lines that follow them (up to the next problem, a blank line after some
+  # --- file reads ----------------------------------------------------------------------------
+
   # context, or 30 lines), then the summary lines.
   defp structured(lines) do
     indexed = Enum.with_index(lines)
@@ -230,7 +230,7 @@ defmodule Xeito.Tools.Shape do
 
     case blocks do
       [] -> Enum.take(lines, 5) ++ ["… (no failures, errors or warnings found)"] ++ summary
-      blocks -> Enum.intersperse(blocks, [""]) |> List.flatten() |> Kernel.++(["" | summary])
+      blocks -> blocks |> Enum.intersperse([""]) |> List.flatten() |> Kernel.++(["" | summary])
     end
   end
 
@@ -245,10 +245,8 @@ defmodule Xeito.Tools.Shape do
       end)
       |> Enum.map(&hd/1)
 
-    [first | kept] |> drop_trailing_blank()
+    drop_trailing_blank([first | kept])
   end
-
-  # --- file reads ----------------------------------------------------------------------------
 
   defp read_limit(path) do
     if path |> Path.split() |> Enum.any?(&(&1 in @third_party)),

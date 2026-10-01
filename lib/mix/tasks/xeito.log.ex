@@ -37,7 +37,11 @@ defmodule Mix.Tasks.Xeito.Log do
   use Mix.Task
 
   alias Exqlite.Sqlite3
-  alias Xeito.Log.{Codec, Event, Retention, Sql, Store}
+  alias Xeito.Log.Codec
+  alias Xeito.Log.Event
+  alias Xeito.Log.Retention
+  alias Xeito.Log.Sql
+  alias Xeito.Log.Store
   alias Xeito.Run.Recovery
 
   @switches [cwd: :string, older_than: :integer, keep: :integer, apply: :boolean]
@@ -47,7 +51,7 @@ defmodule Mix.Tasks.Xeito.Log do
     {opts, command, _} = OptionParser.parse(args, strict: @switches)
     Mix.Task.run("compile")
     path = Path.join([Path.expand(opts[:cwd] || "."), ".xeito", "log.sqlite"])
-    unless File.exists?(path), do: Mix.raise("no log at #{path}")
+    if !File.exists?(path), do: Mix.raise("no log at #{path}")
 
     {:ok, db} = Sqlite3.open(path)
     :ok = Sqlite3.set_busy_timeout(db, 10_000)
@@ -68,10 +72,7 @@ defmodule Mix.Tasks.Xeito.Log do
   defp dispatch(["prune"], db, path, opts), do: prune(db, path, opts)
 
   defp dispatch(_command, _db, _path, _opts),
-    do:
-      Mix.raise(
-        "usage: mix xeito.log sessions|stats|verify|compact|prune; see `mix help xeito.log`"
-      )
+    do: Mix.raise("usage: mix xeito.log sessions|stats|verify|compact|prune; see `mix help xeito.log`")
 
   defp list(db) do
     sessions = Retention.sessions(db)
@@ -98,6 +99,7 @@ defmodule Mix.Tasks.Xeito.Log do
       not Keyword.get(opts, :apply, false) ->
         Mix.shell().info("dry run: nothing deleted; add --apply to delete")
 
+      # --- stats ---------------------------------------------------------------------------------
       true ->
         before = File.stat!(path).size
         {:ok, result} = Retention.prune(db, plan)
@@ -115,8 +117,6 @@ defmodule Mix.Tasks.Xeito.Log do
     end
   end
 
-  # --- stats ---------------------------------------------------------------------------------
-
   defp stats(db, path) do
     Mix.shell().info("#{path}: #{kib(File.stat!(path).size)} KiB\n")
     Mix.shell().info(String.pad_trailing("table or index", 36) <> "KiB")
@@ -126,18 +126,15 @@ defmodule Mix.Tasks.Xeito.Log do
       Mix.shell().info(String.pad_trailing(name, 36) <> kib(bytes))
     end
 
-    Mix.shell().info(
-      "\n" <> String.pad_trailing("stored terms by event type", 26) <> "events  KiB"
-    )
+    Mix.shell().info("\n" <> String.pad_trailing("stored terms by event type", 26) <> "events  KiB")
 
     for [type, n, bytes] <-
           Sql.select(
             db,
+            # --- verify --------------------------------------------------------------------------------
             "SELECT type, COUNT(*), SUM(length(term)) FROM xeito_term GROUP BY type ORDER BY 3 DESC"
           ) do
-      Mix.shell().info(
-        String.pad_trailing(type, 26) <> String.pad_trailing("#{n}", 8) <> kib(bytes)
-      )
+      Mix.shell().info(String.pad_trailing(type, 26) <> String.pad_trailing("#{n}", 8) <> kib(bytes))
     end
 
     [[n, bytes]] =
@@ -148,8 +145,6 @@ defmodule Mix.Tasks.Xeito.Log do
 
     Mix.shell().info("\nstored messages: #{n} (#{kib(bytes)} KiB)")
   end
-
-  # --- verify --------------------------------------------------------------------------------
 
   defp verify(db) do
     results = for run <- runs(db), do: {run, verify_run(db, run)}
@@ -240,6 +235,7 @@ defmodule Mix.Tasks.Xeito.Log do
   defp rewrite(db, run, {seq, event, blob, heads}) do
     id = "#{run}:#{seq}"
     Sql.exec(db, "UPDATE xeito_term SET term = ?1 WHERE ocel_id = ?2", [{:blob, blob}, id])
+    # --- helpers -------------------------------------------------------------------------------
     Store.put_refs(db, id, heads)
 
     for {column, value} <- event.attrs do
@@ -260,14 +256,7 @@ defmodule Mix.Tasks.Xeito.Log do
     end
   end
 
-  # --- helpers -------------------------------------------------------------------------------
-
-  defp runs(db),
-    do:
-      for(
-        [run] <- Sql.select(db, "SELECT DISTINCT run_id FROM xeito_term ORDER BY run_id"),
-        do: run
-      )
+  defp runs(db), do: for([run] <- Sql.select(db, "SELECT DISTINCT run_id FROM xeito_term ORDER BY run_id"), do: run)
 
   # Plain terms (older logs) have no chain references, so they decode without the store tables.
   defp read_run(db, run) do
@@ -282,14 +271,12 @@ defmodule Mix.Tasks.Xeito.Log do
   defp kib(bytes), do: "#{div(bytes || 0, 1024)}"
 
   defp header,
-    do:
-      String.pad_trailing("session", 22) <>
-        String.pad_trailing("status", 13) <> "last activity (UTC)  runs  events"
+    do: String.pad_trailing("session", 22) <> String.pad_trailing("status", 13) <> "last activity (UTC)  runs  events"
 
   defp row(s) do
     String.pad_trailing(s.id, 22) <>
       String.pad_trailing(s.status, 13) <>
-      String.pad_trailing(s.last |> String.slice(0, 19) |> String.replace("T", " "), 21) <>
+      (s.last |> String.slice(0, 19) |> String.replace("T", " ") |> String.pad_trailing(21)) <>
       String.pad_trailing("#{s.runs}", 6) <> "#{s.events}"
   end
 

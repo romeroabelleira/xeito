@@ -24,9 +24,11 @@ defmodule Mix.Tasks.Xeito.Eval do
 
   use Mix.Task
 
-  alias Xeito.{Decision, Policy}
-  alias Xeito.Decision.{Eval, Type}
+  alias Xeito.Decision
+  alias Xeito.Decision.Eval
+  alias Xeito.Decision.Type
   alias Xeito.Log.Codec
+  alias Xeito.Policy
 
   @switches [
     deciders: :string,
@@ -64,7 +66,7 @@ defmodule Mix.Tasks.Xeito.Eval do
   defp evaluate(module, deciders, opts) do
     type = Decision.type!(module)
     deciders = permitted(type, deciders)
-    examples = Eval.examples(module) |> maybe_limit(opts[:limit])
+    examples = module |> Eval.examples() |> maybe_limit(opts[:limit])
 
     results = Map.new(deciders, &{&1, Eval.run(module, &1, examples)})
     metrics = Map.new(results, fn {d, rs} -> {d, Eval.metrics(rs, Type.values(type))} end)
@@ -72,20 +74,24 @@ defmodule Mix.Tasks.Xeito.Eval do
     report = %{
       type: type.name,
       version: type.version,
-      date: Date.utc_today() |> Date.to_iso8601(),
+      date: Date.to_iso8601(Date.utc_today()),
       examples: length(examples),
       labels: Enum.frequencies_by(examples, & &1.label),
       metrics: metrics,
       gate: Eval.gate(metrics, Keyword.get(opts, :margin, 0.02)),
       cascade: cascades(results, Keyword.get(opts, :epsilon, 0.01)),
       dangerous_missed:
-        for(
-          {_, rs} <- Map.take(results, [:rules]),
-          r <- rs,
-          r.dangerous and r.predicted != :forbidden,
-          do: r
+        (
+          for_result =
+            for(
+              {_, rs} <- Map.take(results, [:rules]),
+              r <- rs,
+              r.dangerous and r.predicted != :forbidden,
+              do: r
+            )
+
+          length(for_result)
         )
-        |> length()
     }
 
     {report, Map.new(results, fn {d, rs} -> {d, Enum.zip(examples, rs)} end)}
@@ -131,10 +137,7 @@ defmodule Mix.Tasks.Xeito.Eval do
       {skipped, kept} = Enum.split_with(deciders, &(&1 in Policy.off_box_tiers()))
 
       if skipped != [],
-        do:
-          Mix.shell().info(
-            "  #{type.name}: skipping #{Enum.join(skipped, ", ")} (policy remote: :forbidden)"
-          )
+        do: Mix.shell().info("  #{type.name}: skipping #{Enum.join(skipped, ", ")} (policy remote: :forbidden)")
 
       kept
     else
@@ -146,13 +149,9 @@ defmodule Mix.Tasks.Xeito.Eval do
   defp maybe_limit(examples, n), do: examples |> Enum.shuffle() |> Enum.take(n)
 
   defp print(report) do
-    Mix.shell().info(
-      "\n#{report.type} v#{report.version}: #{report.examples} examples #{inspect(report.labels)}"
-    )
+    Mix.shell().info("\n#{report.type} v#{report.version}: #{report.examples} examples #{inspect(report.labels)}")
 
-    Mix.shell().info(
-      "  decider      acc    cover  acc|ans  macroF1  ECE    ECE(T)  T     p50ms  p95ms"
-    )
+    Mix.shell().info("  decider      acc    cover  acc|ans  macroF1  ECE    ECE(T)  T     p50ms  p95ms")
 
     for {decider, m} <- Enum.sort_by(report.metrics, &elem(&1, 0)) do
       Mix.shell().info(
@@ -163,7 +162,7 @@ defmodule Mix.Tasks.Xeito.Eval do
               {m.accuracy, 6},
               {m.coverage, 6},
               {m.accuracy_answered, 8},
-              {m.macro_f1 |> Float.round(3), 8},
+              {Float.round(m.macro_f1, 3), 8},
               {m.ece, 6},
               {m.ece_calibrated, 7},
               {m.temperature, 5},

@@ -130,7 +130,7 @@ defmodule Xeito.Chat do
     %{
       acc
       | content: content,
-        tool_calls: Enum.reverse(calls) ++ acc.tool_calls,
+        tool_calls: Enum.reverse(calls, acc.tool_calls),
         final: final,
         first_ms: first
     }

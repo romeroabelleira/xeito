@@ -22,9 +22,19 @@ defmodule Xeito.Effects.Local do
 
   @behaviour Xeito.Effects.Runner
 
-  alias Xeito.{Budget, Chat, Decider, Decision, Effect, Escalation, Log, Policy}
-  alias Xeito.{Run, RunSupervisor, Tiers, Tools}
+  alias Xeito.Budget
+  alias Xeito.Chat
+  alias Xeito.Decider
+  alias Xeito.Decision
+  alias Xeito.Effect
+  alias Xeito.Escalation
+  alias Xeito.Log
+  alias Xeito.Policy
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
+  alias Xeito.Tiers
   alias Xeito.Tiers.Ollama
+  alias Xeito.Tools
   alias Xeito.Tools.Shape
 
   @max_output 65_536
@@ -105,8 +115,7 @@ defmodule Xeito.Effects.Local do
     case Run.await(log, id, args.timeout) do
       # The child's full context stays in its own log; the parent gets the outcome.
       {:ok, result} ->
-        %{result | ctx: Map.take(result.ctx, [:answer, :error, :steps, :tokens_in, :tokens_out])}
-        |> Map.put(:run_id, id)
+        Map.put(%{result | ctx: Map.take(result.ctx, [:answer, :error, :steps, :tokens_in, :tokens_out])}, :run_id, id)
 
       :timeout ->
         %{run_id: id, status: :timeout, state: nil, ctx: %{}}
@@ -177,8 +186,7 @@ defmodule Xeito.Effects.Local do
   # Remote spend counts against the run that asked for the decision.
   defp charge(nil, _result), do: :ok
 
-  defp charge(parent, %{cost: %{usd: usd}}) when is_number(usd) and usd > 0,
-    do: Budget.add(parent, :usd, usd)
+  defp charge(parent, %{cost: %{usd: usd}}) when is_number(usd) and usd > 0, do: Budget.add(parent, :usd, usd)
 
   defp charge(_parent, _result), do: :ok
 
@@ -204,10 +212,7 @@ defmodule Xeito.Effects.Local do
 
   # The shell's own exit status for "cannot run here", with a message a model or human can act on.
   defp workspace_missing(cwd),
-    do: %{
-      exit_status: 127,
-      output: "workspace missing: #{cwd} does not exist (moved or deleted?)"
-    }
+    do: %{exit_status: 127, output: "workspace missing: #{cwd} does not exist (moved or deleted?)"}
 
   defp view(%{lines: range, path: path}, content), do: slice(path, content, range)
   defp view(%{symbol: name, path: path}, content), do: Xeito.Source.symbol(path, content, name)
@@ -254,8 +259,7 @@ defmodule Xeito.Effects.Local do
            Enum.find(Log.read_run(log, run_id), &match?({_, _, {:effect_completed, ^id, _}}, &1)) do
       %{
         ok: true,
-        content:
-          "full output of #{ref}:\n" <> Tools.result_text(Map.drop(result, [:shaped, :ref]))
+        content: "full output of #{ref}:\n" <> Tools.result_text(Map.drop(result, [:shaped, :ref]))
       }
     else
       _ -> %{ok: false, error: "no result #{inspect(ref)} in this run"}

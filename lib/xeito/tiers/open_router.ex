@@ -28,7 +28,8 @@ defmodule Xeito.Tiers.OpenRouter do
 
   @behaviour Xeito.Tiers
 
-  alias Xeito.Decision.{Prompt, Type}
+  alias Xeito.Decision.Prompt
+  alias Xeito.Decision.Type
   alias Xeito.Tiers
   alias Xeito.Tiers.Large
 
@@ -64,12 +65,10 @@ defmodule Xeito.Tiers.OpenRouter do
   @doc false
   def body(type, input, cfg) do
     provider =
-      %{
-        require_parameters: true,
-        data_collection: "deny",
-        zdr: Keyword.get(cfg, :zdr, true)
-      }
-      |> then(&if(cfg[:providers], do: Map.put(&1, :only, cfg[:providers]), else: &1))
+      then(
+        %{require_parameters: true, data_collection: "deny", zdr: Keyword.get(cfg, :zdr, true)},
+        &if(cfg[:providers], do: Map.put(&1, :only, cfg[:providers]), else: &1)
+      )
 
     %{
       model: Keyword.fetch!(cfg, :model),
@@ -90,8 +89,7 @@ defmodule Xeito.Tiers.OpenRouter do
   defp headers, do: [{"x-openrouter-title", "Xeito"}]
 
   defp parse(_type, %{"message" => %{"refusal" => refusal}}, _resp, _model, _started)
-       when is_binary(refusal) and refusal != "",
-       do: {:error, {:refusal, refusal}}
+       when is_binary(refusal) and refusal != "", do: {:error, {:refusal, refusal}}
 
   defp parse(type, choice, resp, model, started) do
     content = get_in(choice, ["message", "content"]) || ""
@@ -109,8 +107,7 @@ defmodule Xeito.Tiers.OpenRouter do
 
   defp probabilities(type, content, logprobs), do: Large.probabilities(content, logprobs, type)
 
-  defp result(probs, type, model, started, cost),
-    do: Tiers.result(type, probs, model, started, cost)
+  defp result(probs, type, model, started, cost), do: Tiers.result(type, probs, model, started, cost)
 
   defp terminal(type, content, model, started, cost) do
     with {:ok, %{"value" => raw}} <- JSON.decode(content),

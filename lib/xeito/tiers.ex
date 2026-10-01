@@ -21,7 +21,8 @@ defmodule Xeito.Tiers do
   See `docs/architecture/04-delegation.md`.
   """
 
-  alias Xeito.Decision.{Scoring, Type}
+  alias Xeito.Decision.Scoring
+  alias Xeito.Decision.Type
   alias Xeito.Tiers.Queue
 
   @type result :: %{
@@ -66,7 +67,7 @@ defmodule Xeito.Tiers do
       |> Keyword.get(tier, [])
       |> Keyword.merge(overrides)
 
-    if cfg[:url], do: cfg, else: nil
+    if cfg[:url], do: cfg
   end
 
   @doc """

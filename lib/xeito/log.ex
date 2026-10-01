@@ -18,11 +18,14 @@ defmodule Xeito.Log do
   use GenServer
 
   alias Exqlite.Sqlite3
-  alias Xeito.Log.{Codec, Event, Schema, Sql, Store}
+  # --- Client API --------------------------------------------------------------------------
+  alias Xeito.Log.Codec
+  alias Xeito.Log.Event
+  alias Xeito.Log.Schema
+  alias Xeito.Log.Sql
+  alias Xeito.Log.Store
 
   @type server :: GenServer.server()
-
-  # --- Client API --------------------------------------------------------------------------
 
   @doc """
   Starts a log. Options: `:path` (required), `:name`, `:idle_ms` (stop after that long without a
@@ -52,7 +55,7 @@ defmodule Xeito.Log do
     # The workspace log is the user's data, never the project's: keep it out of version control.
     File.mkdir_p!(dir)
     ignore = Path.join(dir, ".gitignore")
-    unless File.exists?(ignore), do: File.write!(ignore, "*\n")
+    if !File.exists?(ignore), do: File.write!(ignore, "*\n")
     open_workspace(path)
   end
 
@@ -88,15 +91,15 @@ defmodule Xeito.Log do
   @spec append(server(), String.t(), [Event.t()]) :: {:ok, [pos_integer()]}
   def append(log, run_id, events), do: call(log, {:append, run_id, events})
 
+  # --- Server ------------------------------------------------------------------------------
+
   @doc "Records an object (or a change of its attributes). `changed` names the changed field, if any."
   @spec put_object(server(), String.t(), String.t(), map(), String.t() | nil) :: :ok
-  def put_object(log, id, type, attrs, changed \\ nil),
-    do: call(log, {:put_object, id, type, attrs, changed})
+  def put_object(log, id, type, attrs, changed \\ nil), do: call(log, {:put_object, id, type, attrs, changed})
 
   @doc "Relates two objects (`object_object`)."
   @spec relate(server(), String.t(), String.t(), String.t()) :: :ok
-  def relate(log, source, target, qualifier),
-    do: call(log, {:relate, source, target, qualifier})
+  def relate(log, source, target, qualifier), do: call(log, {:relate, source, target, qualifier})
 
   @doc "All events of a run, in order: `[{seq, type, term}]`."
   @spec read_run(server(), String.t()) :: [{pos_integer(), String.t(), term()}]
@@ -105,8 +108,6 @@ defmodule Xeito.Log do
   @doc "Runs a read-only SQL query and returns the rows (for tests, exports and diagnostics)."
   @spec query(server(), String.t(), list()) :: [list()]
   def query(log, sql, params \\ []), do: call(log, {:query, sql, params})
-
-  # --- Server ------------------------------------------------------------------------------
 
   @impl true
   def init({path, opts}) do
@@ -147,18 +148,16 @@ defmodule Xeito.Log do
   end
 
   defp live_session?(id),
-    do:
-      Process.whereis(Xeito.SessionRegistry) != nil and
-        Registry.lookup(Xeito.SessionRegistry, id) != []
+    do: Process.whereis(Xeito.SessionRegistry) != nil and Registry.lookup(Xeito.SessionRegistry, id) != []
 
   @impl true
   def handle_call({:append, run_id, events}, _from, state) do
     {next, state} = next_seq(state, run_id)
-    time = DateTime.utc_now() |> DateTime.to_iso8601()
+    time = DateTime.to_iso8601(DateTime.utc_now())
 
     seqs =
       transaction(state.db, fn ->
-        numbered = Enum.with_index(events, next) |> Enum.map(fn {e, seq} -> {seq, e} end)
+        numbered = events |> Enum.with_index(next) |> Enum.map(fn {e, seq} -> {seq, e} end)
 
         for {seq, event, blob, heads} <- Store.encode(state.db, run_id, numbered) do
           insert_event(state.db, run_id, seq, time, event, blob)
@@ -181,6 +180,7 @@ defmodule Xeito.Log do
     exec(
       state.db,
       "INSERT OR IGNORE INTO object_object (ocel_source_id, ocel_target_id, ocel_qualifier) VALUES (?1, ?2, ?3)",
+      # --- SQL helpers -------------------------------------------------------------------------
       [source, target, qualifier]
     )
 
@@ -214,15 +214,13 @@ defmodule Xeito.Log do
 
     expected = Enum.zip_with(seqs, events, &{&1, &2.type, &2.term})
 
-    unless Store.decode(db, rows) == expected,
+    if Store.decode(db, rows) != expected,
       do: raise("log round trip failed for #{run_id} #{inspect(seqs)}")
   end
 
-  # --- SQL helpers -------------------------------------------------------------------------
-
   defp write_object(db, id, type, attrs, changed) do
     columns = Map.fetch!(Schema.object_types(), type)
-    time = DateTime.utc_now() |> DateTime.to_iso8601()
+    time = DateTime.to_iso8601(DateTime.utc_now())
 
     transaction(db, fn ->
       exec(db, "INSERT OR IGNORE INTO object (ocel_id, ocel_type) VALUES (?1, ?2)", [id, type])

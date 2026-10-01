@@ -116,7 +116,7 @@ defmodule Xeito.Source.RepoMap do
         File.exists?(Path.join(cwd, "package.json")) ->
           with {:ok, text} <- File.read(Path.join(cwd, "package.json")),
                {:ok, %{} = pkg} <- JSON.decode(text) do
-            Map.get(pkg, "dependencies", %{}) |> Map.keys() |> Enum.sort()
+            pkg |> Map.get("dependencies", %{}) |> Map.keys() |> Enum.sort()
           else
             _ -> []
           end
@@ -166,7 +166,7 @@ defmodule Xeito.Source.RepoMap do
 
     {kept, _} =
       Enum.reduce_while(modules, {[], 0}, fn {line, _}, {acc, used} ->
-        used = used + String.length(line |> String.split(" — ", parts: 2) |> hd()) + 3
+        used = used + (line |> String.split(" — ", parts: 2) |> hd() |> String.length()) + 3
         if used > room, do: {:halt, {acc, used}}, else: {:cont, {[{line, []} | acc], used}}
       end)
 

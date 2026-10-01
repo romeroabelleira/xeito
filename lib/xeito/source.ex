@@ -40,8 +40,7 @@ defmodule Xeito.Source do
 
       body = Enum.map_join(entries, "\n", &outline_line/1)
 
-      {:ok,
-       "#{path} · #{lines} lines · read one definition with symbol, e.g. \"name/arity\"\n" <> body}
+      {:ok, "#{path} · #{lines} lines · read one definition with symbol, e.g. \"name/arity\"\n" <> body}
     end
   end
 
@@ -107,8 +106,7 @@ defmodule Xeito.Source do
   def entries(path, content) do
     cond do
       not supported?(path) ->
-        {:error,
-         "outline and symbol support Elixir files (.ex, .exs) so far; use grep for #{Path.extname(path)} files"}
+        {:error, "outline and symbol support Elixir files (.ex, .exs) so far; use grep for #{Path.extname(path)} files"}
 
       error = syntax_error(path, content) ->
         {:error, "#{path} does not parse (#{error}); read it without outline"}
@@ -132,18 +130,13 @@ defmodule Xeito.Source do
     end
   end
 
-  defp collect({:describe, meta, [name, [{:do, body} | _]]} = node, module, depth)
-       when is_binary(name),
-       do: [
-         entry(:describe, inspect(name), module, meta, node, depth)
-         | collect(body, module, depth + 1)
-       ]
+  defp collect({:describe, meta, [name, [{:do, body} | _]]} = node, module, depth) when is_binary(name),
+    do: [entry(:describe, inspect(name), module, meta, node, depth) | collect(body, module, depth + 1)]
 
   defp collect({:test, meta, [name | _]} = node, module, depth) when is_binary(name),
     do: [entry(:test, inspect(name), module, meta, node, depth)]
 
-  defp collect({:__block__, _meta, children}, module, depth),
-    do: Enum.flat_map(children, &collect(&1, module, depth))
+  defp collect({:__block__, _meta, children}, module, depth), do: Enum.flat_map(children, &collect(&1, module, depth))
 
   defp collect({_call, _meta, args}, module, depth) when is_list(args) do
     # Definitions inside other blocks (quote, if, a DSL's do-blocks) still count.
@@ -196,16 +189,15 @@ defmodule Xeito.Source do
 
   defp signature({:when, _, [call | _]}), do: signature(call)
 
-  defp signature({name, _, args}) when is_atom(name) and is_list(args),
-    do: "#{name}/#{length(args)}"
+  defp signature({name, _, args}) when is_atom(name) and is_list(args), do: "#{name}/#{length(args)}"
 
   defp signature({name, _, context}) when is_atom(name) and is_atom(context), do: "#{name}/0"
   defp signature(_head), do: nil
 
   # Consecutive clauses of one definition become one entry.
   defp group(entries) do
-    entries
-    |> Enum.chunk_while(
+    Enum.chunk_while(
+      entries,
       nil,
       fn
         e, nil ->
@@ -225,8 +217,7 @@ defmodule Xeito.Source do
     )
   end
 
-  defp matches?(%{kind: :defmodule, name: module}, name),
-    do: module == name or String.ends_with?(module, "." <> name)
+  defp matches?(%{kind: :defmodule, name: module}, name), do: module == name or String.ends_with?(module, "." <> name)
 
   defp matches?(%{kind: kind, name: sig, module: module}, name) when kind in @defs do
     {mod, fun} = split_name(name)

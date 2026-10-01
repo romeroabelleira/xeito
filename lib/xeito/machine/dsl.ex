@@ -6,7 +6,9 @@ defmodule Xeito.Machine.DSL do
   """
 
   alias Xeito.Machine
-  alias Xeito.Machine.{State, Transition, Validator}
+  alias Xeito.Machine.State
+  alias Xeito.Machine.Transition
+  alias Xeito.Machine.Validator
 
   @doc "Sets the machine's initial state."
   defmacro initial(name) do
@@ -123,8 +125,7 @@ defmodule Xeito.Machine.DSL do
   defp normalize_timeout(ms) when is_integer(ms) and ms > 0, do: {ms, :timeout}
   defp normalize_timeout({ms, event}) when is_integer(ms) and ms > 0, do: {ms, event}
 
-  defp normalize_timeout(other),
-    do: raise(ArgumentError, "invalid timeout #{inspect(other)}, expected ms or {ms, event}")
+  defp normalize_timeout(other), do: raise(ArgumentError, "invalid timeout #{inspect(other)}, expected ms or {ms, event}")
 
   defmacro __before_compile__(env) do
     module = env.module

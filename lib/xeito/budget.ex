@@ -18,8 +18,7 @@ defmodule Xeito.Budget do
   @table :xeito_budget
 
   @doc false
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
+  def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
 
   @doc "Adds `amount` to `key` for `run_id`. Returns the new total."
   @spec add(String.t(), atom(), number()) :: number()
@@ -48,7 +47,7 @@ defmodule Xeito.Budget do
   @doc "Removes entries whose owner is neither a live run nor a live session. Returns the count."
   @spec sweep() :: non_neg_integer()
   def sweep do
-    owners = :ets.select(@table, [{{{:"$1", :_}, :_}, [], [:"$1"]}]) |> Enum.uniq()
+    owners = @table |> :ets.select([{{{:"$1", :_}, :_}, [], [:"$1"]}]) |> Enum.uniq()
     stale = Enum.reject(owners, &alive?/1)
     Enum.each(stale, &delete/1)
     length(stale)
@@ -79,7 +78,5 @@ defmodule Xeito.Budget do
     {:noreply, state}
   end
 
-  defp schedule_sweep,
-    do:
-      Process.send_after(self(), :sweep, Application.get_env(:xeito, :budget_sweep_ms, 3_600_000))
+  defp schedule_sweep, do: Process.send_after(self(), :sweep, Application.get_env(:xeito, :budget_sweep_ms, 3_600_000))
 end

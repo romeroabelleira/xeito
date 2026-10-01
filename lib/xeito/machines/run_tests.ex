@@ -18,8 +18,7 @@ defmodule Xeito.Machines.RunTests do
   final :failed
 
   @doc false
-  def run_tests(ctx),
-    do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd, timeout: 900_000)]
+  def run_tests(ctx), do: [Effect.bash(Map.get(ctx, :test_cmd, "mix test"), cwd: ctx.cwd, timeout: 900_000)]
 
   @doc false
   def passed?(_ctx, result), do: result.exit_status == 0

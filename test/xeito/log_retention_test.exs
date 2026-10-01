@@ -3,9 +3,11 @@ defmodule Xeito.LogRetentionTest do
   use Xeito.Case, async: false
 
   alias Exqlite.Sqlite3
-  alias Xeito.{Log, RunSupervisor, Session}
+  alias Xeito.Log
   alias Xeito.Log.Retention
   alias Xeito.Machines.RunTests
+  alias Xeito.RunSupervisor
+  alias Xeito.Session
 
   setup do
     ws = Path.join(System.tmp_dir!(), "xeito-ret-#{System.unique_integer([:positive])}")

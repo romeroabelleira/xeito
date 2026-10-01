@@ -4,14 +4,7 @@ defmodule Xeito.Decision.EvalTest do
   alias Xeito.Decision.Eval
 
   defp r(label, predicted, confidence, probs \\ %{}),
-    do: %{
-      label: label,
-      predicted: predicted,
-      confidence: confidence,
-      probabilities: probs,
-      latency_ms: 10,
-      lang: "en"
-    }
+    do: %{label: label, predicted: predicted, confidence: confidence, probabilities: probs, latency_ms: 10, lang: "en"}
 
   test "accuracy counts abstentions as wrong; coverage and answered accuracy separate them" do
     m =

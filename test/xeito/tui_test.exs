@@ -10,9 +10,7 @@ defmodule Xeito.TuiTest do
   end
 
   defp cursor_drawn?(state),
-    do:
-      state |> Tui.input_view() |> TextInput.render(%{width: 20, height: 1}) |> inspect() =~
-        ":reverse"
+    do: state |> Tui.input_view() |> TextInput.render(%{width: 20, height: 1}) |> inspect() =~ ":reverse"
 
   test "the cursor blinks after a key, and stops blinking (solid) once idle" do
     state = Tui.wake_cursor(state())

@@ -17,7 +17,8 @@ defmodule Xeito.Log.Retention do
   """
 
   alias Exqlite.Sqlite3
-  alias Xeito.Log.{Schema, Store}
+  alias Xeito.Log.Schema
+  alias Xeito.Log.Store
 
   @type session :: %{
           id: String.t(),
@@ -40,25 +41,27 @@ defmodule Xeito.Log.Retention do
     FROM object_session s GROUP BY s.ocel_id
     """
 
-    for [id, status, session_time] <- select(db, sql) do
-      [[runs, last_run]] =
-        select(
-          db,
-          "SELECT COUNT(DISTINCT ocel_id), MAX(ocel_time) FROM object_run WHERE #{prefix("ocel_id")}",
-          [id]
-        )
+    for_result =
+      for [id, status, session_time] <- select(db, sql) do
+        [[runs, last_run]] =
+          select(
+            db,
+            "SELECT COUNT(DISTINCT ocel_id), MAX(ocel_time) FROM object_run WHERE #{prefix("ocel_id")}",
+            [id]
+          )
 
-      [[events]] = select(db, "SELECT COUNT(*) FROM xeito_term WHERE #{prefix("run_id")}", [id])
+        [[events]] = select(db, "SELECT COUNT(*) FROM xeito_term WHERE #{prefix("run_id")}", [id])
 
-      %{
-        id: id,
-        status: status || "open",
-        last: Enum.max([session_time, last_run || session_time]),
-        runs: runs,
-        events: events
-      }
-    end
-    |> Enum.sort_by(& &1.last, :desc)
+        %{
+          id: id,
+          status: status || "open",
+          last: Enum.max([session_time, last_run || session_time]),
+          runs: runs,
+          events: events
+        }
+      end
+
+    Enum.sort_by(for_result, & &1.last, :desc)
   end
 
   @doc "The sessions `prune/2` would delete, newest first. Options: `:older_than_days`, `:keep`, `:now`."
@@ -145,8 +148,7 @@ defmodule Xeito.Log.Retention do
   end
 
   # The id itself, or anything under it (`<id>/…`): runs, effects, escalations, delegations.
-  defp prefix(column),
-    do: "(#{column} = ?1 OR substr(#{column}, 1, length(?1) + 1) = ?1 || '/')"
+  defp prefix(column), do: "(#{column} = ?1 OR substr(#{column}, 1, length(?1) + 1) = ?1 || '/')"
 
   defp run(db, sql, params) do
     {:ok, stmt} = Sqlite3.prepare(db, sql)

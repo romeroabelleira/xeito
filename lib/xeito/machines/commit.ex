@@ -128,12 +128,10 @@ defmodule Xeito.Machines.Commit do
   end
 
   @doc false
-  def record_commit(ctx, result),
-    do: Map.put(ctx, :answer, "Committed " <> String.trim(result.output))
+  def record_commit(ctx, result), do: Map.put(ctx, :answer, "Committed " <> String.trim(result.output))
 
   @doc false
-  def record_error(ctx, result),
-    do: Map.put(ctx, :error, result[:output] || result[:error] || inspect(result))
+  def record_error(ctx, result), do: Map.put(ctx, :error, result[:output] || result[:error] || inspect(result))
 
   defp status(output), do: output |> String.split("@@diff@@", parts: 2) |> hd() |> String.trim()
 

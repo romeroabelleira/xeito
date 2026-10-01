@@ -2,11 +2,19 @@ defmodule Xeito.MachinesTest do
   # Chat calls happen in supervised effect tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.{Decider, Run, RunSupervisor, Skills, Tools}
+  alias Xeito.Decider
   alias Xeito.Decisions.Intent
   alias Xeito.Effects.Local
-  alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
+  alias Xeito.Machines.Chat
+  alias Xeito.Machines.Check
+  alias Xeito.Machines.Commit
+  alias Xeito.Machines.FixFailingTest
+  alias Xeito.Machines.RunTests
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
   alias Xeito.Session.Router
+  alias Xeito.Skills
+  alias Xeito.Tools
 
   setup {Req.Test, :set_req_test_to_shared}
 
@@ -29,11 +37,11 @@ defmodule Xeito.MachinesTest do
       message = assistant(content, calls)
 
       body =
-        [
-          %{"message" => message, "done" => false},
-          %{"done" => true, "prompt_eval_count" => 10, "eval_count" => 5}
-        ]
-        |> Enum.map_join("\n", &JSON.encode!/1)
+        Enum.map_join(
+          [%{"message" => message, "done" => false}, %{"done" => true, "prompt_eval_count" => 10, "eval_count" => 5}],
+          "\n",
+          &JSON.encode!/1
+        )
 
       Plug.Conn.send_resp(conn, 200, body <> "\n")
     end)
@@ -43,6 +51,7 @@ defmodule Xeito.MachinesTest do
 
   defp assistant(content, []), do: %{"role" => "assistant", "content" => content}
 
+  # --- skills --------------------------------------------------------------------------------
   defp assistant(content, calls) do
     tool_calls = for {n, a} <- calls, do: %{"function" => %{"name" => n, "arguments" => a}}
     Map.put(assistant(content, []), "tool_calls", tool_calls)
@@ -69,8 +78,6 @@ defmodule Xeito.MachinesTest do
     git!(ws, ~w(add -A))
     git!(ws, ~w(commit -q -m init))
   end
-
-  # --- skills --------------------------------------------------------------------------------
 
   test "skills are discovered in pi's locations, project first, and read only inside their directory",
        %{ws: ws} do
@@ -163,13 +170,13 @@ defmodule Xeito.MachinesTest do
                ctx
              )
 
+    # --- commit ----------------------------------------------------------------------------------
+
     # Similar names elsewhere are the project's own files.
     for path <- ["lib/deps/x.ex", "deps.md", "src/_build.ts"] do
       assert {:ok, _} = Tools.to_effect(edit.(path), ctx), path
     end
   end
-
-  # --- commit ----------------------------------------------------------------------------------
 
   test "commit drafts a message, waits for approval, and commits", %{ws: ws} do
     log = start_log!()
@@ -200,6 +207,7 @@ defmodule Xeito.MachinesTest do
 
     File.write!(Path.join(ws, "b.txt"), "new\n")
     id = start(Commit, %{cwd: ws}, chat_stub(self(), [{"Add b.txt", []}]), log)
+    # --- check -----------------------------------------------------------------------------------
     eventually(fn -> leaf(id) == :ask_human end)
     Run.send_event(id, :denied, %{}, :human)
     await_exit(id)
@@ -207,8 +215,6 @@ defmodule Xeito.MachinesTest do
     {count, 0} = System.cmd("git", ~w(rev-list --count HEAD), cd: ws)
     assert String.trim(count) == "1"
   end
-
-  # --- check -----------------------------------------------------------------------------------
 
   test "check hands a failure to a chat run and passes after the fix", %{ws: ws} do
     log = start_log!()
@@ -235,6 +241,7 @@ defmodule Xeito.MachinesTest do
 
   test "check asks a human when the attempts are used up", %{ws: ws} do
     log = start_log!()
+    # --- routing and intent rules ------------------------------------------------------------
     cfg = chat_stub(self(), [{"I could not fix it.", []}])
     id = start(Check, %{cwd: ws, check_cmd: "exit 1", max_attempts: 1}, cfg, log)
     eventually(fn -> leaf(id) == :ask_human end)
@@ -242,8 +249,6 @@ defmodule Xeito.MachinesTest do
     await_exit(id)
     assert {:ok, %{state: :failed}} = Run.result(log, id)
   end
-
-  # --- routing and intent rules ------------------------------------------------------------
 
   test "routing rules pick the structured machines", %{ws: ws} do
     assert {FixFailingTest, _} = Router.route(:edit, "the login test is red")

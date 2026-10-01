@@ -33,12 +33,10 @@ defmodule Xeito.Api do
 
   @doc "The default socket path: `$XEITO_SOCKET`, else `~/.xeito/run/xeito.sock`."
   @spec default_socket() :: Path.t()
-  def default_socket,
-    do: System.get_env("XEITO_SOCKET") || Path.expand("~/.xeito/run/xeito.sock")
+  def default_socket, do: System.get_env("XEITO_SOCKET") || Path.expand("~/.xeito/run/xeito.sock")
 
   @doc "Starts the API server. Options: `:socket` (path), `:session` (defaults for new sessions)."
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
   @impl true
   def init(opts) do

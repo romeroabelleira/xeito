@@ -2,10 +2,14 @@ defmodule Xeito.MonitorTest do
   # Probes run in tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.Client.{Config, StatusBar}
-  alias Xeito.{Monitor, Session}
-  alias Xeito.Monitor.{Host, Models}
-  alias Xeito.Session.{Git, Router}
+  alias Xeito.Client.Config
+  alias Xeito.Client.StatusBar
+  alias Xeito.Monitor
+  alias Xeito.Monitor.Host
+  alias Xeito.Monitor.Models
+  alias Xeito.Session
+  alias Xeito.Session.Git
+  alias Xeito.Session.Router
 
   setup {Req.Test, :set_req_test_to_shared}
 
@@ -81,7 +85,7 @@ defmodule Xeito.MonitorTest do
     Req.Test.stub(:mon, fn conn ->
       case {conn.host, conn.request_path} do
         {"large.test", "/api/ps"} ->
-          at = DateTime.utc_now() |> DateTime.add(252) |> DateTime.to_iso8601()
+          at = DateTime.utc_now() |> DateTime.shift(second: 252) |> DateTime.to_iso8601()
 
           Req.Test.json(conn, %{
             "models" => [
@@ -346,27 +350,23 @@ defmodule Xeito.MonitorTest do
 
   test "status bar: latency of the last decision and the last model reply" do
     usage =
-      [
-        %{"event" => "intent", "attrs" => %{"actor" => "large", "latency_ms" => 833}},
-        %{
-          "event" => "effect_completed",
-          "run" => "s/t1",
-          "attrs" => %{
-            "kind" => "chat",
-            "result" => %{"latency_ms" => 2140, "first_token_ms" => 410}
+      Enum.reduce(
+        [
+          %{"event" => "intent", "attrs" => %{"actor" => "large", "latency_ms" => 833}},
+          %{
+            "event" => "effect_completed",
+            "run" => "s/t1",
+            "attrs" => %{"kind" => "chat", "result" => %{"latency_ms" => 2140, "first_token_ms" => 410}}
+          },
+          %{
+            "event" => "decision_made",
+            "run" => "s/t1",
+            "attrs" => %{"decision_type" => "Xeito.Decisions.Risk", "actor" => "rule", "latency_ms" => 3}
           }
-        },
-        %{
-          "event" => "decision_made",
-          "run" => "s/t1",
-          "attrs" => %{
-            "decision_type" => "Xeito.Decisions.Risk",
-            "actor" => "rule",
-            "latency_ms" => 3
-          }
-        }
-      ]
-      |> Enum.reduce(StatusBar.new(), &StatusBar.count(&2, &1))
+        ],
+        StatusBar.new(),
+        &StatusBar.count(&2, &1)
+      )
 
     hidden = ~w(gpu models cpu git calls tokens det cost budget queue)
 

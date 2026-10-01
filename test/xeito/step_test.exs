@@ -2,8 +2,11 @@ defmodule Xeito.StepTest do
   use Xeito.Case, async: true
 
   alias Xeito.Decisions.Triage
-  alias Xeito.{Log, Run, RunSupervisor, Session}
+  alias Xeito.Log
   alias Xeito.Machines.FixFailingTest
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
+  alias Xeito.Session
 
   @ctx %{cwd: "/tmp", test_cmd: "mix test"}
 
@@ -26,10 +29,7 @@ defmodule Xeito.StepTest do
   end
 
   defp paused_in(id, leaf),
-    do:
-      eventually(fn ->
-        Run.whereis(id) && match?(%{leaf: ^leaf, paused: true}, Run.snapshot(id))
-      end)
+    do: eventually(fn -> Run.whereis(id) && match?(%{leaf: ^leaf, paused: true}, Run.snapshot(id)) end)
 
   test "step mode holds each result until released; a held decision can be answered by a human" do
     log = start_log!()
@@ -38,8 +38,7 @@ defmodule Xeito.StepTest do
 
     paused_in(id, :reproduce)
 
-    assert_receive {:xeito, ^id,
-                    %{type: "paused", attrs: %{"state" => :reproduce, "kind" => :bash}}}
+    assert_receive {:xeito, ^id, %{type: "paused", attrs: %{"state" => :reproduce, "kind" => :bash}}}
 
     assert :ok = Run.step(id)
 

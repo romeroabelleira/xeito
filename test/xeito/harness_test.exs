@@ -2,12 +2,21 @@ defmodule Xeito.HarnessTest do
   # Chat calls happen in supervised effect tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.{Client, Effect, Log, Run, RunSupervisor, Session}
+  alias Xeito.Client
   alias Xeito.Client.Render
-  alias Xeito.Decisions.{Risk, Triage}
+  alias Xeito.Decisions.Risk
+  alias Xeito.Decisions.Triage
+  alias Xeito.Effect
   alias Xeito.Effects.Local
-  alias Xeito.Machines.{Chat, FixFailingTest, RunTests}
-  alias Xeito.Session.{Git, Router}
+  alias Xeito.Log
+  alias Xeito.Machines.Chat
+  alias Xeito.Machines.FixFailingTest
+  alias Xeito.Machines.RunTests
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
+  alias Xeito.Session
+  alias Xeito.Session.Git
+  alias Xeito.Session.Router
 
   setup {Req.Test, :set_req_test_to_shared}
 
@@ -84,6 +93,7 @@ defmodule Xeito.HarnessTest do
       ] ++
         if(calls == [],
           do: [],
+          # --- tools -------------------------------------------------------------------------------
           else: [
             %{
               "message" => %{
@@ -114,15 +124,13 @@ defmodule Xeito.HarnessTest do
     id
   end
 
-  defp kinds(log, id),
-    do: for({_, "effect_requested", {:effect_requested, e}} <- Log.read_run(log, id), do: e.kind)
-
-  # --- tools -------------------------------------------------------------------------------
+  defp kinds(log, id), do: for({_, "effect_requested", {:effect_requested, e}} <- Log.read_run(log, id), do: e.kind)
 
   test "edit replaces exactly one occurrence and refuses ambiguity", %{ws: ws} do
     File.write!(Path.join(ws, "a.txt"), "one two two")
 
     assert %{ok: true} = Local.run(Effect.edit("a.txt", "one", "1", cwd: ws), [])
+    # --- the chat machine --------------------------------------------------------------------
     assert File.read!(Path.join(ws, "a.txt")) == "1 two two"
 
     assert %{ok: false, error: "old_text matches 2 times" <> _} =
@@ -156,8 +164,6 @@ defmodule Xeito.HarnessTest do
 
     assert Render.line(event) == "  edit a.py\n    - x = 1\n    + x = 2\n    + y = 3\n"
   end
-
-  # --- the chat machine --------------------------------------------------------------------
 
   test "chat: after edits the checks run before the answer; a failure goes back to the model",
        %{ws: ws} do
@@ -244,7 +250,7 @@ defmodule Xeito.HarnessTest do
     assert tool["role"] == "tool" and tool["tool_name"] == "bash"
     assert tool["content"] =~ "hello.txt"
     # Xeito's bookkeeping on messages (the result's ref, what it was) never reaches the model.
-    assert Map.keys(tool) |> Enum.sort() == ["content", "role", "tool_name"]
+    assert tool |> Map.keys() |> Enum.sort() == ["content", "role", "tool_name"]
 
     # Streamed model output is published as deltas (not logged).
     assert_received {:xeito, ^id, %{type: "delta", attrs: %{"text" => "Let me"}}}
@@ -299,9 +305,8 @@ defmodule Xeito.HarnessTest do
     assert List.last(second["messages"])["content"] =~ "unknown tool"
   end
 
-  # --- delegation: fix_failing_test hands the fix to a chat child run ------------------------
-
   test "fix_failing_test delegates the fix to a chat run and verifies it", %{ws: ws} do
+    # --- delegation: fix_failing_test hands the fix to a chat child run ------------------------
     log = start_log!()
     File.write!(Path.join(ws, "status.txt"), "broken\n")
 
@@ -338,9 +343,8 @@ defmodule Xeito.HarnessTest do
     assert List.last(first["messages"])["content"] =~ "Triage: code_bug"
   end
 
-  # --- sessions ----------------------------------------------------------------------------
-
   defp session(ws, log, cfg) do
+    # --- sessions ----------------------------------------------------------------------------
     {:ok, id} =
       Session.start(
         cwd: ws,
@@ -498,8 +502,6 @@ defmodule Xeito.HarnessTest do
     assert %{attrs: %{"status" => :done}} = next_event("turn_finished")
   end
 
-  # --- the client API over the Unix socket -------------------------------------------------
-
   test "api: a client starts a session, prompts, and receives the streamed events", %{ws: ws} do
     log = start_log!()
     cfg = ollama(self(), [{"Hello from the model.", []}], %{"What does the user want" => "other"})
@@ -542,6 +544,8 @@ defmodule Xeito.HarnessTest do
     assert %{"ok" => false, "error" => "no such session"} =
              Client.request(client, %{"cmd" => "status", "session" => "nope"})
 
+    # --- the client API over the Unix socket -------------------------------------------------
+
     assert %{"ok" => true, "status" => %{"history" => 2}} =
              Client.request(client, %{"cmd" => "status", "session" => session})
   end
@@ -562,10 +566,7 @@ defmodule Xeito.HarnessTest do
       idle_timeout: 200
     ]
 
-    start_supervised!(
-      {Xeito.Api,
-       socket: path, name: :"api_#{System.unique_integer([:positive])}", session: defaults}
-    )
+    start_supervised!({Xeito.Api, socket: path, name: :"api_#{System.unique_integer([:positive])}", session: defaults})
 
     {:ok, client} = Client.connect(path)
 

@@ -16,7 +16,8 @@ defmodule Xeito.Tiers.Remote do
 
   @behaviour Xeito.Tiers
 
-  alias Xeito.Decision.{Prompt, Type}
+  alias Xeito.Decision.Prompt
+  alias Xeito.Decision.Type
 
   @default_model "claude-opus-5"
   @default_price {5.0, 25.0}

@@ -19,24 +19,22 @@ defmodule Xeito.Monitor do
 
   use GenServer
 
-  alias Xeito.Monitor.{Host, Models}
+  alias Xeito.Monitor.Host
+  alias Xeito.Monitor.Models
   alias Xeito.Tiers.Queue
 
   @tiers [:system_one, :small, :large, :openrouter, :remote]
 
   @doc false
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
   @doc "Sends `{:xeito_monitor, snapshot}` to `pid` after every poll, until it unsubscribes or exits."
   @spec subscribe(pid(), GenServer.server()) :: :ok
-  def subscribe(pid \\ self(), server \\ __MODULE__),
-    do: GenServer.call(server, {:subscribe, pid})
+  def subscribe(pid \\ self(), server \\ __MODULE__), do: GenServer.call(server, {:subscribe, pid})
 
   @doc "Stops the updates for `pid`."
   @spec unsubscribe(pid(), GenServer.server()) :: :ok
-  def unsubscribe(pid \\ self(), server \\ __MODULE__),
-    do: GenServer.call(server, {:unsubscribe, pid})
+  def unsubscribe(pid \\ self(), server \\ __MODULE__), do: GenServer.call(server, {:unsubscribe, pid})
 
   @doc "Whether the monitor is polling (it is exactly when it has subscribers)."
   @spec polling?(GenServer.server()) :: boolean()
@@ -74,8 +72,7 @@ defmodule Xeito.Monitor do
   def handle_call(:polling?, _from, s), do: {:reply, map_size(s.subscribers) > 0, s}
 
   @impl true
-  def handle_info(:poll, %{subscribers: subs} = s) when map_size(subs) == 0,
-    do: {:noreply, cancel(s)}
+  def handle_info(:poll, %{subscribers: subs} = s) when map_size(subs) == 0, do: {:noreply, cancel(s)}
 
   def handle_info(:poll, s) do
     s = cancel(s)

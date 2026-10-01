@@ -8,8 +8,13 @@ defmodule Xeito.Escalation do
   waits for it to finish, and returns the `%Xeito.Decision{}` it committed.
   """
 
-  alias Xeito.{Decision, Log, Machines, Policy, Run, RunSupervisor}
+  alias Xeito.Decision
   alias Xeito.Decision.Type
+  alias Xeito.Log
+  alias Xeito.Machines
+  alias Xeito.Policy
+  alias Xeito.Run
+  alias Xeito.RunSupervisor
 
   @doc """
   Decides `type_module` for `input`. Options:
@@ -56,8 +61,7 @@ defmodule Xeito.Escalation do
     id = Keyword.get_lazy(opts, :id, fn -> child_id(opts[:effect_id]) end)
 
     runner =
-      {Xeito.Effects.Local,
-       [log: log, run_id: id, parent_run: parent, tiers: Keyword.get(opts, :tiers, [])]}
+      {Xeito.Effects.Local, [log: log, run_id: id, parent_run: parent, tiers: Keyword.get(opts, :tiers, [])]}
 
     {:ok, ^id} = start(Machines.Escalation, ctx, id, log, runner)
     if parent, do: Log.relate(log, id, parent, "part_of")
@@ -77,8 +81,7 @@ defmodule Xeito.Escalation do
     Keyword.has_key?(Keyword.get(opts, :tiers, []), tier) or Xeito.Tiers.config(tier) != nil
   end
 
-  defp child_id(nil),
-    do: "esc-" <> Base.encode32(:crypto.strong_rand_bytes(8), case: :lower, padding: false)
+  defp child_id(nil), do: "esc-" <> Base.encode32(:crypto.strong_rand_bytes(8), case: :lower, padding: false)
 
   defp child_id(effect_id), do: effect_id <> "/esc"
 

@@ -57,8 +57,7 @@ defmodule Xeito.Decision.Prompt do
         type.name => %{
           "type" => "choice",
           "instructions" => type.instructions,
-          "criteria" =>
-            Map.new(type.values, fn {value, desc} -> {Atom.to_string(value), desc} end)
+          "criteria" => Map.new(type.values, fn {value, desc} -> {Atom.to_string(value), desc} end)
         }
       }
     }

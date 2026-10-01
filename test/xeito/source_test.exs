@@ -2,7 +2,8 @@ defmodule Xeito.SourceTest do
   use Xeito.Case, async: true
 
   alias Xeito.Effects.Local
-  alias Xeito.{Source, Tools}
+  alias Xeito.Source
+  alias Xeito.Tools
 
   @code """
   defmodule Shop.Cart do

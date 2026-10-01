@@ -6,22 +6,19 @@ defmodule Xeito.RunPropertyTest do
   use Xeito.Case, async: true
   use ExUnitProperties
 
-  alias Xeito.{Log, Run, RunSupervisor}
+  alias Xeito.Log
   alias Xeito.Machines.FixFailingTest
+  alias Xeito.Run
   alias Xeito.Run.Recovery
+  alias Xeito.RunSupervisor
 
   defp event do
     one_of([
       tuple({constant(:ran), map(member_of([0, 1]), &%{exit_status: &1, output: ""})}),
       tuple(
-        {member_of(
-           Enum.map([:flaky, :code_bug, :test_bug, :env_problem, :abstain], &{:decided, &1})
-         ), constant(%{})}
+        {member_of(Enum.map([:flaky, :code_bug, :test_bug, :env_problem, :abstain], &{:decided, &1})), constant(%{})}
       ),
-      tuple(
-        {member_of([:planned, :edited, :answered, :give_up, :abort, :timeout, :bogus]),
-         constant(%{})}
-      )
+      tuple({member_of([:planned, :edited, :answered, :give_up, :abort, :timeout, :bogus]), constant(%{})})
     ])
   end
 
@@ -55,7 +52,8 @@ defmodule Xeito.RunPropertyTest do
 
   # Sends events until the run finishes; returns the final snapshot or :finished.
   defp drive(id, events) do
-    Enum.reduce_while(events, nil, fn {name, data}, _ ->
+    events
+    |> Enum.reduce_while(nil, fn {name, data}, _ ->
       case Run.send_event(id, name, data, :code) do
         {:ok, leaf} when leaf in [:done, :failed] -> {:halt, :finished}
         _ -> {:cont, nil}

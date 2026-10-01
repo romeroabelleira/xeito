@@ -14,7 +14,9 @@ defmodule Xeito.Tiers.Small do
 
   @behaviour Xeito.Tiers
 
-  alias Xeito.Decision.{Prompt, Scoring, Type}
+  alias Xeito.Decision.Prompt
+  alias Xeito.Decision.Scoring
+  alias Xeito.Decision.Type
   alias Xeito.Tiers
 
   @prefill ~s({"value": ")

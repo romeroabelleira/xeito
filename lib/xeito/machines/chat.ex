@@ -38,7 +38,8 @@ defmodule Xeito.Machines.Chat do
 
   use Xeito.Machine, version: "0.3.0"
 
-  alias Xeito.{Effect, Tools}
+  alias Xeito.Effect
+  alias Xeito.Tools
 
   @human_timeout 86_400_000
   @verify_timeout 900_000
@@ -87,8 +88,20 @@ defmodule Xeito.Machines.Chat do
     on :denied, to: :thinking, action: :deny
   end
 
+  # --- entry functions ---------------------------------------------------------------------
+
   final :answered
   final :failed
+
+  # --- elision -------------------------------------------------------------------------------
+  #
+  # Every model request resends the whole conversation. Old tool output is replaced by a stub
+  # that says what it was and how to read it again. It happens in whole batches, so the start
+  # of the prompt (and the model's prompt cache) changes only once every @elide_batch outputs:
+  #   * the last @keep_whole tool outputs are always whole;
+  #   * outputs of at most @elide_min characters, and skill instructions, are never elided;
+  #   * the conversation in the context (`ctx.turn`, the session history) keeps everything; only
+  #     what is sent to the model is elided, as a pure function, so replay reproduces it.
 
   @default_system """
   You are a coding assistant working in a software project. Use the tools to inspect and change
@@ -100,22 +113,10 @@ defmodule Xeito.Machines.Chat do
   @spec default_system() :: String.t()
   def default_system, do: @default_system
 
-  # --- entry functions ---------------------------------------------------------------------
-
   @doc false
   def ask_model(ctx) do
-    [Effect.chat(ctx |> messages() |> elide(), tools: Tools.names_for(ctx))]
+    [ctx |> messages() |> elide() |> Effect.chat(tools: Tools.names_for(ctx))]
   end
-
-  # --- elision -------------------------------------------------------------------------------
-  #
-  # Every model request resends the whole conversation. Old tool output is replaced by a stub
-  # that says what it was and how to read it again. It happens in whole batches, so the start
-  # of the prompt (and the model's prompt cache) changes only once every @elide_batch outputs:
-  #   * the last @keep_whole tool outputs are always whole;
-  #   * outputs of at most @elide_min characters, and skill instructions, are never elided;
-  #   * the conversation in the context (`ctx.turn`, the session history) keeps everything; only
-  #     what is sent to the model is elided, as a pure function, so replay reproduces it.
 
   @keep_whole 4
   @elide_batch 6
@@ -154,11 +155,12 @@ defmodule Xeito.Machines.Chat do
           "[elided to save context: #{about} (#{lines} lines). " <>
             "If you still need it, read with result: \"#{ref}\".]"
     }
+
+    # --- guards ------------------------------------------------------------------------------
   end
 
   @doc false
-  def run_checks(ctx),
-    do: [Effect.bash(ctx.verify, cwd: ctx.cwd, timeout: @verify_timeout, reply: :verified)]
+  def run_checks(ctx), do: [Effect.bash(ctx.verify, cwd: ctx.cwd, timeout: @verify_timeout, reply: :verified)]
 
   @doc false
   def run_tool(%{current: call} = ctx) do
@@ -174,8 +176,6 @@ defmodule Xeito.Machines.Chat do
     [system | Map.get(ctx, :messages, [])] ++ [%{role: "user", content: ctx.prompt}]
   end
 
-  # --- guards ------------------------------------------------------------------------------
-
   @doc false
   def chat_error?(_ctx, message), do: Map.has_key?(message, :error)
 
@@ -186,8 +186,7 @@ defmodule Xeito.Machines.Chat do
   def calls_next_safe?(ctx, message), do: next_is?(valid(message, ctx), false)
 
   @doc false
-  def only_invalid_calls?(ctx, message),
-    do: Map.get(message, :tool_calls, []) != [] and valid(message, ctx) == []
+  def only_invalid_calls?(ctx, message), do: Map.get(message, :tool_calls, []) != [] and valid(message, ctx) == []
 
   # The model asks for tools on its last allowed turn: stop instead of running them.
   @doc false
@@ -203,14 +202,14 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def step_limit?(ctx, _data), do: Map.get(ctx, :steps, 0) >= max_steps(ctx)
 
+  # --- actions -----------------------------------------------------------------------------
   # Edits made in this turn and a check command to verify them with. `edited` is set when a
   # write or edit succeeds; the guard also counts the result arriving now.
   @doc false
   def edited?(ctx, _data), do: verify?(ctx) and Map.get(ctx, :edited, false)
 
   @doc false
-  def calls_at_limit_edited?(ctx, message),
-    do: calls_at_limit?(ctx, message) and edited?(ctx, message)
+  def calls_at_limit_edited?(ctx, message), do: calls_at_limit?(ctx, message) and edited?(ctx, message)
 
   @doc false
   def step_limit_edited?(ctx, result),
@@ -240,8 +239,6 @@ defmodule Xeito.Machines.Chat do
         match?({:ok, _}, Tools.to_effect(call, ctx)),
         do: call
   end
-
-  # --- actions -----------------------------------------------------------------------------
 
   @doc false
   def queue_calls(ctx, message) do
@@ -331,8 +328,7 @@ defmodule Xeito.Machines.Chat do
   defp tail(output), do: output
 
   @doc false
-  def forbid(ctx, _result),
-    do: refuse(ctx, "blocked: the Risk decision classified this command as forbidden")
+  def forbid(ctx, _result), do: refuse(ctx, "blocked: the Risk decision classified this command as forbidden")
 
   @doc false
   def forbid_and_stop(ctx, result), do: ctx |> forbid(result) |> stop()
@@ -388,22 +384,21 @@ defmodule Xeito.Machines.Chat do
       for c <- Map.get(message, :tool_calls, []),
           do: %{function: %{name: c.name, arguments: c.arguments}}
 
-    %{role: "assistant", content: Map.get(message, :content, "")}
-    |> then(&if(calls == [], do: &1, else: Map.put(&1, :tool_calls, calls)))
+    then(
+      %{role: "assistant", content: Map.get(message, :content, "")},
+      &if(calls == [], do: &1, else: Map.put(&1, :tool_calls, calls))
+    )
   end
 
   defp tool_message(call, text), do: %{role: "tool", tool_name: call.name, content: text}
 
   # A result that can be read back (`ref`) also records what it was, for its stub if elided.
-  defp tool_message(call, text, %{ref: ref}),
-    do: call |> tool_message(text) |> Map.merge(%{ref: ref, about: about(call)})
+  defp tool_message(call, text, %{ref: ref}), do: call |> tool_message(text) |> Map.merge(%{ref: ref, about: about(call)})
 
   defp tool_message(call, text, _result), do: tool_message(call, text)
 
   defp about(%{name: "bash", arguments: %{"command" => cmd}}),
-    do:
-      "output of `" <>
-        String.slice(cmd, 0, 80) <> if(String.length(cmd) > 80, do: "…`", else: "`")
+    do: "output of `" <> String.slice(cmd, 0, 80) <> if(String.length(cmd) > 80, do: "…`", else: "`")
 
   defp about(%{name: "read", arguments: %{"path" => path} = args}) when path != "" do
     detail = args["symbol"] || args["lines"] || if(args["outline"], do: "outline")

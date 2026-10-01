@@ -1,8 +1,12 @@
 defmodule Xeito.LogStoreTest do
   use Xeito.Case, async: true
 
-  alias Xeito.{Effect, Log, Machine}
-  alias Xeito.Log.{Event, Sql, Store}
+  alias Xeito.Effect
+  alias Xeito.Log
+  alias Xeito.Log.Event
+  alias Xeito.Log.Sql
+  alias Xeito.Log.Store
+  alias Xeito.Machine
   alias Xeito.Machines.Chat
   alias Xeito.Run.Recovery
 
@@ -40,7 +44,7 @@ defmodule Xeito.LogStoreTest do
     Log.append(log, "r", events)
 
     assert Log.read_run(log, "r") ==
-             Enum.with_index(events, 1) |> Enum.map(fn {e, i} -> {i, e.type, e.term} end)
+             events |> Enum.with_index(1) |> Enum.map(fn {e, i} -> {i, e.type, e.term} end)
 
     # Six distinct messages in the chains starting at the system prompt, plus the input history
     # (a chain of its own, starting at "hi").

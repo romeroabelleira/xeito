@@ -15,20 +15,21 @@ defmodule Xeito.Session.Router do
   `/machine <name>` bypasses the intent decision and starts a registered machine directly.
   """
 
-  alias Xeito.Machines.{Chat, Check, Commit, FixFailingTest, RunTests}
+  alias Xeito.Machines.Chat
+  alias Xeito.Machines.Check
+  alias Xeito.Machines.Commit
+  alias Xeito.Machines.FixFailingTest
+  alias Xeito.Machines.RunTests
 
   # The registry: name, module, what it does, and how requests reach it (besides /machine).
   @registry [
-    {"fix_failing_test", FixFailingTest,
-     "reproduce a failing test, triage it, delegate the fix to chat, verify",
+    {"fix_failing_test", FixFailingTest, "reproduce a failing test, triage it, delegate the fix to chat, verify",
      "intent edit + a failing, red or broken test"},
     {"check", Check, "run the project checks; delegate failures to chat until they pass",
      "intent run/edit + lint, format, warnings, CI or checks"},
-    {"commit", Commit, "draft a commit message, ask for approval, commit",
-     "intent run/edit + commit"},
+    {"commit", Commit, "draft a commit message, ask for approval, commit", "intent run/edit + commit"},
     {"run_tests", RunTests, "run the test command once", "intent run + tests"},
-    {"chat", Chat, "free chat: read/write/edit/bash as effects, bash behind Risk",
-     "anything else"}
+    {"chat", Chat, "free chat: read/write/edit/bash as effects, bash behind Risk", "anything else"}
   ]
 
   @doc "Registered machines by name."
@@ -60,8 +61,7 @@ defmodule Xeito.Session.Router do
 
   defp existing_log(cwd) do
     if File.exists?(Path.join([cwd, ".xeito", "log.sqlite"])),
-      do: Xeito.Log.for_workspace(cwd),
-      else: nil
+      do: Xeito.Log.for_workspace(cwd)
   end
 
   defp usage(nil), do: %{}
@@ -108,11 +108,7 @@ defmodule Xeito.Session.Router do
   end
 
   defp checks?(message),
-    do:
-      Regex.match?(
-        ~r/\b(lint\w*|format\w*|credo|dialyzer|warnings?|ci|checks?|pre-?commit)\b/i,
-        message
-      )
+    do: Regex.match?(~r/\b(lint\w*|format\w*|credo|dialyzer|warnings?|ci|checks?|pre-?commit)\b/i, message)
 
   defp tests?(message), do: Regex.match?(~r/\b(tests?|specs?|test suite)\b/i, message)
 
@@ -186,16 +182,19 @@ defmodule Xeito.Session.Router do
   """
   @spec test_command(Path.t()) :: String.t()
   def test_command(cwd) do
-    [
-      {"mix.exs", "mix test"},
-      {"package.json", "npm test"},
-      {"pyproject.toml", "pytest"},
-      {"setup.py", "pytest"},
-      {"Cargo.toml", "cargo test"},
-      {"go.mod", "go test ./..."}
-    ]
-    |> Enum.find_value("make test", fn {file, cmd} ->
-      if File.exists?(Path.join(cwd, file)), do: cmd
-    end)
+    Enum.find_value(
+      [
+        {"mix.exs", "mix test"},
+        {"package.json", "npm test"},
+        {"pyproject.toml", "pytest"},
+        {"setup.py", "pytest"},
+        {"Cargo.toml", "cargo test"},
+        {"go.mod", "go test ./..."}
+      ],
+      "make test",
+      fn {file, cmd} ->
+        if File.exists?(Path.join(cwd, file)), do: cmd
+      end
+    )
   end
 end

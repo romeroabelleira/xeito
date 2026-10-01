@@ -29,8 +29,10 @@ defmodule Xeito.Machines.Escalation do
 
   use Xeito.Machine, version: "1.1.0"
 
-  alias Xeito.{Decider, Decision, Effect}
+  alias Xeito.Decider
+  alias Xeito.Decision
   alias Xeito.Decision.Type
+  alias Xeito.Effect
 
   @routable [:system_one, :small, :large, :openrouter, :remote, :human]
 
@@ -78,6 +80,8 @@ defmodule Xeito.Machines.Escalation do
     state :openrouter, entry: :run_openrouter, timeout: 90_000
     state :remote, entry: :run_remote, timeout: 180_000
 
+    # --- entry functions: one effect per tier ------------------------------------------------
+
     state :human, timeout: {600_000, :human_timeout} do
       on :human_decision, to: :committed, guard: :valid_human?, action: :commit_human
       on :human_timeout, to: :abstained, action: :abstain_skipped
@@ -88,11 +92,10 @@ defmodule Xeito.Machines.Escalation do
   final :abstained
   final :failed
 
-  # --- entry functions: one effect per tier ------------------------------------------------
-
   @doc false
   def run_rules(ctx), do: [tier_effect(:rules, ctx)]
   @doc false
+  # --- guards ------------------------------------------------------------------------------
   def run_system_one(ctx), do: [tier_effect(:system_one, ctx)]
   @doc false
   def run_small(ctx), do: [tier_effect(:small, ctx)]
@@ -109,19 +112,17 @@ defmodule Xeito.Machines.Escalation do
 
   defp tier_effect(tier, ctx), do: Effect.tier(tier, ctx.type, ctx.input)
 
-  # --- guards ------------------------------------------------------------------------------
-
   @doc false
   def accept?(ctx, result), do: Decider.accept?(Decision.type!(ctx.type), result)
 
   for tier <- @routable do
     @doc false
-    def unquote(:"next_#{tier}?")(ctx, result),
-      do: not accept?(ctx, result) and next?(ctx, unquote(tier))
+    def unquote(:"next_#{tier}?")(ctx, result), do: not accept?(ctx, result) and next?(ctx, unquote(tier))
   end
 
   for tier <- @routable -- [:large] do
     @doc false
+    # --- actions -----------------------------------------------------------------------------
     def unquote(:"skip_to_#{tier}?")(ctx, _result), do: next?(ctx, unquote(tier))
   end
 
@@ -152,8 +153,6 @@ defmodule Xeito.Machines.Escalation do
   end
 
   defp best_previous(_ctx), do: nil
-
-  # --- actions -----------------------------------------------------------------------------
 
   @doc false
   def commit(ctx, result), do: finish_with(ctx, [{:decided, result} | ctx.attempts])
@@ -187,18 +186,13 @@ defmodule Xeito.Machines.Escalation do
 
   @doc false
   def skip(ctx, probe),
-    do: %{
-      ctx
-      | attempts: [%{tier: :large, error: {:skipped, probe}} | ctx.attempts],
-        plan: tl(ctx.plan)
-    }
+    do: %{ctx | attempts: [%{tier: :large, error: {:skipped, probe}} | ctx.attempts], plan: tl(ctx.plan)}
 
   @doc false
   def abstain(ctx, result), do: finish_with(ctx, [result | ctx.attempts])
 
   @doc false
-  def abstain_skipped(ctx, data),
-    do: finish_with(ctx, [%{tier: :large, error: {:skipped, data}} | ctx.attempts])
+  def abstain_skipped(ctx, data), do: finish_with(ctx, [%{tier: :large, error: {:skipped, data}} | ctx.attempts])
 
   defp finish_with(ctx, attempts) do
     decision = Decider.finalize(Decision.type!(ctx.type), ctx.base, attempts)

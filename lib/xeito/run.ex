@@ -20,15 +20,21 @@ defmodule Xeito.Run do
 
   @behaviour :gen_statem
 
-  alias Xeito.{Budget, Decision, Effect, Effects, Log, Machine}
+  alias Xeito.Budget
+  alias Xeito.Decision
   alias Xeito.Decision.Type
+
+  # --- Client API --------------------------------------------------------------------------
+
+  alias Xeito.Effect
+  alias Xeito.Effects
+  alias Xeito.Log
   alias Xeito.Log.Event
+  alias Xeito.Machine
   alias Xeito.Machine.Engine
   alias Xeito.Run.Recovery
 
   @type run_id :: String.t()
-
-  # --- Client API --------------------------------------------------------------------------
 
   @doc false
   def child_spec(opts) do
@@ -128,6 +134,8 @@ defmodule Xeito.Run do
     }
   end
 
+  # --- gen_statem --------------------------------------------------------------------------
+
   @doc "Waits until run `id` has finished. Returns its logged result or `:timeout`."
   @spec await(Log.server(), String.t(), timeout()) :: {:ok, map()} | :timeout
   def await(log, id, timeout) do
@@ -168,8 +176,6 @@ defmodule Xeito.Run do
 
   defp via(run_id), do: {:via, Registry, {Xeito.RunRegistry, run_id}}
 
-  # --- gen_statem --------------------------------------------------------------------------
-
   @impl :gen_statem
   def callback_mode, do: :handle_event_function
 
@@ -181,7 +187,7 @@ defmodule Xeito.Run do
     data = %{
       run_id: run_id,
       machine: Machine.fetch!(module),
-      log: Keyword.get(opts, :log, Xeito.Log),
+      log: Keyword.get(opts, :log, Log),
       runner: Keyword.get(opts, :runner, :none),
       ctx: %{},
       effect_count: 0,
@@ -263,8 +269,7 @@ defmodule Xeito.Run do
   end
 
   def handle_event({:call, from}, :snapshot, leaf, data) do
-    {:keep_state_and_data,
-     [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
+    {:keep_state_and_data, [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
   end
 
   def handle_event({:call, from}, {:debug, settings}, leaf, data) do
@@ -282,12 +287,10 @@ defmodule Xeito.Run do
 
   # While a result is held, further results wait in order; timeouts are dropped (a paused
   # run is under human control, and the next state re-arms its own timeout).
-  def handle_event(:info, {:xeito_effect, _, _} = msg, _leaf, %{held: held} = data)
-      when held != nil,
-      do: {:keep_state, %{data | queued: data.queued ++ [msg]}}
+  def handle_event(:info, {:xeito_effect, _, _} = msg, _leaf, %{held: held} = data) when held != nil,
+    do: {:keep_state, %{data | queued: data.queued ++ [msg]}}
 
-  def handle_event(:state_timeout, _name, _leaf, %{held: held}) when held != nil,
-    do: :keep_state_and_data
+  def handle_event(:state_timeout, _name, _leaf, %{held: held}) when held != nil, do: :keep_state_and_data
 
   def handle_event(:info, {:xeito_effect, id, result} = msg, leaf, data) do
     case Map.fetch(data.effects, id) do
@@ -300,6 +303,8 @@ defmodule Xeito.Run do
         :keep_state_and_data
     end
   end
+
+  # --- step mode and breakpoints -------------------------------------------------------------
 
   def handle_event(:state_timeout, name, leaf, data) do
     process(leaf, data, name, %{}, :code, [], nil)
@@ -336,8 +341,6 @@ defmodule Xeito.Run do
     end
   end
 
-  # --- step mode and breakpoints -------------------------------------------------------------
-
   defp pause?(%{debug: %{step: true}}, _leaf, _effect, _result), do: true
 
   defp pause?(%{debug: %{breakpoints: breakpoints}}, leaf, effect, result),
@@ -345,8 +348,7 @@ defmodule Xeito.Run do
 
   defp breakpoint?({:state, state}, leaf, _effect, _result), do: state == leaf
 
-  defp breakpoint?({:decision, type}, _leaf, %Effect{kind: :decide, args: args}, _result),
-    do: args.decision == type
+  defp breakpoint?({:decision, type}, _leaf, %Effect{kind: :decide, args: args}, _result), do: args.decision == type
 
   defp breakpoint?({:confidence_below, x}, _leaf, %Effect{kind: :decide}, %{decision: d}),
     do: is_number(d[:confidence]) and d[:confidence] < x
@@ -564,11 +566,9 @@ defmodule Xeito.Run do
   defp actor(%Effect{kind: :chat}, _result), do: :large
   defp actor(_effect, _result), do: :code
 
-  defp entered_event(state),
-    do: Event.new("state_entered", {:state_entered, state}, %{"state" => state})
+  defp entered_event(state), do: Event.new("state_entered", {:state_entered, state}, %{"state" => state})
 
-  defp exited_event(state),
-    do: Event.new("state_exited", {:state_exited, state}, %{"state" => state})
+  defp exited_event(state), do: Event.new("state_exited", {:state_exited, state}, %{"state" => state})
 
   defp requested_event(effect) do
     Event.new(

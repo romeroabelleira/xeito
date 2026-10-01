@@ -13,7 +13,8 @@ defmodule Xeito.Machine.Engine do
   transition handles moves the run to `:failed`.
   """
 
-  alias Xeito.{Effect, Machine}
+  alias Xeito.Effect
+  alias Xeito.Machine
   alias Xeito.Machine.Transition
 
   @type step :: %{
@@ -88,8 +89,7 @@ defmodule Xeito.Machine.Engine do
 
   defp guard_passes?(_machine, %Transition{guard: nil}, _ctx, _data), do: true
 
-  defp guard_passes?(machine, %Transition{guard: guard}, ctx, data),
-    do: apply(machine.module, guard, [ctx, data]) == true
+  defp guard_passes?(machine, %Transition{guard: guard}, ctx, data), do: apply(machine.module, guard, [ctx, data]) == true
 
   defp take(machine, leaf, ctx, transition, data, implicit?) do
     ctx =
