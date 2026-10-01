@@ -97,7 +97,8 @@ defmodule Xeito.Log.Store do
     "tool_calls" => :tool_calls,
     "tool_name" => :tool_name,
     "ref" => :ref,
-    "about" => :about
+    "about" => :about,
+    "read" => :read
   }
   @call_keys %{"function" => :function}
   @function_keys %{"name" => :name, "arguments" => :arguments}

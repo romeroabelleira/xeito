@@ -245,6 +245,25 @@ defmodule Xeito.ShapeTest do
       assert length(stubbed) == 12 and hd(stubbed) == "ses-x/t1/e4"
     end
 
+    test "the latest whole read of recent project files stays whole; older reads and dependencies are elided" do
+      read = fn n, path -> n |> tool() |> Map.put(:read, path) |> Map.put(:about, "read of #{path}") end
+
+      tools =
+        [read.(1, "lib/tui.ex"), read.(2, "lib/tui.ex"), 3 |> tool() |> Map.put(:about, "read of deps/x.ex")] ++
+          Enum.map(4..15, &tool/1)
+
+      stubbed = stubbed(Chat.elide(conversation(tools)))
+      # e2 is the latest read of lib/tui.ex: kept. e1 (an older read of it) and the rest elide.
+      refute "ses-x/t1/e2" in stubbed
+      assert "ses-x/t1/e1" in stubbed and "ses-x/t1/e3" in stubbed
+
+      # Only the last three project files read keep their latest read.
+      many = Enum.map(1..4, &read.(&1, "lib/f#{&1}.ex")) ++ Enum.map(5..16, &tool/1)
+      stubbed = stubbed(Chat.elide(conversation(many)))
+      assert "ses-x/t1/e1" in stubbed
+      refute Enum.any?(2..4, &("ses-x/t1/e#{&1}" in stubbed))
+    end
+
     test "an elided result from an earlier turn reads back by its full id" do
       log = start_log!()
       result = %{exit_status: 0, output: "the original", ref: "ses-x/t1/e3"}

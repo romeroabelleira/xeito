@@ -248,11 +248,11 @@ defmodule Xeito.Tools.Shape do
     drop_trailing_blank([first | kept])
   end
 
-  defp read_limit(path) do
-    if path |> Path.split() |> Enum.any?(&(&1 in @third_party)),
-      do: @max_read_lines,
-      else: @max_project_read_lines
-  end
+  defp read_limit(path), do: if(third_party?(path), do: @max_read_lines, else: @max_project_read_lines)
+
+  @doc "Whether `path` is a dependency source or generated file rather than the project's own."
+  @spec third_party?(Path.t()) :: boolean()
+  def third_party?(path), do: path |> Path.split() |> Enum.any?(&(&1 in @third_party))
 
   defp read(path, content, result) do
     lines = String.split(content, "\n")

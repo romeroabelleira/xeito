@@ -36,10 +36,11 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.3.0"
+  use Xeito.Machine, version: "0.4.0"
 
   alias Xeito.Effect
   alias Xeito.Tools
+  alias Xeito.Tools.Shape
 
   @human_timeout 86_400_000
   @verify_timeout 900_000
@@ -100,6 +101,9 @@ defmodule Xeito.Machines.Chat do
   # of the prompt (and the model's prompt cache) changes only once every @elide_batch outputs:
   #   * the last @keep_whole tool outputs are always whole;
   #   * outputs of at most @elide_min characters, and skill instructions, are never elided;
+  #   * the latest whole read of each of the last @keep_reads project files read stays whole:
+  #     the model reads those to edit them, and re-read them in slices once they were stubbed
+  #     (bench 4 §6). Older reads of the same file, and dependency sources, are elided as usual;
   #   * the conversation in the context (`ctx.turn`, the session history) keeps everything; only
   #     what is sent to the model is elided, as a pure function, so replay reproduces it.
 
@@ -121,13 +125,16 @@ defmodule Xeito.Machines.Chat do
   @keep_whole 4
   @elide_batch 6
   @elide_min 400
+  @keep_reads 3
 
   @doc false
   @spec elide([map()]) :: [map()]
   def elide(messages) do
+    kept = latest_reads(messages)
+
     candidates =
       for {%{role: "tool"} = m, i} <- Enum.with_index(messages),
-          elidable?(m),
+          elidable?(m) and i not in kept,
           do: i
 
     cut = div(max(length(candidates) - @keep_whole, 0), @elide_batch) * @elide_batch
@@ -136,6 +143,20 @@ defmodule Xeito.Machines.Chat do
     messages
     |> Enum.with_index()
     |> Enum.map(fn {m, i} -> if i in elided, do: stub(m), else: m end)
+  end
+
+  # Indices of the latest whole read of each of the last @keep_reads project files.
+  defp latest_reads(messages) do
+    messages
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn
+      {%{read: path}, i}, latest -> Map.put(latest, path, i)
+      _, latest -> latest
+    end)
+    |> Map.values()
+    |> Enum.sort(:desc)
+    |> Enum.take(@keep_reads)
+    |> MapSet.new()
   end
 
   defp elidable?(%{tool_name: "skill"}), do: false
@@ -155,9 +176,9 @@ defmodule Xeito.Machines.Chat do
           "[elided to save context: #{about} (#{lines} lines). " <>
             "If you still need it, read with result: \"#{ref}\".]"
     }
-
-    # --- guards ------------------------------------------------------------------------------
   end
+
+  # --- guards ------------------------------------------------------------------------------
 
   @doc false
   def run_checks(ctx), do: [Effect.bash(ctx.verify, cwd: ctx.cwd, timeout: @verify_timeout, reply: :verified)]
@@ -393,7 +414,21 @@ defmodule Xeito.Machines.Chat do
   defp tool_message(call, text), do: %{role: "tool", tool_name: call.name, content: text}
 
   # A result that can be read back (`ref`) also records what it was, for its stub if elided.
-  defp tool_message(call, text, %{ref: ref}), do: call |> tool_message(text) |> Map.merge(%{ref: ref, about: about(call)})
+  defp tool_message(call, text, %{ref: ref} = result) do
+    call
+    |> tool_message(text)
+    |> Map.merge(%{ref: ref, about: about(call)})
+    |> Map.merge(whole_read(call, result))
+  end
+
+  # A whole read of one of the project's own files (not a part, outline or dependency source).
+  defp whole_read(%{name: "read", arguments: %{"path" => path} = args}, %{ok: true})
+       when is_binary(path) and path != "" do
+    partial? = Enum.any?(~w(symbol lines outline result), &Map.has_key?(args, &1))
+    if partial? or Shape.third_party?(path), do: %{}, else: %{read: path}
+  end
+
+  defp whole_read(_call, _result), do: %{}
 
   defp tool_message(call, text, _result), do: tool_message(call, text)
 
