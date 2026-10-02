@@ -22,7 +22,11 @@ defmodule Xeito.Log.Schema do
     "effect_completed" => ~w(effect_id kind result),
     "decision_made" =>
       ~w(effect_id decision_type value confidence actor model latency_ms input_hash tokens_in tokens_out usd joules_est),
-    "run_finished" => ~w(status final_state)
+    "run_finished" => ~w(status final_state),
+    # `/undo` and `/redo` (`Xeito.Undo`), in the session's own stream (`within` the session):
+    # a label against the effect whose change was reverted or put back.
+    "step_undone" => ~w(effect_id label),
+    "step_redone" => ~w(effect_id label)
   }
 
   @object_types %{

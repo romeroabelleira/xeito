@@ -502,12 +502,25 @@ defmodule Xeito.Session do
   defp undo_or_redo("redo", s, n), do: Undo.redo(s.cwd, s.id, n)
 
   defp undone({:ok, steps}, name, s) do
+    log_undone(steps, name, s)
     labels = Enum.map(steps, & &1.label)
     s = %{s | history: s.history ++ [%{role: "user", content: undo_note(name, labels)}]}
     notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> not_covered(steps))
   end
 
   defp undone({:error, reason}, name, s), do: error(s, undo_error(reason, name))
+
+  # Every undo is a label against the effect it reverts (for promotion and machine evals). The
+  # events go in the session's own stream: `within` the session object, not a run.
+  defp log_undone(steps, name, s) do
+    {type, qualifier} = if name == "undo", do: {"step_undone", "undoes"}, else: {"step_redone", "redoes"}
+    Log.append(s.log, s.id, Enum.map(steps, &undo_event(&1, type, qualifier)))
+  end
+
+  defp undo_event(step, type, qualifier) do
+    attrs = %{"effect_id" => step.id, "label" => step.label}
+    Log.Event.new(type, {String.to_atom(type), step.id, step.label}, attrs, [{step.id, "effect", qualifier}])
+  end
 
   defp not_covered(steps) do
     case Enum.flat_map(steps, & &1.skipped) do

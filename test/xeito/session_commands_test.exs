@@ -109,6 +109,28 @@ defmodule Xeito.SessionCommandsTest do
       assert File.exists?(Path.join(ws, "big.bin"))
     end
 
+    test "undo and redo are logged, each against the step's effect and the session", %{id: id, ws: ws, log: log} do
+      agent_step(ws, "#{id}/t1/e1", "a.txt", "a\n")
+      agent_step(ws, "#{id}/t1/e2", "b.txt", "b\n")
+      {:notice, _} = reply(id, "/undo 2")
+      {:notice, _} = reply(id, "/redo")
+
+      assert Xeito.Log.query(log, "SELECT effect_id, label FROM event_step_undone ORDER BY rowid") ==
+               [["#{id}/t1/e2", "write b.txt"], ["#{id}/t1/e1", "write a.txt"]]
+
+      effect = "#{id}/t1/e1"
+
+      assert [[event, ^effect, "write a.txt"]] =
+               Xeito.Log.query(log, "SELECT ocel_id, effect_id, label FROM event_step_redone")
+
+      assert Xeito.Log.query(
+               log,
+               "SELECT ocel_object_id, ocel_qualifier FROM event_object WHERE ocel_event_id = ?1 ORDER BY 2",
+               [event]
+             ) ==
+               [["#{id}/t1/e1", "redoes"], [id, "within"]]
+    end
+
     test "steps of another session are not this session's to undo", %{id: id, ws: ws} do
       agent_step(ws, "ses-other/t1/e1", "a.txt", "a\n")
       assert reply(id, "/undo") == {:error, "nothing to undo"}
