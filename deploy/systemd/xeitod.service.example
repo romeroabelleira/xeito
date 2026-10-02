@@ -1,5 +1,8 @@
 # Xeito daemon (xeitod): runs, logs and the client socket for the TUI and other clients.
-# Copy to ~/.config/systemd/user/xeitod.service, set the paths, then:
+# Install it once, without overwriting a unit that is already there (it may be a symlink to
+# your own copy, which a plain cp would replace through the link), then set the paths:
+#   cp -n deploy/systemd/xeitod.service.example ~/.config/systemd/user/xeitod.service
+# To update an installed unit, edit it rather than copying this over it. Then:
 #   systemctl --user daemon-reload && systemctl --user enable --now xeitod
 # Without `loginctl enable-linger`, a user unit runs only while you are logged in.
 [Unit]

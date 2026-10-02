@@ -1,5 +1,8 @@
 # Xeito small tier: llama.cpp server on the CPU (grammar-constrained typed decisions).
-# Copy to ~/.config/systemd/user/xeito-llama-small.service, set the two paths, then:
+# Install it once, without overwriting a unit that is already there (it may be a symlink to
+# your own copy, which a plain cp would replace through the link), then set the two paths:
+#   cp -n deploy/systemd/xeito-llama-small.service.example ~/.config/systemd/user/xeito-llama-small.service
+# To update an installed unit, edit it rather than copying this over it. Then:
 #   systemctl --user daemon-reload && systemctl --user enable --now xeito-llama-small
 # Create the API key file first (one key per line, mode 600).
 [Unit]
