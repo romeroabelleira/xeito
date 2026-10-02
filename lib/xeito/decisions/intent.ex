@@ -1,7 +1,7 @@
 defmodule Xeito.Decisions.Intent do
   @moduledoc "What does the user want? Selects a machine for a free-form request (P4)."
 
-  use Xeito.Decision, version: "1"
+  use Xeito.Decision, version: "2"
 
   instructions "What does the user want the coding assistant to do with this message?"
 
@@ -9,7 +9,7 @@ defmodule Xeito.Decisions.Intent do
 
   value(
     :question,
-    "a factual question about the code, project or tools, answerable by looking things up"
+    "a factual question about the code, project or tools, or about what the assistant did in this session, answerable by looking things up"
   )
 
   value :edit, "change, add, fix, refactor or delete code or files"

@@ -82,3 +82,24 @@ Per language, intent: large 0.98–1.00 in every language. Laya 0.65–0.76. Qwe
   - With the CPU tier: Qwen-2B answered `code_bug` at confidence 0.68, below the 0.8 threshold. The decision abstained, the run moved to `ask_human`, and the CPU verdict and its confidence were logged as evidence.
   - With the large tier: `code_bug` at 0.988, straight to planning.
   - Both runs finished `done` after the fix.
+
+## Intent v2: questions about the session (2026-10-02)
+
+A dogfood turn, "Did you change anything?", abstained: the large tier said `question` at 0.70, under Intent's 0.75, with `other` at 0.28. The value descriptions had no place for a question about what the assistant just did: `question` was "about the code, project or tools", `other` "chit-chat or anything unrelated". Intent v2 adds "or about what the assistant did in this session" to `question`.
+
+Eight follow-ups were added to the example set first, labelled `question`: the dogfood one plus seven in en/de/es/gl (111 examples now). Large tier only. Reports: [`decisions/intent-v2/`](decisions/intent-v2/).
+
+| | v1 | v2 |
+|---|---|---|
+| The eight follow-ups committed (correct and ≥ 0.75) | 5 of 8 | **8 of 8** |
+| "Did you change anything?" | question 0.70 (abstains) | question 0.98 |
+| Accuracy, all 111 | 0.973 | **0.991** |
+| Macro-F1 | 0.975 | 0.992 |
+| ECE | 0.029 | 0.006 |
+| Confusions | explain→question, question→explain, question→other | explain→question |
+| By language | de 1.00 · en 0.96 · es 1.00 · gl 0.92 | de 1.00 · en 0.98 · es 1.00 · gl 1.00 |
+
+No new confusion appeared. One follow-up, the Galician "Cambiaches algo?", commits at exactly 0.75: it is the first to watch if the threshold moves.
+
+The other abstention in the same log ("ll", 2026-09-28) was not Intent's doing: every tier call failed because the running daemon mixed two versions of an HTTP library after a dependency update. The daemon now loads all its code at start (`Xeito.Preload`).
+

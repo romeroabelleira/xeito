@@ -101,3 +101,11 @@
 {"input": {"message": "¿Qué me recomiendas para cenar?"}, "label": "other", "lang": "es", "source": "synthetic"}
 {"input": {"message": "Grazas!"}, "label": "other", "lang": "gl", "source": "synthetic"}
 {"input": {"message": "Bos días"}, "label": "other", "lang": "gl", "source": "synthetic"}
+{"input": {"message": "Did you change anything?"}, "label": "question", "lang": "en", "source": "dogfood"}
+{"input": {"message": "What did you just change?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Which files did you edit?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Did the tests pass after your change?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Was that the whole fix?"}, "label": "question", "lang": "en", "source": "synthetic"}
+{"input": {"message": "Hast du etwas geändert?"}, "label": "question", "lang": "de", "source": "synthetic"}
+{"input": {"message": "¿Qué archivos modificaste?"}, "label": "question", "lang": "es", "source": "synthetic"}
+{"input": {"message": "Cambiaches algo?"}, "label": "question", "lang": "gl", "source": "synthetic"}
