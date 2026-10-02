@@ -21,3 +21,14 @@ Guard hooks (pre-commit, commit-msg, pre-push) scan for such content. Do not byp
 Run `mix format` after editing. It includes Styler, which also rewrites code (aliases, pipes, directive order), so don't hand-format against it. `mix ci` is the check to pass before committing: format, warnings as errors, `credo --strict`, Dialyzer, tests with the CRAP gate, and mutation testing.
 
 Work test-first: write a failing unit test, then the code, then refactor. Every function must stay at or below a CRAP score of 30, computed from complexity and coverage (`test/support/xeito/crap.ex`). Functions listed in `test/crap_baseline.exs` are older debt: they may not get worse, and an entry must be removed once its function is at or under 30. Never add new code to the baseline. The pre-commit hook (`scripts/check-crap.sh`) refuses a commit that fails the gate. Sources listed in `test/mutate.exs` must have no surviving mutants (`mix xeito.mutate`, part of `mix ci`): when one survives, add the test that kills it. See [docs/architecture/08-tech-stack.md](docs/architecture/08-tech-stack.md#code-style), and [docs/testing.md](docs/testing.md) for the whole local procedure; `scripts/try-local.sh` tries a change by hand against a throwaway daemon.
+
+## Skills
+
+Skills for working on this repository are in `.agents/skills/`, under the convention in [.agents/skills/README.md](.agents/skills/README.md). Claude Code does not load that directory by itself, so read the matching `SKILL.md` before the task:
+
+- [`elixir`](.agents/skills/elixir/SKILL.md): writing or refactoring Elixir: modules, data, pattern matching, error handling, tests, and whether something needs a process at all.
+- [`otp`](.agents/skills/otp/SKILL.md): processes, supervision, `Task`, `Registry`, ETS, bottlenecks.
+- [`skill-authoring`](.agents/skills/skill-authoring/SKILL.md): writing, adapting or vendoring a skill.
+
+Where a skill and this file disagree, this file wins. Don't add skills under `.claude/` or another tool's directory.
+
