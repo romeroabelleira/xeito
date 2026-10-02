@@ -14,7 +14,9 @@ defmodule Xeito.Undo do
   workspace as it is now, so what the user changed since stays. When the user changed the
   same lines, the undo is refused and nothing changes.
 
-  Not captured, so not undone: files the project ignores, the protected directories (`.git`,
+  Files the project ignores are captured when small (`.env`, `*.log`), so deleting one can be
+  undone. Not captured, so not undone: directories the project ignores (`_build/`, `.venv/`,
+  what a build or install recreates), the protected directories (`.git`,
   `.xeito`, `deps`, `_build`, `node_modules`), files over 5 MB (a step names the ones it
   changed), anything outside the workspace, and any workspace with more than 20,000 files (the
   step then runs without undo). Steps are serialized per workspace while they run.
@@ -93,15 +95,16 @@ defmodule Xeito.Undo do
   # The workspace's tree, and the files left out for their size (with their size and mtime,
   # to tell which ones a step changed).
   defp snapshot(cwd, opts) do
-    with true <- File.dir?(cwd), :ok <- init(cwd), true <- small?(cwd, opts) do
-      capture(cwd, big_files(cwd, opts))
+    with true <- File.dir?(cwd), :ok <- init(cwd), {:ok, ignored} <- within_limit(cwd, opts) do
+      capture(cwd, big_files(cwd, opts), ignored)
     else
       _ -> :error
     end
   end
 
-  defp capture(cwd, big) do
+  defp capture(cwd, big, ignored) do
     with {_, 0} <- git(cwd, ["add", "-A", "--", "." | Enum.map(Map.keys(big), &":(exclude,literal)#{&1}")]),
+         {_, 0} <- git(cwd, ["--literal-pathspecs", "add", "--force", "--" | ignored]),
          {_, 0} <- uncapture(cwd, Map.keys(big)),
          {tree, 0} <- git(cwd, ~w(write-tree)) do
       {:ok, String.trim(tree), big}
@@ -141,9 +144,27 @@ defmodule Xeito.Undo do
     File.write!(Path.join([store(cwd), "info", "exclude"]), excluded)
   end
 
-  defp small?(cwd, opts) do
+  # The ignored files to capture, if the workspace is within the file limit.
+  defp within_limit(cwd, opts) do
     {files, 0} = git(cwd, ~w(ls-files --cached --others --exclude-standard -z))
-    length(:binary.matches(files, <<0>>)) <= Keyword.get(opts, :max_files, @max_files)
+    ignored = ignored_files(cwd, opts)
+
+    if length(:binary.matches(files, <<0>>)) + length(ignored) <= Keyword.get(opts, :max_files, @max_files),
+      do: {:ok, ignored},
+      else: :error
+  end
+
+  # Files the project ignores (`.env`, `*.log`) are captured when small; ignored directories
+  # (`_build/`, `.venv/`, `target/`) are not: they hold what a build or install recreates.
+  defp ignored_files(cwd, opts) do
+    max = Keyword.get(opts, :max_file_bytes, @max_file_bytes)
+    {entries, 0} = git(cwd, ~w(ls-files -z --others --ignored --exclude-standard --directory))
+
+    for entry <- String.split(entries, <<0>>, trim: true),
+        not String.ends_with?(entry, "/"),
+        {:ok, %File.Stat{type: :regular, size: size}} <- [File.stat(Path.join(cwd, entry))],
+        size <= max,
+        do: entry
   end
 
   defp snapshotted(cwd, id, label, fun, opts) do

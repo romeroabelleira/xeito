@@ -123,11 +123,44 @@ defmodule Xeito.UndoTest do
     assert git(ws, ~w(stash list)) == ""
   end
 
-  test "files the project ignores, and .xeito, are not captured", %{ws: ws} do
-    put(ws, ".gitignore", "ignored.txt\n")
-    step(ws, "ses-a/t1/e1", "write ignored.txt", fn -> put(ws, "ignored.txt", "x\n") end)
-    step(ws, "ses-a/t1/e2", "write .xeito/x", fn -> put(ws, ".xeito/x", "x\n") end)
+  test "files the project ignores are captured (.env); ignored directories and .xeito are not", %{ws: ws} do
+    put(ws, ".gitignore", ".env\nout/\n*.log\n")
+
+    step(ws, "ses-a/t1/e1", "bash setup", fn ->
+      put(ws, ".env", "SECRET=1\n")
+      put(ws, "sub/run.log", "log\n")
+      put(ws, "out/build", "built\n")
+    end)
+
+    step(ws, "ses-a/t1/e2", "write out/more", fn -> put(ws, "out/more", "x\n") end)
+    step(ws, "ses-a/t1/e3", "write .xeito/x", fn -> put(ws, ".xeito/x", "x\n") end)
+    assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
+
+    {:ok, _} = Undo.undo(ws, "ses-a", 1)
+    assert get(ws, ".env") == {:error, :enoent}
+    assert get(ws, "sub/run.log") == {:error, :enoent}
+    assert get(ws, "out/build") == {:ok, "built\n"}
+  end
+
+  test "an ignored file the agent deletes comes back on undo; one over the size limit is left out", %{ws: ws} do
+    # .env is exactly at the limit, so it is captured.
+    secret = String.duplicate("s", 1_000)
+    put(ws, ".gitignore", ".env\n*.bin\n")
+    put(ws, ".env", secret)
+    put(ws, "big.bin", String.duplicate("x", 1_001))
+    step(ws, "ses-a/t1/e1", "bash rm .env", fn -> File.rm!(Path.join(ws, ".env")) end, max_file_bytes: 1_000)
+
+    assert [%{skipped: []}] = Undo.steps(ws, "ses-a")
+    {:ok, _} = Undo.undo(ws, "ses-a", 1, max_file_bytes: 1_000)
+    assert get(ws, ".env") == {:ok, secret}
+  end
+
+  test "ignored files count toward the file limit", %{ws: ws} do
+    put(ws, ".gitignore", "*.log\n")
+    for i <- 1..3, do: put(ws, "#{i}.log", "#{i}\n")
+    step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "a\n") end, max_files: 3)
     assert Undo.steps(ws, "ses-a") == []
+    refute File.exists?(Path.join(ws, ".xeito/undo.git/index"))
   end
 
   describe "the file limit: a workspace with more files than `max_files` has no undo" do
