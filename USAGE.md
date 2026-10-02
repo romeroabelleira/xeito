@@ -480,6 +480,31 @@ SELECT json_extract(json, '$.role'), substr(json_extract(json, '$.content'), 1, 
 FROM c ORDER BY depth;
 ```
 
+### Candidates for a skill or a machine
+
+Requests that keep coming back to free chat could become a skill or a machine of their own. `mix xeito.candidates` finds them in a workspace's log:
+
+```bash
+mix xeito.candidates --cwd ~/src/my-project            # groups with at least 5 runs
+mix xeito.candidates --cwd ~/src/my-project --all      # every group, with why it is not a candidate
+```
+
+```
+14 free-chat turns in 6 groups of similar prompts; 1 candidate (at least 5 runs)
+
+machine · 6 runs · intent edit · 83% answered · 7.5 model turns · 41200 tokens
+  because 83% of runs follow one variant, which ends in a check
+  variant (5 of 6): read › edit › check › bash:mix test
+  e.g. "add a test for Pricing.gross/1", "add a test for Cart.total/1", "add tests for Order"
+```
+
+Turns are grouped by intent and by the words their prompts share. A group's **variant** is its sequence of steps (tool calls; `check` is the quick check), with repeats collapsed.
+- A group whose runs mostly follow one variant to a check could become a **machine**.
+- A frequent, successful group whose runs vary could become a **skill**.
+- Groups that are rare, cheap already or mostly unanswered are not candidates.
+
+Nothing is changed: the report is for you to read, and the promotion itself is planned for later ([05](docs/architecture/05-event-log-and-process-mining.md#promotion-from-free-chat-to-skills-and-machines)).
+
 ## 9. Evaluating deciders
 
 Every decision type has labelled examples in `priv/decisions/<type>/examples.jsonl`, one JSON object per line:
