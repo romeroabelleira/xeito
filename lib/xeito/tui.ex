@@ -24,9 +24,10 @@ defmodule Xeito.Tui do
 
   Keys: Enter sends (and steps a paused run when the prompt is empty); a pending review is
   answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
-  running turn; Up / Down recall earlier prompts (the line being typed
-  comes back past the newest); PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
-  with `--session`).
+  running turn; Up / Down recall earlier prompts (the line being typed comes back past the
+  newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`,
+  and each further Tab shows the next match; PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
+  session keeps running in the daemon and can be reattached with `--session`).
 
   The TUI owns no run state: everything shown comes from daemon events, so it can crash, be
   closed or be replaced without touching the runs.
@@ -48,6 +49,9 @@ defmodule Xeito.Tui do
   @blink_ms 530
   @blink_for_ms 10_000
   @placeholder "ask, or /help"
+
+  # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
+  @own_commands ~w(quit exit statusbar)
 
   # --- init ----------------------------------------------------------------------------------
 
@@ -120,7 +124,9 @@ defmodule Xeito.Tui do
       # kept as the draft meanwhile).
       prompt_history: [],
       history_index: -1,
-      history_draft: ""
+      history_draft: "",
+      # While Tab cycles through completions: `{candidates, shown}`, the index of the one shown.
+      completion: nil
     }
   end
 
@@ -174,6 +180,8 @@ defmodule Xeito.Tui do
 
   defp key_to_msg(%Event.Key{key: key, modifiers: mods}, _state) when key in [:c, "c", :d, "d", :t, "t"] and mods != [],
     do: control_key(key, mods)
+
+  defp key_to_msg(%Event.Key{key: :tab}, _state), do: {:msg, :complete}
 
   defp key_to_msg(%Event.Key{key: key} = event, _state) do
     case Map.get(@keys, key) do
@@ -230,7 +238,7 @@ defmodule Xeito.Tui do
   # restarts the blinking phase.
   @impl true
   def update({:resize, _, _} = msg, state), do: handle_update(msg, state)
-  def update(msg, state), do: handle_update(msg, wake_cursor(state))
+  def update(msg, state), do: handle_update(msg, state |> wake_cursor() |> keep_completion(msg))
 
   @doc false
   def wake_cursor(state) do
@@ -243,8 +251,17 @@ defmodule Xeito.Tui do
   defp handle_update(:submit, state), do: state.input |> TextInput.get_value() |> String.trim() |> submit(state)
   defp handle_update({:review, answer}, state), do: review(answer, state)
   defp handle_update({:recall, direction}, state), do: state |> recall(direction) |> recalled(state)
-  defp handle_update(:halt, state), do: halt(state)
+
+  defp handle_update(msg, state) when msg in [:halt, :complete], do: line_key(msg, state)
+
   defp handle_update(msg, state), do: screen_update(msg, state)
+
+  defp line_key(:halt, state), do: halt(state)
+  defp line_key(:complete, state), do: complete(state)
+
+  # Only Tab continues a completion; any other key ends it.
+  defp keep_completion(state, :complete), do: state
+  defp keep_completion(state, _msg), do: %{state | completion: nil}
 
   # An empty line steps a paused run, and otherwise does nothing.
   defp submit("", %{paused: true} = state) do
@@ -399,6 +416,36 @@ defmodule Xeito.Tui do
 
   # TextInput.set_value/2 puts the cursor at the start; a recalled line is edited at its end.
   defp put_text(input, text), do: %{TextInput.set_value(input, text) | cursor_col: String.length(text)}
+
+  # Tab shows the first completion of the line; each further Tab the next, around and around.
+  defp complete(%{completion: {candidates, shown}} = state),
+    do: show(state, candidates, rem(shown + 1, length(candidates)))
+
+  defp complete(state) do
+    case state.input |> TextInput.get_value() |> completions(state.cwd) do
+      [] -> {state, []}
+      candidates -> show(state, candidates, 0)
+    end
+  end
+
+  defp show(state, candidates, i),
+    do: {%{state | input: put_text(state.input, Enum.at(candidates, i)), completion: {candidates, i}}, []}
+
+  @doc "The commands Tab completes: the daemon's and the TUI's own."
+  @spec commands() :: [String.t()]
+  def commands, do: Enum.sort(@own_commands ++ Xeito.Session.commands())
+
+  # The completions of a line, in order: a command, a machine after `/machine `, a skill of the
+  # workspace after `/skill:`. Case is ignored.
+  defp completions("/machine " <> part, _cwd), do: matching("/machine ", Map.keys(Xeito.Session.Router.machines()), part)
+  defp completions("/skill:" <> part, cwd), do: matching("/skill:", Enum.map(Xeito.Skills.discover(cwd), & &1.name), part)
+  defp completions("/" <> part, _cwd), do: matching("/", commands(), part)
+  defp completions(_line, _cwd), do: []
+
+  defp matching(lead, names, part) do
+    part = String.downcase(part)
+    for name <- Enum.sort(names), String.starts_with?(String.downcase(name), part), do: lead <> name
+  end
 
   # --- daemon events -------------------------------------------------------------------------
 

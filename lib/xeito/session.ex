@@ -88,6 +88,16 @@ defmodule Xeito.Session do
   @doc false
   def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}, restart: :temporary}
 
+  # The slash commands, by what they act on (command/3). `skill:` takes the skill's name.
+  @start_commands ~w(machine run skill:)
+  @turn_commands ~w(approve deny halt)
+  @info_commands ~w(why budget help machines)
+  @debug_commands ~w(step continue next decide break)
+
+  @doc "The slash commands the session takes, without the slash."
+  @spec commands() :: [String.t()]
+  def commands, do: @start_commands ++ @turn_commands ++ @info_commands ++ @debug_commands
+
   @doc "Subscribes the caller to the session's events."
   @spec subscribe(String.t()) :: :ok
   def subscribe(id), do: Events.subscribe(topic(id))
@@ -417,10 +427,10 @@ defmodule Xeito.Session do
 
   defp command([name, arg | _], raw, s) do
     cond do
-      name in ["machine", "run"] or String.starts_with?(name, "skill:") -> start_command(name, arg, raw, s)
-      name in ["approve", "deny", "halt"] -> turn_command(name, s)
-      name in ["why", "budget", "help", "machines"] -> info_command(name, arg, s)
-      name in ["step", "continue", "next", "decide", "break"] -> debug_command(name, arg, raw, s)
+      name in @start_commands or String.starts_with?(name, "skill:") -> start_command(name, arg, raw, s)
+      name in @turn_commands -> turn_command(name, s)
+      name in @info_commands -> info_command(name, arg, s)
+      name in @debug_commands -> debug_command(name, arg, raw, s)
       true -> unknown_command(raw, s)
     end
   end
@@ -890,6 +900,7 @@ defmodule Xeito.Session do
 
   defp help do
     """
+    /help                     this list
     /machines                 list the machines: what they do, how they are routed, usage
     /machine <name> [prompt]  start a machine directly (#{Enum.join(Map.keys(Router.machines()), ", ")})
     /skill:<name> [request]   run a skill (pi / Agent Skills format)

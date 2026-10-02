@@ -605,4 +605,52 @@ defmodule Xeito.TuiTest do
       end
     end
   end
+
+  describe "Tab completes commands, machine names and skill names" do
+    defp tab(state), do: :complete |> Tui.update(state) |> elem(0)
+
+    test "Tab is the completion key" do
+      assert Tui.event_to_msg(key(:tab), tui()) == {:msg, :complete}
+    end
+
+    test "one match completes the command, whatever the case typed" do
+      assert tui() |> typing("/he") |> tab() |> value() == "/help"
+      assert tui() |> typing("/sta") |> tab() |> value() == "/statusbar"
+      assert tui() |> typing("/HAL") |> tab() |> value() == "/halt"
+    end
+
+    test "several matches: each Tab shows the next, in order, and wraps around" do
+      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(5) |> Enum.map(&value/1)
+      assert tabbed == ["/s", "/skill:", "/statusbar", "/step", "/skill:"]
+    end
+
+    test "typing after a Tab completes from the new text" do
+      # "/skill:x" names no skill, so the line stays; it does not cycle on to "/statusbar".
+      assert tui() |> typing("/s") |> tab() |> typing("x") |> tab() |> value() == "/skill:x"
+    end
+
+    test "no match, or a line that is not a command, stays as it is" do
+      assert tui() |> typing("/zz") |> tab() |> value() == "/zz"
+      assert tui() |> typing("hello") |> tab() |> value() == "hello"
+      assert tui() |> tab() |> value() == ""
+    end
+
+    test "after /machine, a machine name" do
+      assert tui() |> typing("/machine fix") |> tab() |> value() == "/machine fix_failing_test"
+      assert tui() |> typing("/machine c") |> tab() |> tab() |> value() == "/machine check"
+    end
+
+    @tag :tmp_dir
+    test "after /skill:, a skill of the workspace", %{tmp_dir: dir} do
+      skill = Path.join(dir, ".agents/skills/zz-tui-skill")
+      File.mkdir_p!(skill)
+      File.write!(Path.join(skill, "SKILL.md"), "---\nname: zz-tui-skill\ndescription: a test skill\n---\nbody\n")
+
+      assert [cwd: dir] |> tui() |> typing("/skill:zz-tui") |> tab() |> value() == "/skill:zz-tui-skill"
+    end
+
+    test "the commands are the daemon's and the TUI's own" do
+      assert Tui.commands() == Enum.sort(~w(quit exit statusbar) ++ Xeito.Session.commands())
+    end
+  end
 end

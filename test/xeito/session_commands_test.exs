@@ -43,6 +43,12 @@ defmodule Xeito.SessionCommandsTest do
     end
   end
 
+  test "commands/0: the daemon's commands, each explained by /help", %{id: id} do
+    assert {:notice, help} = reply(id, "/help")
+    assert "halt" in Session.commands()
+    for name <- Session.commands(), do: assert(help =~ "/#{name}")
+  end
+
   test "help and machines are notices", %{id: id} do
     assert {:notice, "/" <> _} = reply(id, "/help")
     assert {:notice, text} = reply(id, "/machines")
