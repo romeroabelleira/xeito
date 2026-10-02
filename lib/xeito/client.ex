@@ -11,7 +11,14 @@ defmodule Xeito.Client do
 
   @doc "Connects to the socket at `path`. The caller becomes the owner of events."
   @spec connect(Path.t(), pid()) :: {:ok, pid()} | {:error, term()}
-  def connect(path, owner \\ self()), do: GenServer.start_link(__MODULE__, {path, owner})
+  def connect(path, owner \\ self()) do
+    # Linked only once connected: a failed start would otherwise take the caller down with it,
+    # instead of returning the error.
+    with {:ok, client} <- GenServer.start(__MODULE__, {path, owner}) do
+      Process.link(client)
+      {:ok, client}
+    end
+  end
 
   @doc "Sends a request (a map with `\"cmd\"`) and waits for its reply."
   @spec request(pid(), map(), timeout()) :: map()

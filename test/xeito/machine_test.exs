@@ -124,4 +124,25 @@ defmodule Xeito.MachineTest do
     assert error.description =~ "does not handle {:decided, :continue}"
     assert error.description =~ "does not handle {:decided, :abstain}"
   end
+
+  test "a state's timeout is milliseconds or {milliseconds, event}; anything else does not compile" do
+    machine = fn timeout ->
+      """
+      defmodule Xeito.TimeoutProbe#{System.unique_integer([:positive])} do
+        use Xeito.Machine, version: "1.0.0"
+        initial :waiting
+        state :waiting, timeout: #{timeout} do
+          on :go, to: :done
+          on :late, to: :done
+        end
+        final :done
+        final :failed
+      end
+      """
+    end
+
+    assert [{module, _}] = Code.compile_string(machine.("{1_000, :late}"))
+    assert Machine.timeout(Machine.fetch!(module), :waiting) == {1_000, :late}
+    assert_raise ArgumentError, ~r/invalid timeout -5/, fn -> Code.compile_string(machine.("-5")) end
+  end
 end

@@ -72,4 +72,57 @@ defmodule Xeito.Api.ConnectionTest do
     assert {:ok, ~s({"error":"missing cmd","ok":false}\n)} = :gen_tcp.recv(socket, 0, 2_000)
     assert {:ok, ~s({"error":"invalid JSON","ok":false}\n)} = :gen_tcp.recv(socket, 0, 2_000)
   end
+
+  describe "the connection process" do
+    defp connections, do: Xeito.ApiConnections |> DynamicSupervisor.which_children() |> Enum.map(&elem(&1, 1))
+
+    defp new_connection(path) do
+      # The setup's client connects asynchronously too; let it settle first.
+      Process.sleep(100)
+      before = connections()
+      {:ok, socket} = :gen_tcp.connect({:local, path}, 0, [:binary, packet: :line, active: false])
+      Process.sleep(100)
+      [conn] = connections() -- before
+      {socket, conn}
+    end
+
+    test "a line longer than the limit, or a socket error, closes the connection; other messages are ignored", %{
+      path: path
+    } do
+      {socket, conn} = new_connection(path)
+      ref = Process.monitor(conn)
+
+      send(conn, :something_else)
+      assert Process.alive?(conn)
+
+      :ok = :gen_tcp.send(socket, :binary.copy("x", 4_194_400))
+      assert_receive {:DOWN, ^ref, :process, ^conn, :normal}, 2_000
+
+      {_socket, other} = new_connection(path)
+      ref = Process.monitor(other)
+      send(other, {:tcp_error, :port, :closed})
+      assert_receive {:DOWN, ^ref, :process, ^other, :normal}, 2_000
+    end
+
+    test "resuming a session that is already live just follows it", %{client: client, ws: ws} do
+      id = start(client, ws)
+      assert %{"ok" => true, "session" => ^id} = req(client, "resume", %{"session" => id, "cwd" => ws})
+    end
+  end
+
+  test "a session that cannot start, in a workspace that is a file, is an error, for start and resume", %{ws: ws} do
+    # Without a preconfigured log, a session opens its workspace's log, which fails here.
+    path = Path.join(ws, "y.sock")
+
+    start_supervised!({Xeito.Api, socket: path, name: :"api_#{System.unique_integer([:positive])}", session: []},
+      id: :plain_api
+    )
+
+    {:ok, client} = Client.connect(path)
+    file = Path.join(ws, "not-a-dir")
+    File.write!(file, "")
+
+    assert %{"ok" => false, "error" => _} = req(client, "start", %{"cwd" => file})
+    assert %{"ok" => false, "error" => _} = req(client, "resume", %{"session" => new_id(), "cwd" => file})
+  end
 end

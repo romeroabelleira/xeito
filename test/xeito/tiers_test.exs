@@ -310,4 +310,64 @@ defmodule Xeito.TiersTest do
       assert decision.type_version == "1"
     end
   end
+
+  describe "tiers that fail, and answers in unusual shapes" do
+    defp failing(stub, how) do
+      Req.Test.stub(stub, fn conn ->
+        case how do
+          {:status, status} -> conn |> Plug.Conn.put_status(status) |> Req.Test.json(%{"error" => "no"})
+          :down -> Req.Test.transport_error(conn, :econnrefused)
+        end
+      end)
+
+      cfg(stub, model: "m", retry: false)
+    end
+
+    test "an HTTP error or a transport error is an error, for Large and System One" do
+      assert {:error, {:http, 500, _}} = Large.decide(type(), @input, failing(:large_500, {:status, 500}))
+
+      assert {:error, %Req.TransportError{reason: :econnrefused}} =
+               Large.decide(type(), @input, failing(:large_down, :down))
+
+      assert {:error, {:http, 503, _}} = SystemOne.decide(type(), @input, failing(:s1_503, {:status, 503}))
+      assert {:error, %Req.TransportError{}} = SystemOne.decide(type(), @input, failing(:s1_down, :down))
+    end
+
+    test "OpenRouter's key check: the key's data, an HTTP error, or a transport error" do
+      Req.Test.stub(:or_key, fn conn -> Req.Test.json(conn, %{"data" => %{"limit" => 10, "usage" => 1.5}}) end)
+      assert {:ok, %{"limit" => 10}} = OpenRouter.key_info(cfg(:or_key))
+      assert {:error, {:http, 401, _}} = OpenRouter.key_info(failing(:or_401, {:status, 401}))
+      assert {:error, %Req.TransportError{}} = OpenRouter.key_info(failing(:or_down, :down))
+    end
+
+    test "System One without probabilities or routing: the choice alone, under the configured model" do
+      Req.Test.stub(:s1_choice, fn conn -> Req.Test.json(conn, %{"answers" => %{"triage" => %{"choice" => "flaky"}}}) end)
+
+      assert {:ok, %{value: :flaky, confidence: 1.0, model: "laya-multilingual"}} =
+               SystemOne.decide(type(), @input, cfg(:s1_choice))
+    end
+
+    test "Large's probabilities: from the value's own tokens, from the answer alone, or none" do
+      token = fn t, lp -> %{"token" => t, "logprob" => lp, "top_logprobs" => []} end
+      prefix = [token.(~s({"), 0.0), token.("value", 0.0), token.(~s(":), 0.0), token.(~s( "), 0.0)]
+
+      # No usable alternatives at the value: the chosen value's own probability.
+      own =
+        Large.probabilities(
+          ~s({"value": "flaky"}),
+          prefix ++ [token.("fl", -0.1), token.("aky", -0.2), token.(~s("}), 0.0)],
+          type()
+        )
+
+      assert_in_delta own["flaky"], :math.exp(-0.3), 1.0e-9
+
+      # No logprobs at all: the answer counts as certain.
+      assert Large.probabilities(~s({"value": "flaky"}), [], type()) == %{"flaky" => 1.0}
+
+      # Not JSON, or JSON without a value: no probabilities.
+      assert Large.probabilities("not json", prefix, type()) == %{}
+      assert Large.probabilities(~s({"other": 1}), prefix, type()) == %{}
+      assert Large.probabilities("not json", [], type()) == %{}
+    end
+  end
 end

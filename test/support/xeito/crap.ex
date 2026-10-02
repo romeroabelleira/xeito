@@ -146,6 +146,10 @@ defmodule Xeito.Crap do
     IO.puts("\nCRAP (max #{max}; #{map_size(baseline)} baselined), highest:")
     for f <- scored |> worst_first() |> Enum.take(5), do: IO.puts("  #{format(f)}")
 
+    # XEITO_CRAP_SHOW="Mod.fun/2,Mod.other/1": the lines of those functions no test ran.
+    shown = "XEITO_CRAP_SHOW" |> System.get_env("") |> String.split(",", trim: true)
+    for f <- scored, key(f) in shown, do: IO.puts("  uncovered in #{key(f)}: #{inspect(f.uncovered)}")
+
     case gate(scored, max, baseline) do
       :ok -> :ok
       {:error, problems} -> Mix.raise(explain(problems, max, baseline_path))
@@ -194,6 +198,12 @@ defmodule Xeito.Crap do
       "#{:erlang.float_to_binary(f.crap, decimals: 1)}  #{f.module}.#{f.name}  " <>
         "(complexity #{f.complexity}, coverage #{round(f.coverage * 100)}%, #{Path.relative_to_cwd(f.path)}:#{f.first})"
 
+  defp scored(f, lines, source) do
+    coverage = coverage(lines, f.first, f.last)
+    uncovered = for {line, 0} <- lines, line in f.first..f.last, do: line
+    Map.merge(f, %{path: source, coverage: coverage, crap: score(f.complexity, coverage), uncovered: uncovered})
+  end
+
   # Functions of one cover-compiled module from the application's own sources (not test support).
   defp score_module(module) do
     source = to_string(module.module_info(:compile)[:source])
@@ -203,10 +213,7 @@ defmodule Xeito.Crap do
          {:ok, lines} <- :cover.analyse(module, :calls, :line) do
       lines = for {{^module, line}, calls} <- lines, line > 0, do: {line, calls}
 
-      for f <- source |> File.read!() |> then(&functions(source, &1)), f.module == name do
-        coverage = coverage(lines, f.first, f.last)
-        Map.merge(f, %{path: source, coverage: coverage, crap: score(f.complexity, coverage)})
-      end
+      for f <- source |> File.read!() |> then(&functions(source, &1)), f.module == name, do: scored(f, lines, source)
     else
       _ -> []
     end

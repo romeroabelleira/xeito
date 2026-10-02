@@ -284,4 +284,10 @@ defmodule Xeito.MachinesTest do
     assert %{value: :abstain} =
              Decider.decide(Intent, %{message: "hi, why is the build slow?"}, deciders: [])
   end
+
+  test "commit: a failed step records its output, its error, or the result itself" do
+    assert Commit.record_error(%{}, %{output: "nothing to commit"}).error == "nothing to commit"
+    assert Commit.record_error(%{}, %{error: :timeout}).error == :timeout
+    assert Commit.record_error(%{}, %{exit_status: 1}).error == "%{exit_status: 1}"
+  end
 end

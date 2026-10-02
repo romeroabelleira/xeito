@@ -14,24 +14,24 @@ defmodule Mix.Tasks.Xeito.Tui do
 
   @impl true
   def run(args) do
+    Application.put_env(:xeito, :tui, config(args))
+    {:ok, _} = Application.ensure_all_started(:term_ui)
+    TermUI.Runtime.run(root: Xeito.Tui)
+  end
+
+  @doc false
+  def config(args) do
     {opts, _, _} =
-      OptionParser.parse(args,
-        strict: [cwd: :string, socket: :string, session: :string, status_bar: :boolean]
-      )
+      OptionParser.parse(args, strict: [cwd: :string, socket: :string, session: :string, status_bar: :boolean])
 
     socket = opts[:socket] || Xeito.Api.default_socket()
+    if !File.exists?(socket), do: Mix.raise("no daemon at #{socket}; start one with `mix xeito.daemon`")
 
-    if !File.exists?(socket),
-      do: Mix.raise("no daemon at #{socket}; start one with `mix xeito.daemon`")
-
-    Application.put_env(:xeito, :tui,
+    [
       socket: socket,
       cwd: Path.expand(opts[:cwd] || "."),
       session: opts[:session],
       status_bar: Keyword.get(opts, :status_bar, true)
-    )
-
-    {:ok, _} = Application.ensure_all_started(:term_ui)
-    TermUI.Runtime.run(root: Xeito.Tui)
+    ]
   end
 end

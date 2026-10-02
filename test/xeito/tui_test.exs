@@ -517,10 +517,92 @@ defmodule Xeito.TuiTest do
       end
     end
 
+    test "long lines wrap at the screen's width; a marked line's continuation is indented past its gutter" do
+      state = %{
+        tui(status_bar: false)
+        | width: 12,
+          lines: [{:marked, :red, "⁹", "$ rm -rf one two three"}, "", "abcdefghijklmnopq"]
+      }
+
+      rows = state |> Tui.view() |> screen()
+
+      # The dot, its superscript and a space take 3 columns; the text wraps in the other 9.
+      assert [_header, :row, "   one two t", "   hree", "", "abcdefghijkl", "mnopq" | _] = rows
+    end
+
     test "the status line stays at the bottom, below the border, and shows a pending review" do
       rows = %{tui(status_bar: false) | waiting: true} |> Tui.view() |> screen()
       assert border?(Enum.at(rows, -2))
       assert List.last(rows) =~ ~r/^ state idle .* review: y \/ n/
+    end
+  end
+
+  describe "init/1: a session from the daemon" do
+    # A daemon that answers start, attach and history; `history` is what it reports as earlier turns.
+    defp daemon(history) do
+      dir = Path.join(System.tmp_dir!(), "xeito-tuid-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      socket = Path.join(dir, "d.sock")
+      {:ok, listen} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, socket}, packet: :line, active: false])
+      server = spawn(fn -> accept(listen, history) end)
+      on_exit(fn -> Process.exit(server, :kill) && File.rm_rf(dir) end)
+      socket
+    end
+
+    defp accept(listen, history) do
+      {:ok, conn} = :gen_tcp.accept(listen)
+      answer(conn, history)
+    end
+
+    defp answer(conn, history) do
+      with {:ok, line} <- :gen_tcp.recv(conn, 0) do
+        req = JSON.decode!(line)
+        :ok = :gen_tcp.send(conn, [JSON.encode!(Map.put(reply(req, history), "id", req["id"])), "\n"])
+        answer(conn, history)
+      end
+    end
+
+    defp reply(%{"cmd" => "start"}, _), do: %{ok: true, session: "ses-new", status: %{cwd: "/from/daemon"}}
+    defp reply(%{"cmd" => "attach", "session" => "ses-gone"}, _), do: %{ok: false, error: "no such session"}
+    defp reply(%{"cmd" => "attach", "session" => id}, _), do: %{ok: true, session: id, status: %{cwd: "/w"}}
+    defp reply(%{"cmd" => "history"}, :broken), do: %{ok: false, error: "no history"}
+    defp reply(%{"cmd" => "history"}, history), do: %{ok: true, history: history}
+    defp reply(_req, _), do: %{ok: true}
+
+    defp init_with(env) do
+      previous = Application.get_env(:xeito, :tui)
+      Application.put_env(:xeito, :tui, env)
+
+      on_exit(fn ->
+        if previous, do: Application.put_env(:xeito, :tui, previous), else: Application.delete_env(:xeito, :tui)
+      end)
+
+      Tui.init([])
+    end
+
+    test "a new session: started in the daemon, in the workspace it reports" do
+      state = init_with(socket: daemon([]), cwd: "/given")
+      assert %{session: "ses-new", cwd: "/from/daemon", lines: ["session ses-new · /help" <> _]} = state
+    end
+
+    test "attaching shows the earlier turns: prompts and the first line of each answer" do
+      history = [
+        %{role: "user", content: "fix the test"},
+        %{role: "assistant", content: "Fixed.\nDetails follow."},
+        %{role: "tool", content: "output"},
+        %{role: "assistant", content: ""}
+      ]
+
+      state = init_with(socket: daemon(history), cwd: "/w", session: "ses-old")
+      assert ["> fix the test", "Fixed.", "session ses-old" <> _] = state.lines
+    end
+
+    test "attaching without a history shows none; a session that cannot be opened is an error" do
+      assert ["session ses-old" <> _] = init_with(socket: daemon(:broken), cwd: "/w", session: "ses-old").lines
+
+      assert_raise RuntimeError, "could not open a session: no such session", fn ->
+        init_with(socket: daemon([]), session: "ses-gone")
+      end
     end
   end
 end

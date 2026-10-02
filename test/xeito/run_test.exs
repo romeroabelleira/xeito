@@ -1,6 +1,7 @@
 defmodule Xeito.RunTest do
   use Xeito.Case, async: true
 
+  alias Xeito.Decisions.Triage
   alias Xeito.Effects.Fake
   alias Xeito.Log
   alias Xeito.Log.Event
@@ -261,5 +262,128 @@ defmodule Xeito.RunTest do
     test "a run that is not running cannot be halted" do
       assert Run.halt("no-such-run") == {:error, :not_running}
     end
+  end
+
+  describe "held results in step mode" do
+    defmodule TwoAtOnce do
+      @moduledoc "Requests two commands on entry; the first result moves on, the second arrives late."
+      use Xeito.Machine, version: "1.0.0"
+
+      initial :start
+
+      state :start, entry: :both, timeout: 50 do
+        on :ran, to: :next
+      end
+
+      state :next, timeout: 60_000 do
+        on :go, to: :done
+      end
+
+      final :done
+      final :failed
+
+      def both(_ctx), do: [Xeito.Effect.bash("a"), Xeito.Effect.bash("b")]
+    end
+
+    test "while a result is held, later results wait and the state's timeout is ignored; a stale one is dropped" do
+      log = start_log!()
+      runner = {Fake, fun: fn _ -> %{exit_status: 0, output: ""} end}
+
+      {:ok, id} =
+        RunSupervisor.start_run(TwoAtOnce, %{},
+          run_id: run_id(),
+          log: log,
+          runner: runner,
+          debug: %{step: true, breakpoints: []}
+        )
+
+      eventually(fn -> Run.snapshot(id).paused end)
+      # Longer than the state's 50 ms timeout: a held run does not time out.
+      Process.sleep(120)
+      assert %{leaf: :start, paused: true} = Run.snapshot(id)
+
+      assert :ok = Run.step(id)
+      # The second result belonged to the state the run has left: dropped, nothing held.
+      eventually(fn -> Run.snapshot(id).leaf == :next and not Run.snapshot(id).paused end)
+      assert {:ok, :done} = Run.send_event(id, :go, %{}, :human)
+    end
+  end
+
+  describe "breakpoints on decisions" do
+    defmodule Deciding do
+      @moduledoc "Runs a command, then asks for a Triage decision."
+      use Xeito.Machine, version: "1.0.0"
+
+      initial :run
+
+      state :run, entry: :run_cmd do
+        on :ran, to: :triage
+      end
+
+      state :triage do
+        decide(Triage)
+        on {:decided, :flaky}, to: :done
+        on {:decided, :code_bug}, to: :done
+        on {:decided, :test_bug}, to: :done
+        on {:decided, :env_problem}, to: :done
+        on {:decided, :abstain}, to: :done
+      end
+
+      final :done
+      final :failed
+
+      def run_cmd(_ctx), do: [Xeito.Effect.bash("x")]
+    end
+
+    defp decided(confidence) do
+      {Fake,
+       fun: fn
+         %Xeito.Effect{kind: :bash} ->
+           %{exit_status: 0, output: ""}
+
+         %Xeito.Effect{kind: :decide} ->
+           # As the real runner reports it (`Xeito.Effects.Local`): the decision as a map.
+           decision = %Xeito.Decision{type: Triage, value: :flaky, confidence: confidence, actor: :small, model: "m"}
+           %{value: :flaky, decision: Xeito.Decision.to_map(decision)}
+       end}
+    end
+
+    defp start_with(breakpoints, runner, log \\ start_log!()) do
+      {:ok, id} =
+        RunSupervisor.start_run(Deciding, %{},
+          run_id: run_id(),
+          log: log,
+          runner: runner,
+          debug: %{step: false, breakpoints: breakpoints}
+        )
+
+      id
+    end
+
+    test "a confidence breakpoint pauses on a decision below it, not above, and not on other effects" do
+      low = start_with([{:confidence_below, 0.6}], decided(0.4))
+      eventually(fn -> Run.whereis(low) && Run.snapshot(low).paused end)
+      assert Run.snapshot(low).leaf == :triage
+
+      log = start_log!()
+      high = start_with([{:confidence_below, 0.6}], decided(0.9), log)
+      await_exit(high)
+      assert {:ok, %{status: :done}} = Run.result(log, high)
+    end
+
+    test "a decision breakpoint does not pause on a command's result" do
+      log = start_log!()
+      id = start_with([{:decision, Xeito.Decisions.Risk}], decided(0.9), log)
+      await_exit(id)
+      assert {:ok, %{status: :done}} = Run.result(log, id)
+    end
+  end
+
+  test "debug settings change a live run that holds nothing" do
+    log = start_log!()
+    id = start(RunTests, {Fake, fun: fn _ -> Process.sleep(:infinity) end}, log)
+    assert Run.debug(id, %{step: true}) == :ok
+    refute Run.snapshot(id).paused
+    assert Run.halt(id) == :ok
   end
 end

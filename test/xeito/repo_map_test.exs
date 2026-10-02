@@ -64,4 +64,31 @@ defmodule Xeito.RepoMapTest do
     on_exit(fn -> File.rm_rf(dir) end)
     assert RepoMap.build(dir) == nil
   end
+
+  describe "dependencies" do
+    defp map_of(files) do
+      ws = Path.join(System.tmp_dir!(), "xeito-deps-#{System.unique_integer([:positive])}")
+
+      for {path, text} <- files do
+        File.mkdir_p!(Path.dirname(Path.join(ws, path)))
+        File.write!(Path.join(ws, path), text)
+      end
+
+      on_exit(fn -> File.rm_rf(ws) end)
+      RepoMap.build(ws) || ""
+    end
+
+    test "an npm project's from package.json; none if it cannot be read" do
+      assert map_of(%{"package.json" => ~s({"dependencies": {"react": "1", "axios": "1"}})}) =~
+               "Dependencies (sources in deps/<name>/lib, read-only): axios, react"
+
+      refute map_of(%{"package.json" => "not json"}) =~ "Dependencies"
+      refute map_of(%{"package.json" => "{}"}) =~ "Dependencies"
+    end
+
+    test "a project without deps/ or package.json has none" do
+      refute map_of(%{"mix.exs" => "defmodule P.MixProject do\nend\n", "lib/p.ex" => "defmodule P do\nend\n"}) =~
+               "Dependencies"
+    end
+  end
 end

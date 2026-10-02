@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Xeito.LogTest do
 
   alias Exqlite.Sqlite3
   alias Mix.Tasks.Xeito.Log, as: Task
+  alias Xeito.Machines.RunTests
   alias Xeito.Session
 
   setup do
@@ -71,6 +72,40 @@ defmodule Mix.Tasks.Xeito.LogTest do
 
     assert_raise Mix.Error, "verify found runs that do not replay", fn -> run(ws, ["verify"]) end
     assert output() =~ "broken: {:error, :no_run_started}"
+  end
+
+  # A run written straight into the log, as plain terms (older logs store them so).
+  defp put_run(ws, run, terms) do
+    {:ok, db} = Sqlite3.open(Path.join([ws, ".xeito", "log.sqlite"]))
+
+    for {term, seq} <- Enum.with_index(terms, 1) do
+      type = term |> elem(0) |> Atom.to_string()
+      blob = Base.encode16(:erlang.term_to_binary(term))
+
+      :ok =
+        Sqlite3.execute(
+          db,
+          "INSERT INTO xeito_term (ocel_id, run_id, seq, type, term) VALUES ('#{run}:#{seq}', '#{run}', #{seq}, '#{type}', x'#{blob}')"
+        )
+    end
+
+    Sqlite3.close(db)
+  end
+
+  test "verify skips runs of a machine that changed or is gone, and fails on a run that desyncs", %{ws: ws} do
+    put_run(ws, "gone", [{:run_started, Xeito.NoSuchMachine, "1.0.0", %{}}])
+    put_run(ws, "old", [{:run_started, RunTests, "0.0.0", %{cwd: "/w"}}])
+    assert run(ws, ["verify"]) =~ "3 runs: 1 replay exactly, 2 skipped (machine changed since), 0 failed"
+
+    wrong = Xeito.Effect.bash("not the test command", cwd: "/w")
+
+    put_run(ws, "desync", [
+      {:run_started, RunTests, "0.1.0", %{cwd: "/w", test_cmd: "mix test"}},
+      {:effect_requested, %{wrong | id: "desync/e1"}}
+    ])
+
+    assert_raise Mix.Error, "verify found runs that do not replay", fn -> run(ws, ["verify"]) end
+    assert output() =~ "desync: {:desync, \"desync/e1\"}"
   end
 
   test "compact rewrites every run and reports the size", %{ws: ws} do

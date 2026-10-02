@@ -16,4 +16,43 @@ defmodule Mix.Tasks.Xeito.ChatTest do
     assert Chat.open_request(session: "ses-1", cwd: "w") == %{"cmd" => "attach", "session" => "ses-1", "cwd" => cwd}
     assert Chat.open_request([]) == %{"cmd" => "start", "cwd" => Path.expand(".")}
   end
+
+  describe "run/1: the line-mode client against a daemon" do
+    import ExUnit.CaptureIO
+
+    setup do
+      dir = Path.join(System.tmp_dir!(), "xeito-chattask-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf(dir) end)
+      socket = Path.join(dir, "x.sock")
+      log = Xeito.Case.start_log!()
+
+      start_supervised!(
+        {Xeito.Api, socket: socket, name: :"api_#{System.unique_integer([:positive])}", session: [log: log]}
+      )
+
+      %{socket: socket, ws: dir}
+    end
+
+    test "sends lines; a review answer with nothing waiting is shown as an error; the end of input quits", ctx do
+      out = capture_io("y\n\n", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end)
+      assert out =~ ~r/session ses-\w+ · \/help/
+      assert out =~ "nothing_to_approve"
+    end
+
+    test "/quit quits; events are shown as transcript lines until then", ctx do
+      send(self(), {:xeito_event, %{"event" => "notice", "attrs" => %{"text" => "hello from the daemon"}}})
+      out = capture_io("/quit\n", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end)
+      assert out =~ "hello from the daemon"
+    end
+
+    test "a lost daemon ends the client", ctx do
+      send(self(), {:xeito_event, %{"event" => "disconnected"}})
+      assert capture_io("", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end) =~ "daemon disconnected"
+    end
+
+    test "no daemon at the socket is an error" do
+      assert_raise Mix.Error, ~r/^no daemon at \/nonexistent/, fn -> Chat.run(["--socket", "/nonexistent/x.sock"]) end
+    end
+  end
 end

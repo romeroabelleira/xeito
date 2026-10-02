@@ -112,4 +112,85 @@ defmodule Xeito.SourceTest do
 
     refute Map.has_key?(run.("read", %{"path" => "lib/cart.ex"}), :syntax_error)
   end
+
+  describe "entries/2: definitions in less common shapes" do
+    defp entries(source), do: elem(Source.entries("m.ex", source), 1)
+    defp names(source), do: source |> entries() |> Enum.map(&{&1.kind, &1.name, &1.first, &1.last})
+
+    test "a module whose body is a bare value, and a file without definitions" do
+      assert [{:defmodule, "M", 1, 1}] = names("defmodule M, do: nil")
+      assert Source.entries("m.ex", "1 + 1") == {:ok, []}
+    end
+
+    test "a definition without do-end or a following line ends at its deepest line" do
+      source = "defmodule M,\n  do:\n    def(f(x),\n      do: x)\n"
+      assert [{:defmodule, "M", 1, _}, {:def, "f/1", 3, 4}] = names(source)
+    end
+
+    test "definitions without parentheses, with guards, or with a computed name" do
+      source = """
+      defmodule M do
+        def a, do: 1
+        def b(x) when x > 0, do: x
+        def unquote(:c)(x), do: x
+      end
+      """
+
+      assert [{:defmodule, "M", 1, 5}, {:def, "a/0", 2, 2}, {:def, "b/1", 3, 3}] = names(source)
+    end
+
+    test "definitions in module-level blocks still count (not those in function bodies); only consecutive clauses are grouped" do
+      source = """
+      defmodule M do
+        if true do
+          def injected, do: 1
+        end
+
+        def outer, do: quote(do: def(hidden, do: 1))
+
+        def f(1), do: :a
+        def f(_), do: :b
+        def g, do: :g
+        def f(x, y), do: {x, y}
+      end
+      """
+
+      assert [
+               {:defmodule, "M", _, _},
+               {:def, "injected/0", 3, 3},
+               {:def, "outer/0", 6, 6},
+               f,
+               {:def, "g/0", 10, 10},
+               {:def, "f/2", 11, 11}
+             ] =
+               names(source)
+
+      assert f == {:def, "f/1", 8, 9}
+      assert %{clauses: 2} = source |> entries() |> Enum.find(&(&1.name == "f/1"))
+    end
+
+    test "symbol/3 finds a module by its full name or its last part, a function with or without arity and module, and a test" do
+      source = """
+      defmodule Shop.Cart do
+        def total(cart), do: cart
+        test "adds an item", do: :ok
+      end
+      """
+
+      for name <- [
+            "Shop.Cart",
+            "Cart",
+            "total",
+            "total/1",
+            "Cart.total",
+            "Shop.Cart.total/1",
+            "adds an item",
+            ~s("adds an item")
+          ],
+          do: assert({:ok, _} = Source.symbol("m.ex", source, name), name)
+
+      for name <- ["Shop", "total/2", "Other.total", "adds"],
+          do: assert({:error, _} = Source.symbol("m.ex", source, name), name)
+    end
+  end
 end
