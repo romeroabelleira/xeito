@@ -104,7 +104,7 @@ defmodule Xeito.Client.RenderTest do
       review = &line("human_needed", %{"call" => &1})
 
       assert review.(%{"tool" => "bash", "arguments" => %{"command" => "rm x"}}) ==
-               "? review: run `rm x` — approve with y, deny with n\n"
+               "? review: run `rm x` — y approves, n denies, or say what to do instead\n"
 
       assert review.(%{"summary" => "write a.ex"}) =~ "review: write a.ex —"
       assert review.(%{"tool" => "edit"}) =~ "review: edit —"
@@ -136,6 +136,9 @@ defmodule Xeito.Client.RenderTest do
 
       assert line("turn_finished", %{"status" => "failed", "final_state" => "failed", "answer" => nil}) == "✗ failed\n"
       assert line("turn_finished", %{"status" => "done", "final_state" => "fixed", "answer" => ""}) == "✓ fixed\n"
+
+      assert line("turn_finished", %{"status" => :halted, "final_state" => :executing, "answer" => "Halted by the user."}) ==
+               "■ executing · Halted by the user.\n"
     end
 
     test "streamed text, notices, errors and a closed session; unknown events show nothing" do

@@ -105,13 +105,13 @@ The module computes gross prices …
 ✓ answered
 ```
 
-The typing position is a solid yellow block. It blinks while you're idle, and stays solid while you type. **Up** and **Down** recall earlier prompts, as in a shell; a half-typed line comes back when you go down past the newest one.
+The typing position is a solid yellow block. It blinks while you're idle, and stays solid while you type. **Up** and **Down** recall earlier prompts, as in a shell; a half-typed line comes back when you go down past the newest one. **Esc** halts the running turn where it is (`/halt` in any client): the command or model call in flight is stopped, and "go ahead" continues the turn.
 
 Each `◆` line is a **typed decision**. Risk decisions are shown differently: the command they apply to gets a coloured dot in the left gutter, like a breakpoint, with the decision's confidence beside it in small digits. Green means safe, yellow means it waits for your review, red means forbidden:
 
 ```
 ●¹⁰⁰ $ grep -rn "cursor" lib
-●⁹⁴ ? review: run `rm -rf _build` — approve with y, deny with n
+●⁹⁴ ? review: run `rm -rf _build` — y approves, n denies, or say what to do instead
 ```
 
 Other `◆` lines are other typed decisions. It shows its value, the tier that decided and its confidence. Everything the model does goes through a small set of tools (`read`, `write`, `edit`, `bash`), and each tool call is a logged effect.
@@ -241,10 +241,19 @@ Every shell command the model proposes first passes the **Risk** decision:
 
 ```
 ◆ risk: review (large 0.94)
-? review: run `rm -rf _build` — approve with y, deny with n
+? review: run `rm -rf _build` — y approves, n denies, or say what to do instead
 ```
 
-In the TUI, press `y` or `n` while the prompt is empty. In any client, use `/approve` or `/deny`. A denied command is reported to the model, which then continues without it.
+Answer with `y` or `n` and Enter, in the TUI and the line-mode client alike (or `/approve`, `/deny`). A denied command is reported to the model, which then continues without it.
+
+Or type what to do instead, and the command is not run: the model gets your answer and carries on from there.
+
+```
+? review: run `rm -rf _build` — y approves, n denies, or say what to do instead
+> only remove _build/test
+  instead: only remove _build/test
+  $ rm -rf _build/test
+```
 
 ### Run the checks
 
@@ -279,7 +288,7 @@ Failures go to a chat run, up to three attempts. After that, it asks you: fix th
 · drafting
 Fix calculation of gross price in pricing module
 * Correct formula to add tax rate to 1 before multiplying by net price
-? review: commit 1 file: Fix calculation of gross price in pricing module — approve with y, deny with n
+? review: commit 1 file: Fix calculation of gross price in pricing module — y approves, n denies, or say what to do instead
 ✓ done · Committed fd05b3d Fix calculation of gross price in pricing module
 ```
 

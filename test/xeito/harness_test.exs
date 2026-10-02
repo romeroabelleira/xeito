@@ -60,9 +60,13 @@ defmodule Xeito.HarnessTest do
   defp decision_value(req, decisions) do
     system = req["messages"] |> hd() |> Map.get("content")
 
-    Enum.find_value(decisions, "other", fn {needle, value} ->
-      if String.contains?(system, needle), do: value
-    end)
+    value =
+      Enum.find_value(decisions, "other", fn {needle, value} ->
+        if String.contains?(system, needle), do: value
+      end)
+
+    # A function decides when it is called: a test can hold a decision back.
+    if is_function(value, 0), do: value.(), else: value
   end
 
   defp decision_response(conn, value) do
@@ -601,7 +605,6 @@ defmodule Xeito.HarnessTest do
     assert :ok = Session.prompt(id, "please do something unusual")
     next_event("run_selected")
     assert %{attrs: %{"call" => %{"tool" => "bash"}}} = next_event("human_needed")
-    assert {:error, :busy} = Session.prompt(id, "another")
     assert :ok = Session.prompt(id, "/approve")
     assert %{attrs: %{"answer" => "ok"}} = next_event("turn_finished")
     assert File.exists?(Path.join(ws, "approved.txt"))
@@ -611,6 +614,87 @@ defmodule Xeito.HarnessTest do
 
     assert {RunTests, _} = Router.route(:run, "run the tests")
     assert {Chat, _} = Router.route(:edit, "rename this function")
+  end
+
+  test "session: a text answer to a review is not run; the model is told what to do instead", %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [{"", [{"bash", %{"command" => "touch nope.txt"}}]}, {"Listed instead.", []}], %{
+        "What does the user want" => "edit",
+        "Is this shell command safe" => "review"
+      })
+
+    id = session(ws, log, cfg)
+    :ok = Session.prompt(id, "make a file")
+    next_event("human_needed")
+
+    assert :ok = Session.prompt(id, "don't, just list the files")
+    assert %{attrs: %{"answer" => "Listed instead."}} = next_event("turn_finished")
+    refute File.exists?(Path.join(ws, "nope.txt"))
+
+    assert_receive {:chat_request, _first}
+    assert_receive {:chat_request, %{"messages" => messages}}
+
+    assert %{"role" => "tool", "content" => "not run: instead of approving, the user said: don't, just list the files"} =
+             List.last(messages)
+  end
+
+  test "session: /halt stops a turn mid-command; a go-ahead then continues it cleanly", %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [{"", [{"bash", %{"command" => "sleep 5"}}]}, {"Resumed.", []}], %{
+        "What does the user want" => "edit",
+        "Is this shell command safe" => "review"
+      })
+
+    id = session(ws, log, cfg)
+    :ok = Session.prompt(id, "wait a bit")
+    # `sleep` is not safe by rule, and a model can only raise Risk: it goes to review first.
+    next_event("human_needed")
+    :ok = Session.prompt(id, "/approve")
+    assert_receive {:xeito, _, %{type: "effect_requested", attrs: %{"kind" => :bash}}}, 3_000
+    assert {:error, :busy} = Session.prompt(id, "another")
+
+    assert :ok = Session.prompt(id, "/halt")
+    assert %{attrs: %{"status" => :halted, "answer" => "Halted by the user."}} = next_event("turn_finished")
+
+    # The halted turn is unfinished, so a go-ahead continues it; its dangling call is not resent.
+    :ok = Session.prompt(id, "go ahead")
+    assert %{attrs: %{"answer" => "Resumed."}} = next_event("turn_finished")
+    assert_receive {:chat_request, _first}
+    assert_receive {:chat_request, %{"messages" => messages}}
+    refute Enum.any?(messages, &match?(%{"tool_calls" => [_ | _]}, &1))
+    assert Enum.any?(messages, &(&1["role"] == "assistant" and &1["content"] =~ "Halted by the user"))
+  end
+
+  test "session: /halt during the intent decision ends the turn; the late decision is dropped", %{ws: ws} do
+    log = start_log!()
+    test = self()
+
+    held = fn ->
+      send(test, {:deciding, self()})
+
+      # Held, but never for long: model calls share the large tier's queue with later tests.
+      receive do
+        :go -> "edit"
+      after
+        3_000 -> "edit"
+      end
+    end
+
+    cfg = ollama(self(), [{"Should not run.", []}], %{"What does the user want" => held})
+    id = session(ws, log, cfg)
+    :ok = Session.prompt(id, "do something")
+    assert_receive {:deciding, decider}, 3_000
+
+    assert :ok = Session.prompt(id, "/halt")
+    assert %{attrs: %{"status" => :halted}} = next_event("turn_finished")
+
+    send(decider, :go)
+    refute_receive {:xeito, _, %{type: "run_selected"}}, 500
+    refute_received {:chat_request, _}
   end
 
   test "session: a stopped session is rebuilt from the log and continues its turns", %{ws: ws} do

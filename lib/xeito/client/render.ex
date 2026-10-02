@@ -46,7 +46,7 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad), do: "#{pad}· #{state}\n"
 
   defp render(%{"event" => "human_needed", "attrs" => %{"call" => call}}, pad),
-    do: "#{pad}? review: #{review_what(call)} — approve with y, deny with n\n"
+    do: "#{pad}? review: #{review_what(call)} — y approves, n denies, or say what to do instead\n"
 
   # A chat answer was already streamed; other machines get a one-line summary.
   defp render(%{"event" => "paused", "attrs" => a}, pad) do
@@ -54,7 +54,7 @@ defmodule Xeito.Client.Render do
   end
 
   defp render(%{"event" => "turn_finished", "attrs" => a}, _pad) do
-    mark = if to_string(a["status"]) == "done", do: "✓", else: "✗"
+    mark = mark(to_string(a["status"]))
     "#{mark} #{a["final_state"]}#{answer_summary(a)}\n"
   end
 
@@ -88,6 +88,10 @@ defmodule Xeito.Client.Render do
   defp review_what(%{"summary" => summary}), do: summary
   defp review_what(%{"tool" => tool}), do: tool
   defp review_what(_call), do: "continue"
+
+  defp mark("done"), do: "✓"
+  defp mark("halted"), do: "■"
+  defp mark(_status), do: "✗"
 
   # A chat answer was already streamed.
   defp answer_summary(%{"answer" => answer}) when answer in [nil, ""], do: ""

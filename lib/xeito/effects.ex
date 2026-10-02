@@ -24,21 +24,22 @@ defmodule Xeito.Effects do
   @doc """
   Executes `effect` asynchronously and sends `{:xeito_effect, id, result}` to `reply_to`.
   `context` (the requesting run's `:log` and `:run_id`) is added to the runner options unless
-  the runner spec sets them itself.
+  the runner spec sets them itself. Returns the task running it (so a halted run can stop it), or
+  `nil` when nothing runs.
   """
-  @spec dispatch(runner_spec(), Effect.t(), pid(), keyword()) :: :ok
+  @spec dispatch(runner_spec(), Effect.t(), pid(), keyword()) :: pid() | nil
   def dispatch(runner, effect, reply_to, context \\ [])
-  def dispatch(:none, _effect, _reply_to, _context), do: :ok
+  def dispatch(:none, _effect, _reply_to, _context), do: nil
 
   def dispatch({runner, opts}, %Effect{} = effect, reply_to, context) do
     opts = Keyword.merge(context, opts)
 
-    {:ok, _pid} =
+    {:ok, pid} =
       Task.Supervisor.start_child(Xeito.EffectTasks, fn ->
         send(reply_to, {:xeito_effect, effect.id, safe_run(runner, effect, opts)})
       end)
 
-    :ok
+    pid
   end
 
   defp safe_run(runner, effect, opts) do

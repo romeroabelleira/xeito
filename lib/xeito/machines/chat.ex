@@ -13,6 +13,7 @@ defmodule Xeito.Machines.Chat do
                             ├─ failed, fixes left ─────────→ thinking (told the output)
                             └─ failed, no fixes left → answered (with the failure noted)
       ask_human ──approved──→ executing · ──denied──→ thinking (told)
+                · ──instructed (a text answer)──→ thinking (told what to do instead)
 
   One run is one user turn. The session (`Xeito.Session`) keeps the conversation and passes the
   earlier messages in; the run adds the prompt, the model's messages and the tool results, and
@@ -37,7 +38,7 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.6.0"
+  use Xeito.Machine, version: "0.7.0"
 
   alias Xeito.Effect
   alias Xeito.Tools
@@ -102,6 +103,9 @@ defmodule Xeito.Machines.Chat do
     on :approved, to: :executing
     on :denied, to: :wrapping_up, guard: :step_limit?, action: :deny_and_stop
     on :denied, to: :thinking, action: :deny
+    # A text answer instead of y or n: the call is not run, and the model is told what to do.
+    on :instructed, to: :wrapping_up, guard: :step_limit?, action: :instruct_and_stop
+    on :instructed, to: :thinking, action: :instruct
   end
 
   # --- entry functions ---------------------------------------------------------------------
@@ -490,6 +494,12 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def deny_and_stop(ctx, data), do: ctx |> deny(data) |> stop()
+
+  @doc false
+  def instruct(ctx, %{text: text}), do: refuse(ctx, "not run: instead of approving, the user said: " <> text)
+
+  @doc false
+  def instruct_and_stop(ctx, data), do: ctx |> instruct(data) |> stop()
 
   @doc false
   def risk_input(%{current: %{arguments: %{"command" => command}}}), do: %{command: command}

@@ -1,6 +1,7 @@
 defmodule Xeito.RunTest do
   use Xeito.Case, async: true
 
+  alias Xeito.Effects.Fake
   alias Xeito.Log
   alias Xeito.Log.Event
   alias Xeito.Machines.FixFailingTest
@@ -134,7 +135,7 @@ defmodule Xeito.RunTest do
       if n == 1, do: Process.sleep(:infinity), else: %{exit_status: 0, output: "ok"}
     end
 
-    id = start(RunTests, {Xeito.Effects.Fake, fun: fun}, log)
+    id = start(RunTests, {Fake, fun: fun}, log)
     assert_receive {:effect_called, 1, effect_id}
 
     old_pid = Run.whereis(id)
@@ -190,5 +191,75 @@ defmodule Xeito.RunTest do
            )
 
     Run.send_event(id, :abort)
+  end
+
+  describe "halt/2" do
+    # An effect that never finishes: it tells the test which process runs it, then waits.
+    defp hanging(test) do
+      {Fake,
+       fun: fn _effect ->
+         send(test, {:effect_task, self()})
+         Process.sleep(:infinity)
+       end}
+    end
+
+    test "stops a run where it is: its effect is killed and it is logged as halted, for good" do
+      log = start_log!()
+      id = start(RunTests, hanging(self()), log)
+      assert_receive {:effect_task, task}
+      ref = Process.monitor(task)
+
+      assert Run.halt(id) == :ok
+      assert_receive {:DOWN, ^ref, :process, _, :killed}
+      await_exit(id)
+      assert {:ok, %{status: :halted, state: :running}} = Run.result(log, id)
+
+      # Finished: recovery does not bring it back, and the log replays cleanly.
+      assert {:ok, %{finished: true, desync: nil}} = Xeito.Run.Recovery.rebuild(RunTests, Log.read_run(log, id))
+    end
+
+    test "halts the runs under it too: delegated and escalation runs" do
+      log = start_log!()
+      parent = run_id()
+
+      for id <- [parent, parent <> "/e1/run", parent <> "/e2/esc"] do
+        {:ok, ^id} = RunSupervisor.start_run(RunTests, @ctx, run_id: id, log: log, runner: hanging(self()))
+        assert_receive {:effect_task, _}
+      end
+
+      unrelated = start(RunTests, hanging(self()), log)
+      assert_receive {:effect_task, _}
+
+      assert Run.halt(parent) == :ok
+
+      for id <- [parent, parent <> "/e1/run", parent <> "/e2/esc"] do
+        await_exit(id)
+        assert {:ok, %{status: :halted}} = Run.result(log, id)
+      end
+
+      assert Run.whereis(unrelated)
+      assert Run.halt(unrelated) == :ok
+    end
+
+    test "a paused run halts too" do
+      log = start_log!()
+
+      {:ok, id} =
+        RunSupervisor.start_run(RunTests, @ctx,
+          run_id: run_id(),
+          log: log,
+          runner: scripted_runner([%{exit_status: 0, output: "ok"}]),
+          debug: %{step: true, breakpoints: []}
+        )
+
+      eventually(fn -> Run.snapshot(id).paused end)
+      assert Run.halt(id) == :ok
+      await_exit(id)
+      assert {:ok, %{status: :halted, state: :running}} = Run.result(log, id)
+    end
+
+    test "a run that is not running cannot be halted" do
+      assert Run.halt("no-such-run") == {:error, :not_running}
+    end
   end
 end

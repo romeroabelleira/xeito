@@ -53,6 +53,19 @@ defmodule Xeito.SessionCommandsTest do
     assert {:notice, "step mode off"} = reply(id, "/break clear")
   end
 
+  test "/halt with nothing running is an error", %{id: id} do
+    assert {:error, "nothing is running"} = reply(id, "/halt")
+  end
+
+  test "/halt stops a running command; the turn ends halted", %{id: id} do
+    :ok = Session.prompt(id, "/run sleep 5")
+    assert_receive {:xeito, _, %{type: "effect_requested"}}, 2_000
+
+    :ok = Session.prompt(id, "/halt")
+    assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :halted}}}, 2_000
+    assert {:error, "nothing is running"} = reply(id, "/halt")
+  end
+
   test "stepping needs a paused run", %{id: id} do
     assert {:error, "no run is paused"} = reply(id, "/next")
     assert {:error, "no run is paused"} = reply(id, "/decide safe")
@@ -70,5 +83,22 @@ defmodule Xeito.SessionCommandsTest do
     :ok = Session.prompt(id, "/next")
     assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :done}}}, 5_000
     assert {:error, "no run is paused"} = reply(id, "/next")
+  end
+
+  describe "settled/1: a halted turn's messages, without unanswered tool calls" do
+    defp calls(n), do: %{role: "assistant", content: "", tool_calls: List.duplicate(%{name: "bash"}, n)}
+    defp tool, do: %{role: "tool", content: "ok"}
+
+    test "complete exchanges are kept" do
+      done = [%{role: "user", content: "p"}, calls(2), tool(), tool(), %{role: "assistant", content: "a"}]
+      assert Session.settled(done) == done
+      assert Session.settled([%{role: "user", content: "p"}]) == [%{role: "user", content: "p"}]
+    end
+
+    test "the last calls, if not all answered, are dropped with their partial results" do
+      before = [%{role: "user", content: "p"}, calls(1), tool()]
+      assert Session.settled(before ++ [calls(2), tool()]) == before
+      assert Session.settled(before ++ [calls(1)]) == before
+    end
   end
 end

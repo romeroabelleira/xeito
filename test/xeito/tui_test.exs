@@ -206,13 +206,14 @@ defmodule Xeito.TuiTest do
       assert Tui.event_to_msg(%Event.Focus{}, tui()) == :ignore
     end
 
-    test "y and n answer a pending review on an empty prompt, and are typed otherwise" do
+    test "y and n are typed like any key, so a review can be answered in words" do
       waiting = %{tui() | waiting: true}
-      assert Tui.event_to_msg(char("y"), waiting) == {:msg, {:review, "y"}}
-      assert Tui.event_to_msg(char("n"), waiting) == {:msg, {:review, "n"}}
-      assert Tui.event_to_msg(char("y"), tui()) == {:msg, {:input, char("y")}}
-      assert Tui.event_to_msg(char("y"), typing(waiting, "x")) == {:msg, {:input, char("y")}}
-      assert Tui.event_to_msg(char("a"), waiting) == {:msg, {:input, char("a")}}
+      assert Tui.event_to_msg(char("y"), waiting) == {:msg, {:input, char("y")}}
+      assert Tui.event_to_msg(char("n"), waiting) == {:msg, {:input, char("n")}}
+    end
+
+    test "Esc halts" do
+      assert Tui.event_to_msg(key(:escape), tui()) == {:msg, :halt}
     end
   end
 
@@ -274,6 +275,48 @@ defmodule Xeito.TuiTest do
       state = tui()
       {after_msg, []} = Tui.update(:nonsense, state)
       assert %{after_msg | blink: state.blink, blink_until: state.blink_until} == state
+    end
+  end
+
+  describe "answering a review and halting" do
+    defp waiting, do: %{tui() | waiting: true, leaf: "ask_human"}
+
+    test "Enter on y or n approves or denies" do
+      {state, []} = submit(waiting(), "y")
+      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"}}
+      refute state.waiting
+      assert value(state) == ""
+
+      {_, []} = submit(waiting(), " n ")
+      assert_receive {:request, %{"cmd" => "deny"}}
+    end
+
+    test "other text answers it in words: sent as the prompt, the wait ends" do
+      {state, []} = submit(waiting(), "use mix test --failed")
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "use mix test --failed"}}
+      refute state.waiting
+      assert List.last(state.lines) == "  instead: use mix test --failed"
+    end
+
+    test "a slash command during a review is a command, not the answer" do
+      {state, []} = submit(waiting(), "/why")
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "/why"}}
+      assert state.waiting
+      assert List.last(state.lines) == "> /why"
+    end
+
+    test "without a review, y is an ordinary prompt" do
+      {_, []} = submit(tui(), "y")
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "y"}}
+    end
+
+    test "Esc halts a running turn, and does nothing when idle" do
+      {_, []} = Tui.update(:halt, %{tui() | leaf: "executing"})
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "/halt"}}
+
+      {_, []} = Tui.update(:halt, tui())
+      {_, []} = Tui.update(:halt, %{tui() | leaf: "disconnected"})
+      refute_receive {:request, _}
     end
   end
 

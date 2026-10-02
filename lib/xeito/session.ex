@@ -232,10 +232,14 @@ defmodule Xeito.Session do
     cond do
       String.match?(
         trimmed,
-        ~r{^/(approve|deny|why|budget|help|machines|step|next|continue|break|decide)\b}
+        ~r{^/(approve|deny|halt|why|budget|help|machines|step|next|continue|break|decide)\b}
       ) ->
         "/" <> command = trimmed
         {:reply, :ok, command(command, s)}
+
+      # While a review waits, text is the answer: what to do instead of the call.
+      s.waiting != nil and trimmed != "" and not String.starts_with?(trimmed, "/") ->
+        {:reply, :ok, instruct(trimmed, s)}
 
       s.root != nil ->
         {:reply, {:error, :busy}, s}
@@ -283,7 +287,11 @@ defmodule Xeito.Session do
     {:reply, attrs, s}
   end
 
+  # An intent decided after its turn was halted (or for an earlier prompt) starts nothing.
   @impl true
+  def handle_info({:intent, text, _decision}, %{root: root, prompt: prompt} = s) when root != :deciding or text != prompt,
+    do: {:noreply, s}
+
   def handle_info({:intent, text, decision}, s) do
     s = %{s | decisions: Enum.take([decision | s.decisions], 10)}
 
@@ -398,6 +406,7 @@ defmodule Xeito.Session do
 
   defp command(["approve" | _], _raw, s), do: human_command(:approved, s)
   defp command(["deny" | _], _raw, s), do: human_command(:denied, s)
+  defp command(["halt" | _], _raw, s), do: halt(s)
   defp command(["why" | _], _raw, s), do: why(s)
   defp command(["budget", usd | _], _raw, s), do: budget(usd, s)
   defp command(["help" | _], _raw, s), do: notice(s, help())
@@ -445,6 +454,33 @@ defmodule Xeito.Session do
 
         start_machine(Chat, input_for(Chat, prompt, s), "/skill:#{name}", s)
     end
+  end
+
+  @halted "Halted by the user."
+
+  # Stops the turn where it is (Esc in the TUI): the run and the runs under it, or the intent
+  # decision before any run started.
+  defp halt(%{root: nil} = s), do: error(s, "nothing is running")
+
+  defp halt(%{root: :deciding} = s) do
+    emit(s, "turn_finished", nil, %{"status" => :halted, "final_state" => :intent, "answer" => @halted})
+    %{s | root: nil}
+  end
+
+  defp halt(s) do
+    case Run.halt(s.root) do
+      :ok -> s
+      {:error, :not_running} -> error(s, "nothing is running")
+    end
+  end
+
+  defp instruct(text, s) do
+    case Run.send_event(s.waiting.run, :instructed, %{text: text}, :human) do
+      {:ok, _leaf} -> %{s | waiting: nil}
+      :ignored -> error(s, "this review takes y or n only (/approve, /deny)")
+    end
+  catch
+    :exit, _ -> error(s, "the waiting run is gone")
   end
 
   defp human_command(answer, %{waiting: nil} = s), do: error(s, "nothing is waiting for #{answer}")
@@ -572,6 +608,7 @@ defmodule Xeito.Session do
 
   defp track(_run_id, _event, s), do: s
 
+  defp stopped?(%{status: :halted}), do: true
   defp stopped?(%{ctx: ctx}), do: Map.get(ctx, :stopped, false) == true
   defp stopped?(_result), do: false
 
@@ -672,6 +709,7 @@ defmodule Xeito.Session do
     :exit, _ -> nil
   end
 
+  defp answer(_machine, %{status: :halted}), do: @halted
   defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || ctx |> Map.get(:error) |> to_text()
 
   defp answer(FixFailingTest, %{state: state, ctx: ctx}) do
@@ -694,11 +732,29 @@ defmodule Xeito.Session do
   defp to_text(other), do: inspect(other)
 
   # Chat turns keep their full message list; other machines leave a short exchange.
+  # A halted turn may end with tool calls still unanswered: they are dropped, so the next request
+  # is well-formed, and a note says where the turn stopped.
+  defp remember(%{machine: Chat}, %{status: :halted, ctx: %{turn: [_system | messages]}}, answer),
+    do: window(settled(messages) ++ [%{role: "assistant", content: "(#{answer})"}])
+
   defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer), do: window(messages)
 
   defp remember(s, _result, answer) do
     window(s.history ++ [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
   end
+
+  @doc false
+  def settled(messages) do
+    with i when i != nil <- Enum.find_index(Enum.reverse(messages), &calls?/1),
+         {before, [call | rest]} <- Enum.split(messages, length(messages) - 1 - i),
+         true <- Enum.count(rest, &(&1.role == "tool")) < length(call.tool_calls) do
+      before
+    else
+      _ -> messages
+    end
+  end
+
+  defp calls?(message), do: match?(%{role: "assistant", tool_calls: [_ | _]}, message)
 
   defp window(messages) when length(messages) > @max_history, do: Enum.take(messages, -@trimmed_history)
 
@@ -788,7 +844,8 @@ defmodule Xeito.Session do
     /machine <name> [prompt]  start a machine directly (#{Enum.join(Map.keys(Router.machines()), ", ")})
     /skill:<name> [request]   run a skill (pi / Agent Skills format)
     /run <command>            run a command once
-    /approve · /deny          answer a command waiting for review
+    /approve · /deny          answer a command waiting for review (or type what to do instead)
+    /halt                     stop the turn where it is (Esc in the TUI); "go ahead" continues it
     /why                      the last decisions, with tier and confidence
     /budget <usd>             off-box spend limit per run
     /quit                     close the client (the session keeps running; attach with --session)

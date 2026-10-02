@@ -94,7 +94,8 @@ What to check after a TUI change:
 - **Typing:** the cursor is a solid block while typing and blinks when idle. Long lines scroll.
 - **The prompt line:** Up and Down recall earlier prompts and bring back a half-typed line. With no earlier prompts, they change nothing.
 - **Commands:** `/help` and `/machines`; `/statusbar off`, `on` and `hide cpu` (the bar is one line); Ctrl-T toggles the bar.
-- **Runs without a model:** `/run mix test` in a project with tests. `/step` then `/run …` pauses before the result, and `/next` releases it.
+- **Runs without a model:** `/run mix test` in a project with tests. `/step` then `/run …` pauses before the result, and `/next` releases it. `/run sleep 30` then Esc halts it.
+- **Reviews (with a model):** ask for something that needs a risky command. Answer `y`, `n`, or with text saying what to do instead.
 - **Layout:** resize the terminal; PgUp and PgDn scroll the transcript.
 - **Quitting:** Ctrl-D quits.
 

@@ -62,6 +62,33 @@ defmodule Xeito.Run do
   end
 
   @doc """
+  Halts a run where it is, together with the runs under it (delegated `…/eN/run`, escalations
+  `…/eN/esc`): effects in flight are killed, and each run finishes with status `:halted` in its
+  current state. A halted run is finished: it is not recovered. Returns `:ok`, or
+  `{:error, :not_running}`.
+  """
+  @spec halt(run_id(), atom()) :: :ok | {:error, :not_running}
+  def halt(run_id, actor \\ :human) do
+    # The run first, so it cannot react to a halted child's result.
+    result = halt_one(run_id, actor)
+    run_id |> runs_under() |> Enum.each(&halt_one(&1, actor))
+    result
+  end
+
+  defp halt_one(run_id, actor) do
+    {:ok, _leaf} = :gen_statem.call(via(run_id), {:halt, actor})
+    :ok
+  catch
+    :exit, _ -> {:error, :not_running}
+  end
+
+  defp runs_under(run_id) do
+    Xeito.RunRegistry
+    |> Registry.select([{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.filter(&String.starts_with?(&1, run_id <> "/"))
+  end
+
+  @doc """
   Sets the debug settings of a live run: `%{step: boolean, breakpoints: [breakpoint]}`.
 
   A breakpoint is `{:state, name}` (pause on any result arriving in that state),
@@ -194,7 +221,9 @@ defmodule Xeito.Run do
       effects: %{},
       debug: Keyword.get(opts, :debug) || %{step: false, breakpoints: []},
       held: nil,
-      queued: []
+      queued: [],
+      # The tasks of effects in flight, by effect id, so a halt can stop them.
+      tasks: %{}
     }
 
     case Log.read_run(data.log, run_id) do
@@ -268,6 +297,15 @@ defmodule Xeito.Run do
     process(leaf, data, name, event_data, actor, [], from)
   end
 
+  def handle_event({:call, from}, {:halt, actor}, leaf, data) do
+    Enum.each(data.tasks, fn {_id, pid} -> Process.exit(pid, :kill) end)
+
+    halted =
+      Event.new("event_received", {:event, :halt, %{}, actor}, %{"name" => :halt, "data" => %{}, "actor" => actor})
+
+    finish(leaf, data, from, :halted, [halted])
+  end
+
   def handle_event({:call, from}, :snapshot, leaf, data) do
     {:keep_state_and_data, [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
   end
@@ -287,12 +325,14 @@ defmodule Xeito.Run do
 
   # While a result is held, further results wait in order; timeouts are dropped (a paused
   # run is under human control, and the next state re-arms its own timeout).
-  def handle_event(:info, {:xeito_effect, _, _} = msg, _leaf, %{held: held} = data) when held != nil,
-    do: {:keep_state, %{data | queued: data.queued ++ [msg]}}
+  def handle_event(:info, {:xeito_effect, id, _} = msg, _leaf, %{held: held} = data) when held != nil,
+    do: {:keep_state, %{data | queued: data.queued ++ [msg], tasks: Map.delete(data.tasks, id)}}
 
   def handle_event(:state_timeout, _name, _leaf, %{held: held}) when held != nil, do: :keep_state_and_data
 
   def handle_event(:info, {:xeito_effect, id, result} = msg, leaf, data) do
+    data = %{data | tasks: Map.delete(data.tasks, id)}
+
     case Map.fetch(data.effects, id) do
       {:ok, effect} ->
         if pause?(data, leaf, effect, result),
@@ -479,16 +519,13 @@ defmodule Xeito.Run do
     if Machine.final?(machine, leaf) do
       finish(leaf, data, from)
     else
-      Enum.each(
-        effects,
-        &Effects.dispatch(data.runner, &1, self(),
-          log: data.log,
-          run_id: data.run_id,
-          debug: data.debug
-        )
-      )
+      tasks =
+        for effect <- effects,
+            pid = Effects.dispatch(data.runner, effect, self(), log: data.log, run_id: data.run_id, debug: data.debug),
+            into: data.tasks,
+            do: {effect.id, pid}
 
-      data = %{data | effects: Map.merge(data.effects, Map.new(effects, &{&1.id, &1}))}
+      data = %{data | effects: Map.merge(data.effects, Map.new(effects, &{&1.id, &1})), tasks: tasks}
       {ms, timeout_event} = Machine.timeout(machine, leaf)
       actions = [{:state_timeout, ms, timeout_event} | reply(from, {:ok, leaf})]
 
@@ -498,15 +535,19 @@ defmodule Xeito.Run do
     end
   end
 
-  defp finish(leaf, data, from) do
-    status = if leaf == :failed, do: :failed, else: :done
+  defp finish(leaf, data, from, status \\ nil, prefix \\ []) do
+    status = status || if(leaf == :failed, do: :failed, else: :done)
 
-    log!(data, [
-      Event.new("run_finished", {:run_finished, status, leaf, data.ctx}, %{
-        "status" => status,
-        "final_state" => leaf
-      })
-    ])
+    log!(
+      data,
+      prefix ++
+        [
+          Event.new("run_finished", {:run_finished, status, leaf, data.ctx}, %{
+            "status" => status,
+            "final_state" => leaf
+          })
+        ]
+    )
 
     Log.put_object(data.log, data.run_id, "run", %{status: status}, "status")
     Budget.delete(data.run_id)

@@ -157,4 +157,34 @@ defmodule Xeito.ChatMachineTest do
       assert later.args.messages == turn
     end
   end
+
+  describe "a review answered with text instead of y or n" do
+    alias Xeito.Machine
+    alias Xeito.Machine.Engine
+
+    defp reviewing(extra \\ %{}) do
+      bash = call("bash", %{"command" => "mix test"})
+      ctx(Map.merge(%{current: bash, pending: [call("read", %{"path" => "a"})], turn: []}, extra))
+    end
+
+    test "the call is not run: the model gets the text as its result, later calls are skipped" do
+      told = Chat.instruct(reviewing(), %{text: "use mix test --failed"})
+
+      assert [%{role: "tool", tool_name: "bash", content: first}, %{role: "tool", tool_name: "read", content: second}] =
+               Enum.take(told.turn, -2)
+
+      assert first == "not run: instead of approving, the user said: use mix test --failed"
+      assert second =~ "skipped"
+      assert {told.current, told.pending} == {nil, []}
+    end
+
+    test "the machine goes back to the model, or wraps up at the step limit" do
+      machine = Machine.fetch!(Chat)
+      data = %{text: "no"}
+      assert {:ok, %{to: :thinking}} = Engine.handle(machine, :ask_human, reviewing(), :instructed, data)
+
+      assert {:ok, %{to: :wrapping_up, ctx: %{stopped: true}}} =
+               Engine.handle(machine, :ask_human, reviewing(%{max_steps: 3, steps: 3}), :instructed, data)
+    end
+  end
 end

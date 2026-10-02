@@ -22,8 +22,9 @@ defmodule Xeito.Tui do
   The prompt's cursor blinks like an editor's: solid while you type, blinking in between, and
   solid again (with no timer running) after 10 s without a key.
 
-  Keys: Enter sends (and steps a paused run when the prompt is empty); `y` / `n` answer a
-  pending review when the prompt is empty; Up / Down recall earlier prompts (the line being typed
+  Keys: Enter sends (and steps a paused run when the prompt is empty); a pending review is
+  answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
+  running turn; Up / Down recall earlier prompts (the line being typed
   comes back past the newest); PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the session keeps running in the daemon and can be reattached
   with `--session`).
 
@@ -88,7 +89,7 @@ defmodule Xeito.Tui do
       client: Keyword.fetch!(opts, :client),
       session: session,
       cwd: opts[:cwd],
-      lines: Keyword.get(opts, :earlier, []) ++ ["session #{session} · /help · y/n answer a review · /quit"],
+      lines: Keyword.get(opts, :earlier, []) ++ ["session #{session} · /help · Esc halts · /quit"],
       partial: "",
       input: TextInput.set_focused(input, true),
       width: cols,
@@ -167,16 +168,11 @@ defmodule Xeito.Tui do
   end
 
   def event_to_msg(%Event.Key{key: :enter}, _state), do: {:msg, :submit}
+  def event_to_msg(%Event.Key{key: key}, _state) when key in [:escape, :ESC], do: {:msg, :halt}
   def event_to_msg(%Event.Key{key: :up}, _state), do: {:msg, {:recall, :older}}
   def event_to_msg(%Event.Key{key: :down}, _state), do: {:msg, {:recall, :newer}}
   def event_to_msg(%Event.Key{key: :page_up}, _state), do: {:msg, {:scroll, 10}}
   def event_to_msg(%Event.Key{key: :page_down}, _state), do: {:msg, {:scroll, -10}}
-
-  def event_to_msg(%Event.Key{char: char} = event, state) when char in ["y", "n"] do
-    if state.waiting and TextInput.get_value(state.input) == "",
-      do: {:msg, {:review, char}},
-      else: {:msg, {:input, event}}
-  end
 
   def event_to_msg(%Event.Resize{width: w, height: h}, _state), do: {:msg, {:resize, w, h}}
   def event_to_msg(%Event.Key{} = event, _state), do: {:msg, {:input, event}}
@@ -253,6 +249,14 @@ defmodule Xeito.Tui do
       {:ok, text, state} -> {%{state | input: put_text(state.input, text)}, []}
       :none -> {state, []}
     end
+  end
+
+  # Halts the running turn (the daemon's `/halt`); with nothing running, Esc does nothing.
+  defp handle_update(:halt, %{leaf: leaf} = state) when leaf in ["idle", "disconnected"], do: {state, []}
+
+  defp handle_update(:halt, state) do
+    request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/halt"})
+    {state, []}
   end
 
   defp handle_update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
@@ -346,7 +350,21 @@ defmodule Xeito.Tui do
   defp run_line(quit, state) when quit in ["/quit", "/exit"], do: handle_update(:quit, state)
   defp run_line("/statusbar" <> args, state), do: handle_update({:statusbar, args}, state)
 
-  defp run_line(text, state) do
+  # A pending review: y or n answers it, other text says what to do instead (the daemon takes a
+  # prompt during a review as that answer).
+  defp run_line(answer, %{waiting: true} = state) when answer in ["y", "n"],
+    do: handle_update({:review, answer}, %{state | input: TextInput.clear(state.input)})
+
+  defp run_line("/" <> _ = command, state), do: send_line(command, state)
+
+  defp run_line(text, %{waiting: true} = state) do
+    request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
+    {append(%{state | input: TextInput.clear(state.input), waiting: false}, "  instead: #{text}\n"), []}
+  end
+
+  defp run_line(text, state), do: send_line(text, state)
+
+  defp send_line(text, state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
     {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{text}\n"), []}
   end
