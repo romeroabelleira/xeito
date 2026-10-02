@@ -38,9 +38,31 @@ defmodule Xeito.Api do
   @doc "Starts the API server. Options: `:socket` (path), `:session` (defaults for new sessions)."
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
+  @doc """
+  Whether a daemon accepts connections at `path`. A socket file nobody listens on, left by a
+  daemon that died without cleaning up, is not one.
+  """
+  @spec listening?(Path.t()) :: boolean()
+  def listening?(path) do
+    case :gen_tcp.connect({:local, path}, 0, [:binary, active: false], 1_000) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        true
+
+      {:error, _} ->
+        false
+    end
+  end
+
   @impl true
   def init(opts) do
     path = Keyword.get_lazy(opts, :socket, &default_socket/0)
+
+    # Removing the socket of a running daemon would leave it serving nobody, unreachable.
+    if listening?(path), do: {:stop, "a daemon is already listening at #{path}"}, else: listen(path, opts)
+  end
+
+  defp listen(path, opts) do
     dir = Path.dirname(path)
     File.mkdir_p!(dir)
 

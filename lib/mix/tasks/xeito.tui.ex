@@ -25,7 +25,7 @@ defmodule Mix.Tasks.Xeito.Tui do
       OptionParser.parse(args, strict: [cwd: :string, socket: :string, session: :string, status_bar: :boolean])
 
     socket = opts[:socket] || Xeito.Api.default_socket()
-    if !File.exists?(socket), do: Mix.raise("no daemon at #{socket}; start one with `mix xeito.daemon`")
+    if !Xeito.Api.listening?(socket), do: Mix.raise("no daemon at #{socket}; start one with `mix xeito.daemon`")
 
     [
       socket: socket,
