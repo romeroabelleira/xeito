@@ -171,6 +171,10 @@ defmodule Xeito.Tools do
     ".xeito" => "is Xeito's event log; it is written only by Xeito"
   }
 
+  @doc "The workspace's top-level directories no tool writes to (dependencies, build output, git, the log)."
+  @spec protected_dirs() :: [String.t()]
+  def protected_dirs, do: Map.keys(@protected)
+
   # `{:error, reason}` if `path` (relative to the workspace) lies in a protected directory.
   defp protected(path, opts) do
     root = Path.expand(Keyword.get(opts, :cwd) || ".")

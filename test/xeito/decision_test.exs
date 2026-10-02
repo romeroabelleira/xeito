@@ -27,7 +27,7 @@ defmodule Xeito.DecisionTest do
       assert type.name == "risk"
       assert Type.values(type) == [:safe, :review, :forbidden]
       assert type.severity == %{order: [:safe, :review, :forbidden], floor: :review}
-      assert [%{name: :command, max_bytes: 1_000}] = type.inputs
+      assert [%{name: :command, max_bytes: 1_000}, %{name: :cwd, required: false}] = type.inputs
     end
 
     test "rejects invalid types" do
@@ -280,6 +280,118 @@ defmodule Xeito.DecisionTest do
     test "the decider raises model output to the floor" do
       decision = Decider.decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [])
       assert %Decision{value: :review, actor: :none} = decision
+    end
+  end
+
+  describe "Risk: writes inside the workspace" do
+    setup do
+      root = Path.join(System.tmp_dir!(), "xeito-risk-#{System.unique_integer([:positive])}")
+      ws = Path.join(root, "ws")
+      outside = Path.join(root, "outside")
+      for dir <- [Path.join(ws, "lib"), Path.join(ws, ".git"), outside], do: File.mkdir_p!(dir)
+      File.write!(Path.join(ws, "a.txt"), "x")
+      File.ln_s!(outside, Path.join(ws, "out_dir"))
+      File.ln_s!(Path.join(outside, "f"), Path.join(ws, "out_file"))
+      File.ln_s!("loop", Path.join(ws, "loop"))
+      on_exit(fn -> File.rm_rf(root) end)
+      %{ws: ws}
+    end
+
+    defp write_risk(command, ws), do: Risk.classify(%{command: command, cwd: ws})
+
+    test "redirects, tee and file commands whose targets stay inside are safe", %{ws: ws} do
+      for command <- [
+            "echo hi > out.txt",
+            "mix test > test.log 2>&1",
+            "ls >> notes/list.txt",
+            "mix compile 2> errors.txt",
+            "mix test &> all.log",
+            "grep -rn TODO lib | tee todo.txt",
+            "tee -a log.txt",
+            "touch a.txt b.txt",
+            "mkdir -p tmp/x",
+            "rm -rf tmp",
+            "rm a.txt",
+            "mv a.txt b.txt",
+            "cp -r lib lib2",
+            "cp 'a.txt' 'with space.txt'",
+            "ls > out.txt && cat out.txt"
+          ],
+          do: assert(write_risk(command, ws) == :safe, command)
+    end
+
+    test "sed -i with one plain substitution is safe; scripts that could write or run something are not", %{ws: ws} do
+      for command <- [
+            "sed -i 's/foo/bar/g' lib/a.ex",
+            "sed -i '' 's|a|b|' a.txt",
+            "sed -i.bak -e 's/a/b/' a.txt",
+            "sed -E -i 's/a+/b/2' a.txt",
+            "sed -r -i 's/a+/b/' a.txt"
+          ],
+          do: assert(write_risk(command, ws) == :safe, command)
+
+      for command <- [
+            "sed -i 's/a/b/w /tmp/x' a.txt",
+            "sed -i 's/a/b/;e id' a.txt",
+            "sed -i 's/a/b/e' a.txt",
+            ~S(sed -i "s/$X/y/" a.txt),
+            "sed 's/a/b/' a.txt > a.txt.new && sed -i 1d a.txt",
+            "sed -i 's/a/b/'",
+            "sed -i 's/a/b/' -z a.txt",
+            "sed -n 's/a/b/' a.txt > x.txt && sed --in-place 's/a/b/' a.txt"
+          ],
+          do: assert(write_risk(command, ws) == nil, command)
+    end
+
+    test "a target outside, at the root, in .git or a protected directory, or not literal is not safe", %{ws: ws} do
+      for command <- [
+            "echo x > ../x",
+            "echo x > /tmp/x",
+            "echo x > ~/x",
+            "echo x > *.txt",
+            "echo x >'q.txt'",
+            "echo x > $HOME/x",
+            "echo x > out_dir/x",
+            "echo x > out_file",
+            "touch out_dir",
+            "echo x > loop/x",
+            "rm -rf .",
+            "rm -rf ./",
+            "rm -rf .git",
+            "rm lib/../.git/config",
+            "touch .git/x",
+            "touch deps/x",
+            "echo x > _build/x",
+            "touch node_modules/x",
+            "touch .xeito/x",
+            "cp a.txt /tmp/",
+            "mv a.txt ../b",
+            "rm *.txt",
+            ~S(echo x > "my file"),
+            "rm -r -- a.txt",
+            "cp --target-directory=/tmp a.txt",
+            "rm",
+            "cd lib && echo x > a.txt",
+            "chmod 644 a.txt",
+            "cp .env env.txt",
+            "find . -name x | xargs rm"
+          ],
+          do: assert(write_risk(command, ws) == nil, command)
+    end
+
+    test "without a workspace, no write is safe; forbidden stays forbidden", %{ws: ws} do
+      assert Risk.classify(%{command: "echo hi > out.txt"}) == nil
+      assert Risk.classify(%{command: "echo hi > out.txt", cwd: ""}) == nil
+      assert write_risk("rm -rf /", ws) == :forbidden
+    end
+
+    test "the tokenizer still calls a file redirect unsafe for read-only use" do
+      assert Risk.segments("ls > out") == :unsafe
+
+      assert Risk.parse("ls -la > out.txt | tee b && echo x 2>/dev/null") ==
+               {:ok, ["ls -la", "tee b", "echo x"], ["out.txt"]}
+
+      assert Risk.parse("echo `id` > x") == :unsafe
     end
   end
 end

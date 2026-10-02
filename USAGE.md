@@ -233,7 +233,7 @@ The conversation carries over between turns in a session. An `AGENTS.md` at the 
 
 Every shell command the model proposes first passes the **Risk** decision:
 - **Rules** decide the obvious cases: `ls`, `git status` and `mix test` are safe, while `rm -rf /` and `curl … | sh` are forbidden.
-  Read-only commands are safe, including in pipelines: `grep`, `find` without `-exec`/`-delete`, `sed -n '10,20p'`, `cat`, `head`, and `cd` into a subdirectory. Quotes are respected (`grep "a\|b"` is a single command), and output may go to `/dev/null` or another stream (`2>&1`). A redirect into a file, or command substitution, always goes to review.
+  Read-only commands are safe, including in pipelines: `grep`, `find` without `-exec`/`-delete`, `sed -n '10,20p'`, `cat`, `head`, and `cd` into a subdirectory. Quotes are respected (`grep "a\|b"` is a single command), and output may go to `/dev/null` or another stream (`2>&1`). Writes that stay inside the project are safe too: `> out.txt`, `tee notes.txt`, `touch`, `mkdir`, `rm`, `mv`, `cp`, or `sed -i 's/a/b/'`. Every path has to be a plain, relative name inside the project, also after following symlinks, and outside `.git`, `deps`, `_build`, `node_modules` and `.xeito`. A write elsewhere, a path with `$`, `~` or a glob, and command substitution go to review.
 - **The model** judges the rest, and it can only make a verdict more cautious.
 - **Safe** commands run.
 - **Forbidden** ones never run, and the model is told why.

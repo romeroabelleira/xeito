@@ -502,7 +502,7 @@ defmodule Xeito.Machines.Chat do
   def instruct_and_stop(ctx, data), do: ctx |> instruct(data) |> stop()
 
   @doc false
-  def risk_input(%{current: %{arguments: %{"command" => command}}}), do: %{command: command}
+  def risk_input(%{current: %{arguments: %{"command" => command}}} = ctx), do: %{command: command, cwd: ctx[:cwd]}
 
   # A refused call is reported to the model, and the rest of that batch is skipped.
   defp refuse(ctx, reason) do

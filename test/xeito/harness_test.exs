@@ -456,9 +456,11 @@ defmodule Xeito.HarnessTest do
     assert skipped["content"] =~ "skipped"
   end
 
+  # `sh -c '…'` goes to review: its writes are not visible in the command (a plain `touch` inside
+  # the workspace would be safe by rule).
   test "chat: a command for review waits for a human; approved, it runs", %{ws: ws} do
     log = start_log!()
-    cfg = ollama(self(), [{"", [{"bash", %{"command" => "touch made.txt"}}]}, {"Done.", []}])
+    cfg = ollama(self(), [{"", [{"bash", %{"command" => "sh -c 'touch made.txt'"}}]}, {"Done.", []}])
     id = run_chat(log, ws, cfg, %{prompt: "make a file"})
 
     eventually(fn -> Run.whereis(id) && Run.snapshot(id).leaf == :ask_human end)
@@ -594,7 +596,7 @@ defmodule Xeito.HarnessTest do
     log = start_log!()
 
     cfg =
-      ollama(self(), [{"", [{"bash", %{"command" => "touch approved.txt"}}]}, {"ok", []}], %{
+      ollama(self(), [{"", [{"bash", %{"command" => "sh -c 'touch approved.txt'"}}]}, {"ok", []}], %{
         "What does the user want" => "edit",
         "Is this shell command safe" => "review"
       })
@@ -620,7 +622,7 @@ defmodule Xeito.HarnessTest do
     log = start_log!()
 
     cfg =
-      ollama(self(), [{"", [{"bash", %{"command" => "touch nope.txt"}}]}, {"Listed instead.", []}], %{
+      ollama(self(), [{"", [{"bash", %{"command" => "sh -c 'touch nope.txt'"}}]}, {"Listed instead.", []}], %{
         "What does the user want" => "edit",
         "Is this shell command safe" => "review"
       })
