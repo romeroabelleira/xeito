@@ -201,8 +201,8 @@ defmodule Xeito.UndoTest do
     assert Undo.undo(ws, "ses-a", 2) ==
              {:ok,
               [
-                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: []},
-                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: []}
+                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: [], git: nil},
+                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: [], git: nil}
               ]}
 
     assert get(ws, "a.txt") == {:error, :enoent}
@@ -283,6 +283,142 @@ defmodule Xeito.UndoTest do
       assert [%{skipped: ["f.txt"]}, %{skipped: []}] = Undo.steps(ws, "ses-a")
       assert {:error, {:conflict, %{id: "ses-a/t1/e2"}}} = Undo.undo(ws, "ses-a", 1)
       assert get(ws, "f.txt") == {:ok, String.duplicate("y", 2_000)}
+    end
+  end
+
+  describe "the project's git: commits the agent made" do
+    setup %{ws: ws} do
+      git(ws, ~w(init -q -b main))
+      put(ws, "base.txt", "base\n")
+      commit(ws, "base")
+      %{base: head(ws)}
+    end
+
+    defp commit(ws, message) do
+      git(ws, ~w(add -A))
+      git(ws, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message])
+    end
+
+    defp head(ws), do: String.trim(git(ws, ~w(rev-parse HEAD)))
+
+    test "a commit is undone by moving its branch back; its files go too when the step wrote them", %{ws: ws, base: base} do
+      step(ws, "ses-a/t1/e1", "bash write and commit", fn ->
+        put(ws, "a.txt", "a\n")
+        commit(ws, "agent")
+      end)
+
+      after_commit = head(ws)
+      assert [%{git: %{ref: "refs/heads/main", from: ^base, to: ^after_commit}}] = Undo.steps(ws, "ses-a")
+
+      assert {:ok, [%{git: %{ref: "refs/heads/main"}}]} = Undo.undo(ws, "ses-a", 1)
+      assert head(ws) == base
+      assert get(ws, "a.txt") == {:error, :enoent}
+      assert git(ws, ~w(status --porcelain)) == ""
+
+      assert {:ok, _} = Undo.redo(ws, "ses-a", 1)
+      assert head(ws) == after_commit
+      assert get(ws, "a.txt") == {:ok, "a\n"}
+      assert git(ws, ~w(status --porcelain)) == ""
+    end
+
+    test "a step that only committed leaves the changes in the working tree, unstaged", %{ws: ws, base: base} do
+      put(ws, "user.txt", "mine\n")
+      step(ws, "ses-a/t1/e1", "bash git commit", fn -> commit(ws, "agent") end)
+
+      assert {:ok, _} = Undo.undo(ws, "ses-a", 1)
+      assert head(ws) == base
+      assert get(ws, "user.txt") == {:ok, "mine\n"}
+      assert git(ws, ~w(status --porcelain)) == "?? user.txt\n"
+    end
+
+    test "a pushed commit is not undone, and nothing changes", %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "bash commit", fn ->
+        put(ws, "a.txt", "a\n")
+        commit(ws, "agent")
+      end)
+
+      pushed = head(ws)
+      git(ws, ["update-ref", "refs/remotes/origin/main", pushed])
+
+      assert Undo.undo(ws, "ses-a", 1) == {:error, {:git, %{id: "ses-a/t1/e1", label: "bash commit"}, {:pushed, pushed}}}
+      assert head(ws) == pushed
+      assert get(ws, "a.txt") == {:ok, "a\n"}
+    end
+
+    test "a branch that moved since the step is not moved back", %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "bash commit", fn ->
+        put(ws, "a.txt", "a\n")
+        commit(ws, "agent")
+      end)
+
+      put(ws, "later.txt", "later\n")
+      commit(ws, "user")
+      later = head(ws)
+
+      assert {:error, {:git, %{id: "ses-a/t1/e1"}, :branch_moved}} = Undo.undo(ws, "ses-a", 1)
+      assert head(ws) == later
+    end
+
+    test "HEAD moved another way (a checkout) is a step that cannot be undone", %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "bash git checkout -b other", fn -> git(ws, ~w(checkout -q -b other)) end)
+
+      assert [%{git: :moved}] = Undo.steps(ws, "ses-a")
+      assert {:error, {:git, %{id: "ses-a/t1/e1"}, :moved}} = Undo.undo(ws, "ses-a", 1)
+      assert String.trim(git(ws, ~w(branch --show-current))) == "other"
+    end
+
+    test "several commits over several steps go back together", %{ws: ws, base: base} do
+      for i <- 1..2 do
+        step(ws, "ses-a/t1/e#{i}", "bash commit #{i}", fn ->
+          put(ws, "#{i}.txt", "#{i}\n")
+          commit(ws, "agent #{i}")
+        end)
+      end
+
+      assert {:ok, [_, _]} = Undo.undo(ws, "ses-a", 2)
+      assert head(ws) == base
+      assert git(ws, ~w(status --porcelain)) == ""
+    end
+
+    test "an empty commit is undone without touching what the user staged", %{ws: ws, base: base} do
+      step(ws, "ses-a/t1/e1", "bash commit --allow-empty", fn ->
+        git(ws, ~w(-c user.name=t -c user.email=t@t commit -q --allow-empty -m empty))
+      end)
+
+      put(ws, "staged.txt", "s\n")
+      git(ws, ~w(add staged.txt))
+
+      assert {:ok, _} = Undo.undo(ws, "ses-a", 1)
+      assert head(ws) == base
+      assert git(ws, ~w(status --porcelain)) == "A  staged.txt\n"
+    end
+
+    test "commits on a detached HEAD are a move undo leaves to git", %{ws: ws} do
+      git(ws, ~w(checkout -q --detach))
+
+      step(ws, "ses-a/t1/e1", "bash commit", fn ->
+        put(ws, "a.txt", "a\n")
+        commit(ws, "detached")
+      end)
+
+      assert [%{git: :moved}] = Undo.steps(ws, "ses-a")
+    end
+
+    test "move/2 does not move a branch that moved after the plan was made", %{ws: ws, base: base} do
+      step(ws, "ses-a/t1/e1", "bash commit", fn ->
+        put(ws, "a.txt", "a\n")
+        commit(ws, "agent")
+      end)
+
+      [step] = Undo.steps(ws, "ses-a")
+      {:ok, move} = Undo.Branch.plan(ws, [step], :undo)
+      put(ws, "b.txt", "b\n")
+      commit(ws, "user")
+      later = head(ws)
+
+      assert Undo.Branch.move(ws, move) == {:error, :changed}
+      assert head(ws) == later
+      refute head(ws) == base
     end
   end
 end

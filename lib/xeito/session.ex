@@ -505,7 +505,11 @@ defmodule Xeito.Session do
     log_undone(steps, name, s)
     labels = Enum.map(steps, & &1.label)
     s = %{s | history: s.history ++ [%{role: "user", content: undo_note(name, labels)}]}
-    notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> not_covered(steps))
+
+    notice(
+      s,
+      undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> branch_moved(steps, name) <> not_covered(steps)
+    )
   end
 
   defp undone({:error, reason}, name, s), do: error(s, undo_error(reason, name))
@@ -520,6 +524,19 @@ defmodule Xeito.Session do
   defp undo_event(step, type, qualifier) do
     attrs = %{"effect_id" => step.id, "label" => step.label}
     Log.Event.new(type, {String.to_atom(type), step.id, step.label}, attrs, [{step.id, "effect", qualifier}])
+  end
+
+  # Where the branch went when the steps made commits (`Xeito.Undo.Branch`).
+  defp branch_moved(steps, name) do
+    case Enum.filter(steps, &is_map(&1.git)) do
+      [] ->
+        ""
+
+      commits ->
+        last = List.last(commits)
+        {way, commit} = if name == "undo", do: {"back", last.git.from}, else: {"forward", last.git.to}
+        "#{String.replace_prefix(last.git.ref, "refs/heads/", "")}: #{way} to #{String.slice(commit, 0, 7)}\n"
+    end
   end
 
   defp not_covered(steps) do
@@ -547,10 +564,19 @@ defmodule Xeito.Session do
   defp undo_error({:conflict, step}, name),
     do: "can't #{name} #{step.label}: those lines changed since; nothing was #{name}ne"
 
+  defp undo_error({:git, step, reason}, name), do: "can't #{name} #{step.label}: " <> git_error(reason, name)
   defp undo_error(nothing, name) when nothing in [:nothing_to_undo, :nothing_to_redo], do: "nothing to #{name}"
 
   defp undo_error(_unavailable_or_changed, name),
     do: "can't #{name} now: no snapshot of the workspace (no git, or too many files), or it changed meanwhile"
+
+  defp git_error({:pushed, commit}, _name) do
+    short = String.slice(commit, 0, 7)
+    "commit #{short} is already pushed; to reverse it, run: git revert #{short}"
+  end
+
+  defp git_error(:moved, name), do: "it moved HEAD (checkout, reset or rebase); #{name} that with git"
+  defp git_error(:branch_moved, name), do: "its branch has moved since; nothing was #{name}ne"
 
   defp unknown_command(raw, s), do: error(s, "unknown command /#{raw}; try /help")
 

@@ -131,6 +131,47 @@ defmodule Xeito.SessionCommandsTest do
                [["#{id}/t1/e1", "redoes"], [id, "within"]]
     end
 
+    test "a commit is undone by moving the branch back; a pushed one is refused with how to revert it", %{id: id, ws: ws} do
+      git = fn args -> System.cmd("git", ["-c", "user.name=t", "-c", "user.email=t@t" | args], cd: ws) end
+      git.(~w(init -q -b main))
+      git.(~w(commit -q --allow-empty -m base))
+
+      commit = fn n ->
+        Xeito.Undo.step(ws, "#{id}/t1/e#{n}", "bash git commit #{n}", fn ->
+          File.write!(Path.join(ws, "#{n}.txt"), "#{n}\n")
+          git.(~w(add -A))
+          git.(["commit", "-q", "-m", "agent #{n}"])
+        end)
+      end
+
+      commit.(1)
+      {base, 0} = git.(~w(rev-parse --short HEAD~1))
+      assert {:notice, text} = reply(id, "/undo")
+      assert text =~ "main: back to #{String.trim(base)}\n"
+
+      {:notice, _} = reply(id, "/redo")
+      {pushed, 0} = git.(~w(rev-parse HEAD))
+      git.(["update-ref", "refs/remotes/origin/main", String.trim(pushed)])
+      short = String.slice(pushed, 0, 7)
+
+      assert reply(id, "/undo") ==
+               {:error,
+                "can't undo bash git commit 1: commit #{short} is already pushed; to reverse it, run: git revert #{short}"}
+    end
+
+    test "a step that moved HEAD otherwise (a checkout) is left to git", %{id: id, ws: ws} do
+      System.cmd("git", ~w(init -q -b main), cd: ws)
+      System.cmd("git", ~w(-c user.name=t -c user.email=t@t commit -q --allow-empty -m base), cd: ws)
+
+      Xeito.Undo.step(ws, "#{id}/t1/e1", "bash git checkout -b x", fn ->
+        System.cmd("git", ~w(checkout -q -b x), cd: ws)
+      end)
+
+      assert reply(id, "/undo") ==
+               {:error,
+                "can't undo bash git checkout -b x: it moved HEAD (checkout, reset or rebase); undo that with git"}
+    end
+
     test "steps of another session are not this session's to undo", %{id: id, ws: ws} do
       agent_step(ws, "ses-other/t1/e1", "a.txt", "a\n")
       assert reply(id, "/undo") == {:error, "nothing to undo"}
