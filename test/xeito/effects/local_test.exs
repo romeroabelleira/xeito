@@ -53,6 +53,20 @@ defmodule Xeito.Effects.LocalTest do
       refute File.exists?(Path.join(ws, "b.txt"))
     end
 
+    test "a file outside the workspace that a command names is backed up with the step", %{ws: ws} do
+      outside = ws <> "-out"
+      File.mkdir_p!(outside)
+      on_exit(fn -> File.rm_rf(outside) end)
+      notes = Path.join(outside, "notes.txt")
+      File.write!(notes, "old\n")
+
+      Local.run(with_id(Effect.bash("echo new > #{notes} && echo x > in.txt", cwd: ws), "ses-l/t1/e1"), [])
+      assert [%{outside: [^notes]}] = Xeito.Undo.steps(ws, "ses-l")
+      assert {:ok, _} = Xeito.Undo.undo(ws, "ses-l", 1)
+      assert File.read!(notes) == "old\n"
+      refute File.exists?(Path.join(ws, "in.txt"))
+    end
+
     test "a long or multi-line command is labelled by its start", %{ws: ws} do
       command = "touch c.txt\n" <> String.duplicate("# filler ", 20)
       Local.run(with_id(Effect.bash(command, cwd: ws), "ses-l/t1/e1"), [])

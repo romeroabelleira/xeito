@@ -172,6 +172,23 @@ defmodule Xeito.SessionCommandsTest do
                 "can't undo bash git checkout -b x: it moved HEAD (checkout, reset or rebase); undo that with git"}
     end
 
+    test "files outside the workspace that a step named are restored too, or the undo is refused", %{id: id, ws: ws} do
+      notes = ws <> "-notes.txt"
+      on_exit(fn -> File.rm(notes) end)
+      File.write!(notes, "old\n")
+      Xeito.Undo.step(ws, "#{id}/t1/e1", "bash sed notes", fn -> File.write!(notes, "new\n") end, outside: [notes])
+
+      assert {:notice, text} = reply(id, "/undo")
+      assert text =~ "outside the workspace: #{notes}\n"
+      assert File.read!(notes) == "old\n"
+
+      {:notice, _} = reply(id, "/redo")
+      File.write!(notes, "mine\n")
+
+      assert reply(id, "/undo") ==
+               {:error, "can't undo bash sed notes: #{notes} changed since; nothing was undone"}
+    end
+
     test "steps of another session are not this session's to undo", %{id: id, ws: ws} do
       agent_step(ws, "ses-other/t1/e1", "a.txt", "a\n")
       assert reply(id, "/undo") == {:error, "nothing to undo"}

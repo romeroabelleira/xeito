@@ -28,21 +28,12 @@ defmodule Xeito.Undo do
   """
 
   alias Xeito.Undo.Branch
+  alias Xeito.Undo.Outside
+  alias Xeito.Undo.Store
 
   @max_files 20_000
   @max_steps 200
   @max_file_bytes 5_000_000
-  @ident [
-    {"GIT_AUTHOR_NAME", "xeito"},
-    {"GIT_AUTHOR_EMAIL", "xeito@localhost"},
-    {"GIT_COMMITTER_NAME", "xeito"},
-    {"GIT_COMMITTER_EMAIL", "xeito@localhost"}
-  ]
-
-  # Git's own variables, set for commands run inside a git hook, would put the store's index,
-  # objects or refs elsewhere (the project's index, for one): they are cleared.
-  @inherited Enum.map(~w(GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR), &{&1, nil})
-
   @type step :: %{id: String.t(), label: String.t(), skipped: [Path.t()], git: Branch.change()}
 
   @doc """
@@ -88,9 +79,12 @@ defmodule Xeito.Undo do
     :ok
   end
 
+  defp max_bytes(opts), do: Keyword.get(opts, :max_file_bytes, @max_file_bytes)
+
   defp locked(cwd, fun), do: :global.trans({{__MODULE__, cwd}, self()}, fun)
 
-  defp public(step), do: Map.take(step, [:id, :label, :skipped, :git])
+  defp public(step),
+    do: step |> Map.take([:id, :label, :skipped, :git]) |> Map.put(:outside, Enum.map(step.outside, & &1.path))
 
   # --- snapshots ---
 
@@ -116,7 +110,7 @@ defmodule Xeito.Undo do
   end
 
   defp big_files(cwd, opts) do
-    max = Keyword.get(opts, :max_file_bytes, @max_file_bytes)
+    max = max_bytes(opts)
     {files, 0} = git(cwd, ~w(ls-files -z --others --modified --exclude-standard))
 
     for file <- String.split(files, <<0>>, trim: true),
@@ -159,7 +153,7 @@ defmodule Xeito.Undo do
   # Files the project ignores (`.env`, `*.log`) are captured when small; ignored directories
   # (`_build/`, `.venv/`, `target/`) are not: they hold what a build or install recreates.
   defp ignored_files(cwd, opts) do
-    max = Keyword.get(opts, :max_file_bytes, @max_file_bytes)
+    max = max_bytes(opts)
     {entries, 0} = git(cwd, ~w(ls-files -z --others --ignored --exclude-standard --directory))
 
     for entry <- String.split(entries, <<0>>, trim: true),
@@ -172,9 +166,9 @@ defmodule Xeito.Undo do
   defp snapshotted(cwd, id, label, fun, opts) do
     case snapshot(cwd, opts) do
       {:ok, before, big} ->
-        head = Branch.head(cwd)
+        state = {before, big, Branch.head(cwd), Outside.capture(cwd, Keyword.get(opts, :outside, []), max_bytes(opts))}
         result = fun.()
-        recorded(cwd, {id, label}, {before, big, head}, opts)
+        recorded(cwd, {id, label}, state, opts)
         result
 
       :error ->
@@ -182,15 +176,24 @@ defmodule Xeito.Undo do
     end
   end
 
-  defp recorded(cwd, step, {before, big_before, head}, opts) do
+  defp recorded(cwd, step, {before, big_before, head, outside_before}, opts) do
     with {:ok, after_tree, big_after} <- snapshot(cwd, opts) do
       skipped = for {file, stat} <- big_after, big_before[file] != stat, do: file
-      git = Branch.change(cwd, head, Branch.head(cwd))
-      record(cwd, step, %{before: before, after: after_tree, skipped: Enum.sort(skipped), git: git}, opts)
+      outside = Outside.changes(outside_before, Outside.capture(cwd, Map.keys(outside_before), max_bytes(opts)))
+
+      change = %{
+        before: before,
+        after: after_tree,
+        skipped: Enum.sort(skipped),
+        git: Branch.change(cwd, head, Branch.head(cwd)),
+        outside: outside
+      }
+
+      record(cwd, step, change, opts)
     end
   end
 
-  defp record(_cwd, _step, %{before: tree, after: tree, git: nil}, _opts), do: :unchanged
+  defp record(_cwd, _step, %{before: tree, after: tree, git: nil, outside: []}, _opts), do: :unchanged
 
   defp record(cwd, {id, label}, change, opts) do
     session = id |> String.split("/") |> hd()
@@ -223,12 +226,16 @@ defmodule Xeito.Undo do
         _ -> []
       end
 
-    lines = Enum.map(step.skipped, &"skipped: #{&1}") ++ git_line(step.git)
-    message = Enum.join(["#{step.label}\n\nid: #{step.id}\nbefore: #{step.before}" | lines], "\n")
+    lines = Enum.map(step.skipped, &"skipped: #{&1}") ++ git_line(step.git) ++ Outside.lines(step.outside)
+    message = Enum.join(["#{step.label}\n\nid: #{step.id}\nbefore: #{step.before}\nafter: #{step.after}" | lines], "\n")
 
-    {commit, 0} = git(cwd, ["commit-tree", step.after, "-m", message | parent])
+    {commit, 0} = git(cwd, ["commit-tree", commit_tree(cwd, step), "-m", message | parent])
     {_, 0} = git(cwd, ["update-ref", ref, String.trim(commit)])
   end
+
+  # A step with backups outside the workspace commits a tree holding them too (`Outside.tree/3`).
+  defp commit_tree(_cwd, %{outside: [], after: tree}), do: tree
+  defp commit_tree(cwd, step), do: Outside.tree(cwd, step.after, step.outside)
 
   defp git_line(nil), do: []
   defp git_line(:moved), do: ["git: moved"]
@@ -244,12 +251,23 @@ defmodule Xeito.Undo do
   end
 
   defp parse(record) do
-    with [commit, after_tree, body] <- String.split(String.trim(record), "\x1f"),
+    with [commit, _tree, body] <- String.split(String.trim(record), "\x1f"),
          [label, meta] <- String.split(body, "\n\n", parts: 2),
-         %{"id" => id, "before" => before} <- Regex.named_captures(~r/id: (?<id>\S+)\nbefore: (?<before>\S+)/, meta) do
+         %{"id" => id, "before" => before, "after" => after_tree} <-
+           Regex.named_captures(~r/id: (?<id>\S+)\nbefore: (?<before>\S+)\nafter: (?<after>\S+)/, meta) do
       skipped = for [_, file] <- Regex.scan(~r/^skipped: (.+)$/m, meta), do: file
       git = Regex.run(~r/^git: (\S+)(?: (\S+) (\S+))?$/m, meta)
-      %{commit: commit, id: id, label: label, before: before, after: after_tree, skipped: skipped, git: parse_git(git)}
+
+      %{
+        commit: commit,
+        id: id,
+        label: label,
+        before: before,
+        after: after_tree,
+        skipped: skipped,
+        git: parse_git(git),
+        outside: Outside.parse(meta)
+      }
     else
       _ -> nil
     end
@@ -275,11 +293,19 @@ defmodule Xeito.Undo do
   # The workspace, and the branch when the steps committed, with the steps reverted (or
   # re-applied). Everything is checked first: on an error, nothing has changed.
   defp revert(cwd, steps, direction, opts) do
-    with {:ok, branch} <- Branch.plan(cwd, steps, direction),
+    with {:ok, branch, outside} <- plans(cwd, steps, direction),
          {:ok, current} <- current(cwd, opts),
          {:ok, target} <- target(cwd, current, steps, direction),
          :ok <- apply_patch(cwd, current, target),
+         :ok <- Outside.restore(cwd, outside),
          do: Branch.move(cwd, branch)
+  end
+
+  # What else changes besides the workspace, checked before anything does.
+  defp plans(cwd, steps, direction) do
+    with {:ok, branch} <- Branch.plan(cwd, steps, direction),
+         {:ok, outside} <- Outside.plan(cwd, steps, direction),
+         do: {:ok, branch, outside}
   end
 
   defp enough([], _n, :undo), do: {:error, :nothing_to_undo}
@@ -336,13 +362,6 @@ defmodule Xeito.Undo do
   defp pop(cwd, ref, nil), do: git(cwd, ["update-ref", "-d", ref])
   defp pop(cwd, ref, next), do: git(cwd, ["update-ref", ref, next.commit])
 
-  defp store(cwd), do: Path.join([cwd, ".xeito", "undo.git"])
-
-  # Only stdout is read (trees, commits, diffs); warnings on stderr are dropped, the exit
-  # status tells success.
-  defp git(cwd, args, env \\ []) do
-    inherited = Enum.reject(@inherited, fn {name, nil} -> List.keymember?(env, name, 0) end)
-    env = [{"GIT_DIR", store(cwd)}, {"GIT_WORK_TREE", cwd} | @ident] ++ inherited ++ env
-    System.cmd("sh", ["-c", ~s(exec git "$@" 2>/dev/null), "git" | args], cd: cwd, env: env)
-  end
+  defp store(cwd), do: Store.path(cwd)
+  defp git(cwd, args, env \\ []), do: Store.git(cwd, args, env)
 end

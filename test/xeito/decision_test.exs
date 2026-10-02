@@ -283,6 +283,15 @@ defmodule Xeito.DecisionTest do
     end
   end
 
+  test "Risk.written_paths/1: the literal paths a command writes, as written, or :error" do
+    assert Risk.written_paths("sed -i 's/a/b/' /etc/x.conf notes.txt") == {:ok, ["/etc/x.conf", "notes.txt"]}
+    assert Risk.written_paths("echo hi > /tmp/out.txt && touch a b") == {:ok, ["/tmp/out.txt", "a", "b"]}
+    assert Risk.written_paths("ls -la | grep x") == {:ok, []}
+
+    for unknown <- ["cp $X y", "cd /tmp && touch x", "make", "touch ~/x", "echo $(id) > f"],
+        do: assert(Risk.written_paths(unknown) == :error, unknown)
+  end
+
   describe "Risk: writes inside the workspace" do
     setup do
       root = Path.join(System.tmp_dir!(), "xeito-risk-#{System.unique_integer([:positive])}")

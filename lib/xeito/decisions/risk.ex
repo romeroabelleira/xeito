@@ -157,14 +157,26 @@ defmodule Xeito.Decisions.Risk do
   defp writes_inside?(_command, ""), do: false
 
   defp writes_inside?(command, cwd) do
-    with false <- String.contains?(command, @excluded),
-         {:ok, segments, redirects} <- parse(command),
-         segments = Enum.reject(segments, &(&1 == "")),
-         false <- Enum.any?(segments, &String.starts_with?(&1, "cd ")),
-         {:ok, paths} <- written_paths(segments, redirects) do
+    with false <- String.contains?(command, @excluded), {:ok, paths} <- written_paths(command) do
       Enum.all?(paths, &inside?(&1, cwd))
     else
       _ -> false
+    end
+  end
+
+  @doc """
+  The paths `command` writes, as written (relative or absolute): `{:ok, paths}` when every one
+  is a literal word the rules can name (redirects first, then each command's), `:error`
+  otherwise. Undo backs up those outside the workspace (`Xeito.Undo`).
+  """
+  @spec written_paths(String.t()) :: {:ok, [String.t()]} | :error
+  def written_paths(command) do
+    with {:ok, segments, redirects} <- parse(command),
+         segments = Enum.reject(segments, &(&1 == "")),
+         false <- Enum.any?(segments, &String.starts_with?(&1, "cd ")) do
+      written_paths(segments, redirects)
+    else
+      _ -> :error
     end
   end
 

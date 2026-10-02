@@ -201,8 +201,8 @@ defmodule Xeito.UndoTest do
     assert Undo.undo(ws, "ses-a", 2) ==
              {:ok,
               [
-                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: [], git: nil},
-                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: [], git: nil}
+                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: [], git: nil, outside: []},
+                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: [], git: nil, outside: []}
               ]}
 
     assert get(ws, "a.txt") == {:error, :enoent}
@@ -419,6 +419,121 @@ defmodule Xeito.UndoTest do
       assert Undo.Branch.move(ws, move) == {:error, :changed}
       assert head(ws) == later
       refute head(ws) == base
+    end
+  end
+
+  describe "named paths outside the workspace (`:outside`)" do
+    setup %{ws: ws} do
+      outside = ws <> "-outside"
+      File.mkdir_p!(outside)
+      on_exit(fn -> File.rm_rf(outside) end)
+      %{outside: outside, notes: Path.join(outside, "notes.txt")}
+    end
+
+    test "a file the step changed is restored by undo, and put back by redo", %{ws: ws, notes: notes} do
+      File.write!(notes, "old\n")
+      step(ws, "ses-a/t1/e1", "bash sed notes", fn -> File.write!(notes, "new\n") end, outside: [notes])
+
+      assert [%{outside: [^notes]}] = Undo.steps(ws, "ses-a")
+      assert {:ok, [%{outside: [^notes]}]} = Undo.undo(ws, "ses-a", 1)
+      assert File.read!(notes) == "old\n"
+      assert {:ok, _} = Undo.redo(ws, "ses-a", 1)
+      assert File.read!(notes) == "new\n"
+    end
+
+    test "a file the step created is removed by undo; one it deleted comes back", %{
+      ws: ws,
+      outside: outside,
+      notes: notes
+    } do
+      created = Path.join(outside, "sub/new.txt")
+      File.write!(notes, "kept\n")
+
+      step(
+        ws,
+        "ses-a/t1/e1",
+        "bash",
+        fn ->
+          File.mkdir_p!(Path.dirname(created))
+          File.write!(created, "new\n")
+          File.rm!(notes)
+        end,
+        outside: [created, notes]
+      )
+
+      assert {:ok, _} = Undo.undo(ws, "ses-a", 1)
+      refute File.exists?(created)
+      assert File.read!(notes) == "kept\n"
+      assert {:ok, _} = Undo.redo(ws, "ses-a", 1)
+      assert File.read!(created) == "new\n"
+      refute File.exists?(notes)
+    end
+
+    test "named paths the step did not change are not part of it", %{ws: ws, notes: notes} do
+      File.write!(notes, "same\n")
+      step(ws, "ses-a/t1/e1", "bash nothing", fn -> :ok end, outside: [notes])
+      assert Undo.steps(ws, "ses-a") == []
+
+      step(ws, "ses-a/t1/e2", "write a.txt", fn -> put(ws, "a.txt", "a\n") end, outside: [notes])
+      assert [%{outside: []}] = Undo.steps(ws, "ses-a")
+    end
+
+    test "an outside file changed since is not restored, and nothing changes", %{ws: ws, notes: notes} do
+      File.write!(notes, "old\n")
+
+      step(
+        ws,
+        "ses-a/t1/e1",
+        "bash both",
+        fn ->
+          File.write!(notes, "new\n")
+          put(ws, "a.txt", "a\n")
+        end,
+        outside: [notes]
+      )
+
+      File.write!(notes, "user\n")
+      assert Undo.undo(ws, "ses-a", 1) == {:error, {:outside_changed, %{id: "ses-a/t1/e1", label: "bash both"}, notes}}
+      assert File.read!(notes) == "user\n"
+      assert get(ws, "a.txt") == {:ok, "a\n"}
+    end
+
+    test "steps over the same file go back to before the oldest", %{ws: ws, notes: notes} do
+      File.write!(notes, "0\n")
+      for i <- 1..2, do: step(ws, "ses-a/t1/e#{i}", "bash #{i}", fn -> File.write!(notes, "#{i}\n") end, outside: [notes])
+
+      assert {:ok, [_, _]} = Undo.undo(ws, "ses-a", 2)
+      assert File.read!(notes) == "0\n"
+    end
+
+    test "a directory, or a file over the size limit, is not backed up", %{ws: ws, outside: outside, notes: notes} do
+      File.write!(notes, "small\n")
+
+      step(ws, "ses-a/t1/e1", "bash grow", fn -> File.write!(notes, String.duplicate("x", 20)) end,
+        outside: [notes],
+        max_file_bytes: 10
+      )
+
+      step(ws, "ses-a/t1/e2", "bash mkdir", fn -> File.mkdir_p!(Path.join(outside, "d/e")) end,
+        outside: [Path.join(outside, "d")]
+      )
+
+      assert Undo.steps(ws, "ses-a") == []
+
+      # Exactly at the limit is still backed up.
+      File.write!(notes, String.duplicate("e", 10))
+      step(ws, "ses-a/t1/e3", "bash edge", fn -> File.write!(notes, "z") end, outside: [notes], max_file_bytes: 10)
+      assert {:ok, _} = Undo.undo(ws, "ses-a", 1)
+      assert File.read!(notes) == String.duplicate("e", 10)
+    end
+
+    test "backups outlive gc as long as their step is kept", %{ws: ws, notes: notes} do
+      File.write!(notes, "old\n")
+      step(ws, "ses-a/t1/e1", "bash sed notes", fn -> File.write!(notes, "new\n") end, outside: [notes])
+      Undo.gc(ws)
+
+      assert {:ok, _} = Undo.undo(ws, "ses-a", 1)
+      assert File.read!(notes) == "old\n"
     end
   end
 end

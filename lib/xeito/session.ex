@@ -505,11 +505,8 @@ defmodule Xeito.Session do
     log_undone(steps, name, s)
     labels = Enum.map(steps, & &1.label)
     s = %{s | history: s.history ++ [%{role: "user", content: undo_note(name, labels)}]}
-
-    notice(
-      s,
-      undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> branch_moved(steps, name) <> not_covered(steps)
-    )
+    details = branch_moved(steps, name) <> outside(steps) <> not_covered(steps)
+    notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> details)
   end
 
   defp undone({:error, reason}, name, s), do: error(s, undo_error(reason, name))
@@ -539,6 +536,13 @@ defmodule Xeito.Session do
     end
   end
 
+  defp outside(steps) do
+    case Enum.flat_map(steps, & &1.outside) do
+      [] -> ""
+      paths -> "outside the workspace: #{paths |> Enum.uniq() |> Enum.join(", ")}\n"
+    end
+  end
+
   defp not_covered(steps) do
     case Enum.flat_map(steps, & &1.skipped) do
       [] -> ""
@@ -564,11 +568,14 @@ defmodule Xeito.Session do
   defp undo_error({:conflict, step}, name),
     do: "can't #{name} #{step.label}: those lines changed since; nothing was #{name}ne"
 
-  defp undo_error({:git, step, reason}, name), do: "can't #{name} #{step.label}: " <> git_error(reason, name)
+  defp undo_error({cause, step, detail}, name), do: "can't #{name} #{step.label}: " <> step_error(cause, detail, name)
   defp undo_error(nothing, name) when nothing in [:nothing_to_undo, :nothing_to_redo], do: "nothing to #{name}"
 
   defp undo_error(_unavailable_or_changed, name),
     do: "can't #{name} now: no snapshot of the workspace (no git, or too many files), or it changed meanwhile"
+
+  defp step_error(:outside_changed, path, name), do: "#{path} changed since; nothing was #{name}ne"
+  defp step_error(:git, reason, name), do: git_error(reason, name)
 
   defp git_error({:pushed, commit}, _name) do
     short = String.slice(commit, 0, 7)

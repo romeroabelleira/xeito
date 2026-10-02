@@ -53,12 +53,26 @@ defmodule Xeito.Effects.Local do
   # was requested by a run (`Xeito.Undo`). `undo: false` turns this off.
   defp step(%Effect{id: id, args: args} = effect, opts) do
     if is_binary(id) and Keyword.get(opts, :undo, true),
-      do: Xeito.Undo.step(workspace!(args), id, label(effect), fn -> change(effect, opts) end),
+      do: Xeito.Undo.step(workspace!(args), id, label(effect), fn -> change(effect, opts) end, outside: outside(effect)),
       else: change(effect, opts)
   end
 
   defp change(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
   defp change(effect, opts), do: file_effect(effect, opts)
+
+  # The files outside the workspace a command names (`Xeito.Decisions.Risk.written_paths/1`), to
+  # back up with the step; `~/` at the start of a word is the home directory, as for the shell.
+  defp outside(%Effect{kind: :bash, args: %{cmd: cmd} = args}) do
+    cwd = workspace!(args)
+    command = String.replace(cmd, ~r{(^|\s)~/}, "\\1#{System.user_home()}/")
+
+    case Xeito.Decisions.Risk.written_paths(command) do
+      {:ok, paths} -> paths |> Enum.map(&Path.expand(&1, cwd)) |> Enum.reject(&String.starts_with?(&1, cwd <> "/"))
+      :error -> []
+    end
+  end
+
+  defp outside(_file_effect), do: []
 
   defp label(%Effect{kind: :bash, args: %{cmd: cmd}}) do
     cmd = cmd |> String.split() |> Enum.join(" ")
