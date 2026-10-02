@@ -384,6 +384,39 @@ defmodule Xeito.TuiTest do
     end
   end
 
+  describe "/legend: what the risk dots mean" do
+    test "each dot in its own colour, the same as on commands, and what the small number is" do
+      {state, []} = submit(tui(), "/legend")
+      legend = Enum.take(state.lines, -7)
+
+      assert legend == [
+               "Risk: the dot beside each command",
+               {:marked, :green, "", "safe · runs without asking"},
+               {:marked, :yellow, "", "review · waits for you: y, n, or say what to do instead"},
+               {:marked, :yellow, "", "abstain · no decider was sure: waits for you too"},
+               {:marked, :red, "", "forbidden · refused, never runs"},
+               {:marked, :green, "⁹⁴", "the small number · how sure the decider was, in percent"},
+               ""
+             ]
+
+      assert value(state) == ""
+    end
+
+    test "the legend's colours are the dots' colours" do
+      for {value, color} <- [{"safe", :green}, {"review", :yellow}, {"abstain", :yellow}, {"forbidden", :red}] do
+        state =
+          Tui.apply_event(tui(), %{
+            "event" => "decision_made",
+            "attrs" => %{"decision_type" => "Xeito.Decisions.Risk", "value" => value, "confidence" => 0.5}
+          })
+
+        assert {^color, "⁵⁰"} = state.marker
+        {legend, []} = submit(tui(), "/legend")
+        assert Enum.any?(legend.lines, &match?({:marked, ^color, "", ^value <> " ·" <> _}, &1))
+      end
+    end
+  end
+
   describe "/statusbar" do
     defp statusbar(state \\ tui(), args) do
       {state, []} = submit(state, String.trim("/statusbar " <> args))
@@ -650,7 +683,7 @@ defmodule Xeito.TuiTest do
     end
 
     test "the commands are the daemon's and the TUI's own" do
-      assert Tui.commands() == Enum.sort(~w(quit exit statusbar) ++ Xeito.Session.commands())
+      assert Tui.commands() == Enum.sort(~w(quit exit statusbar legend) ++ Xeito.Session.commands())
     end
   end
 end

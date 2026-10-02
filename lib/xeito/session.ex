@@ -1035,6 +1035,7 @@ defmodule Xeito.Session do
     /budget <usd>             off-box spend limit per run
     /quit                     close the client (the session keeps running; attach with --session)
     /statusbar …              TUI only: on|off|reset|segments|show|hide <segment>
+    /legend                   TUI only: what the coloured dots beside commands mean
     /step · /next · /continue step mode: pause before each result, release one, run on
     /decide <value>           answer a paused decision yourself (logged as a label)
     /break state:<s> | decision:<Type> | conf<0.6 | clear

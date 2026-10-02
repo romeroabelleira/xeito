@@ -51,7 +51,7 @@ defmodule Xeito.Tui do
   @placeholder "ask, or /help"
 
   # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
-  @own_commands ~w(quit exit statusbar)
+  @own_commands ~w(quit exit statusbar legend)
 
   # --- init ----------------------------------------------------------------------------------
 
@@ -252,12 +252,13 @@ defmodule Xeito.Tui do
   defp handle_update({:review, answer}, state), do: review(answer, state)
   defp handle_update({:recall, direction}, state), do: state |> recall(direction) |> recalled(state)
 
-  defp handle_update(msg, state) when msg in [:halt, :complete], do: line_key(msg, state)
+  defp handle_update(msg, state) when msg in [:halt, :complete, :legend], do: line_key(msg, state)
 
   defp handle_update(msg, state), do: screen_update(msg, state)
 
   defp line_key(:halt, state), do: halt(state)
   defp line_key(:complete, state), do: complete(state)
+  defp line_key(:legend, state), do: {legend(state), []}
 
   # Only Tab continues a completion; any other key ends it.
   defp keep_completion(state, :complete), do: state
@@ -371,15 +372,19 @@ defmodule Xeito.Tui do
   # --- the prompt line -----------------------------------------------------------------------
 
   # Handled here: these change how this client shows things, never what runs.
-  defp run_line(quit, state) when quit in ["/quit", "/exit"], do: handle_update(:quit, state)
-  defp run_line("/statusbar" <> args, state), do: handle_update({:statusbar, args}, state)
 
   # A pending review: y or n answers it, other text says what to do instead (the daemon takes a
   # prompt during a review as that answer).
   defp run_line(answer, %{waiting: true} = state) when answer in ["y", "n"],
     do: handle_update({:review, answer}, %{state | input: TextInput.clear(state.input)})
 
-  defp run_line("/" <> _ = command, state), do: send_line(command, state)
+  # The TUI's own commands run here; every other command goes to the daemon.
+  defp run_line("/" <> command = line, state) do
+    case own_command(command) do
+      nil -> send_line(line, state)
+      msg -> handle_update(msg, state)
+    end
+  end
 
   defp run_line(text, %{waiting: true} = state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
@@ -387,6 +392,11 @@ defmodule Xeito.Tui do
   end
 
   defp run_line(text, state), do: send_line(text, state)
+
+  defp own_command(quit) when quit in ["quit", "exit"], do: :quit
+  defp own_command("statusbar" <> args), do: {:statusbar, args}
+  defp own_command("legend"), do: :legend
+  defp own_command(_daemon_command), do: nil
 
   defp send_line(text, state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
@@ -464,6 +474,21 @@ defmodule Xeito.Tui do
   end
 
   @risk_colors %{"safe" => :green, "review" => :yellow, "abstain" => :yellow, "forbidden" => :red}
+
+  @risk_meanings [
+    {"safe", "runs without asking"},
+    {"review", "waits for you: y, n, or say what to do instead"},
+    {"abstain", "no decider was sure: waits for you too"},
+    {"forbidden", "refused, never runs"}
+  ]
+
+  # `/legend`: each risk dot in the colour it has on commands, and the small number beside it.
+  defp legend(state) do
+    dots = for {value, meaning} <- @risk_meanings, do: {:marked, @risk_colors[value], "", "#{value} · #{meaning}"}
+    number = {:marked, @risk_colors["safe"], superscript(94), "the small number · how sure the decider was, in percent"}
+    lines = ["Risk: the dot beside each command"] ++ dots ++ [number, ""]
+    %{state | input: TextInput.clear(state.input), lines: Enum.take(state.lines ++ lines, -@max_lines)}
+  end
 
   # The dot's colour is the decision; beside it, in superscript (a terminal's small font), its
   # confidence in percent.
