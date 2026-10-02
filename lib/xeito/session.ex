@@ -504,10 +504,17 @@ defmodule Xeito.Session do
   defp undone({:ok, steps}, name, s) do
     labels = Enum.map(steps, & &1.label)
     s = %{s | history: s.history ++ [%{role: "user", content: undo_note(name, labels)}]}
-    notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n"))
+    notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> not_covered(steps))
   end
 
   defp undone({:error, reason}, name, s), do: error(s, undo_error(reason, name))
+
+  defp not_covered(steps) do
+    case Enum.flat_map(steps, & &1.skipped) do
+      [] -> ""
+      files -> "not covered (over 5 MB, left as they are): #{files |> Enum.uniq() |> Enum.join(", ")}\n"
+    end
+  end
 
   defp undo_notice("undo", labels), do: "undid #{steps(labels)} (/redo reverses this):\n"
   defp undo_notice("redo", labels), do: "redid #{steps(labels)}:\n"

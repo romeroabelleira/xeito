@@ -95,6 +95,20 @@ defmodule Xeito.SessionCommandsTest do
       refute File.exists?(Path.join(ws, "x.txt"))
     end
 
+    test "files a step left out for their size are named, and left as they are", %{id: id, ws: ws} do
+      Xeito.Undo.step(ws, "#{id}/t1/e1", "bash make", fn ->
+        File.write!(Path.join(ws, "a.txt"), "a\n")
+        File.write!(Path.join(ws, "big.bin"), :binary.copy("x", 5_000_001))
+      end)
+
+      assert reply(id, "/undo") ==
+               {:notice,
+                "undid 1 step (/redo reverses this):\n  bash make\n" <>
+                  "not covered (over 5 MB, left as they are): big.bin\n"}
+
+      assert File.exists?(Path.join(ws, "big.bin"))
+    end
+
     test "steps of another session are not this session's to undo", %{id: id, ws: ws} do
       agent_step(ws, "ses-other/t1/e1", "a.txt", "a\n")
       assert reply(id, "/undo") == {:error, "nothing to undo"}

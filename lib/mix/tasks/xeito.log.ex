@@ -29,6 +29,8 @@ defmodule Mix.Tasks.Xeito.Log do
     * `--older-than DAYS`: last activity more than DAYS ago
     * `--keep N`: never the N most recently active sessions
     * at least one of the two is required; with both, a session must satisfy both
+    * the deleted sessions' undo steps go with them (`Xeito.Undo.forget/2`), and file versions
+      no step holds any more are freed
 
   **It is a dry run unless `--apply` is given.** Nothing is ever pruned automatically: the log is
   also the data for resume, `/why`, process mining and training deciders.
@@ -103,6 +105,9 @@ defmodule Mix.Tasks.Xeito.Log do
       true ->
         before = File.stat!(path).size
         {:ok, result} = Retention.prune(db, plan)
+        workspace = path |> Path.dirname() |> Path.dirname()
+        Enum.each(plan, &Xeito.Undo.forget(workspace, &1.id))
+        Xeito.Undo.gc(workspace)
         size = File.stat!(path).size
 
         Mix.shell().info(

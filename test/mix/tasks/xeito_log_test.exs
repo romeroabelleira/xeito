@@ -124,6 +124,17 @@ defmodule Mix.Tasks.Xeito.LogTest do
     assert run(ws, ["sessions"]) =~ "0 sessions"
   end
 
+  test "prune also drops the pruned sessions' undo steps", %{ws: ws, id: id} do
+    Xeito.Undo.step(ws, "#{id}/t9/e1", "write a.txt", fn -> File.write!(Path.join(ws, "a.txt"), "a\n") end)
+    assert [_] = Xeito.Undo.steps(ws, id)
+
+    run(ws, ["prune", "--keep", "0"])
+    assert [_] = Xeito.Undo.steps(ws, id)
+
+    run(ws, ["prune", "--keep", "0", "--apply"])
+    assert Xeito.Undo.steps(ws, id) == []
+  end
+
   test "an unknown command, or a workspace without a log, is an error", %{ws: ws} do
     assert_raise Mix.Error, ~r/^usage: mix xeito.log/, fn -> run(ws, ["fly"]) end
     assert_raise Mix.Error, ~r/^no log at /, fn -> run(Path.join(ws, "nowhere"), ["sessions"]) end

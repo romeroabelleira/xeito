@@ -83,6 +83,14 @@ defmodule Xeito.UndoTest do
     assert get(ws, "mine.txt") == {:ok, "mine\n"}
   end
 
+  test "without a snapshot of the workspace now (too many files), nothing is undone", %{ws: ws} do
+    step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "a\n") end)
+    put(ws, "b.txt", "b\n")
+    assert Undo.undo(ws, "ses-a", 1, max_files: 1) == {:error, :unavailable}
+    assert get(ws, "a.txt") == {:ok, "a\n"}
+    assert [_] = Undo.steps(ws, "ses-a")
+  end
+
   test "a new step clears what could be redone", %{ws: ws} do
     step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "1\n") end)
     {:ok, _} = Undo.undo(ws, "ses-a", 1)
@@ -158,8 +166,90 @@ defmodule Xeito.UndoTest do
     step(ws, "ses-a/t1/e2", "bash rm a.txt", fn -> File.rm!(Path.join(ws, "a.txt")) end)
 
     assert Undo.undo(ws, "ses-a", 2) ==
-             {:ok, [%{id: "ses-a/t1/e2", label: "bash rm a.txt"}, %{id: "ses-a/t1/e1", label: "write a.txt"}]}
+             {:ok,
+              [
+                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: []},
+                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: []}
+              ]}
 
     assert get(ws, "a.txt") == {:error, :enoent}
+  end
+
+  describe "retention: the store does not grow without bound" do
+    defp store(ws), do: Path.join(ws, ".xeito/undo.git")
+
+    # Whether the store holds a file version with this content.
+    defp stored?(ws, text) do
+      file = Path.join(System.tmp_dir!(), "xeito-blob-#{System.unique_integer([:positive])}")
+      File.write!(file, text)
+      {sha, 0} = System.cmd("git", ["hash-object", file])
+      File.rm!(file)
+
+      {_, status} =
+        System.cmd("git", ["--git-dir", store(ws), "cat-file", "-e", String.trim(sha)], stderr_to_stdout: true)
+
+      status == 0
+    end
+
+    test "forget/2 drops a session's steps; gc/1 then frees the file versions only they held", %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "only in ses-a\n") end)
+      step(ws, "ses-a/t1/e2", "bash rm a.txt", fn -> File.rm!(Path.join(ws, "a.txt")) end)
+      step(ws, "ses-b/t1/e1", "write b.txt", fn -> put(ws, "b.txt", "b\n") end)
+      {:ok, _} = Undo.undo(ws, "ses-b", 1)
+
+      assert :ok = Undo.forget(ws, "ses-a")
+      assert Undo.steps(ws, "ses-a") == []
+      assert stored?(ws, "only in ses-a\n")
+
+      assert :ok = Undo.gc(ws)
+      refute stored?(ws, "only in ses-a\n")
+      assert stored?(ws, "b\n")
+      assert {:ok, [%{id: "ses-b/t1/e1"}]} = Undo.redo(ws, "ses-b", 1)
+    end
+
+    test "forget and gc of a workspace without a store do nothing", %{ws: ws} do
+      assert :ok = Undo.forget(ws, "ses-a")
+      assert :ok = Undo.gc(ws)
+      refute File.exists?(store(ws))
+    end
+
+    test "a session keeps at least its last max_steps steps; older ones are dropped in batches", %{ws: ws} do
+      for i <- 1..5 do
+        step(ws, "ses-a/t1/e#{i}", "write #{i}.txt", fn -> put(ws, "#{i}.txt", "#{i}\n") end, max_steps: 2)
+        assert length(Undo.steps(ws, "ses-a")) == if(i <= 4, do: i, else: 2)
+      end
+
+      assert Undo.undo(ws, "ses-a", 3) == {:error, {:only, 2}}
+      assert {:ok, [%{id: "ses-a/t1/e5"}, %{id: "ses-a/t1/e4"}]} = Undo.undo(ws, "ses-a", 2)
+      assert {get(ws, "3.txt"), get(ws, "4.txt")} == {{:ok, "3\n"}, {:error, :enoent}}
+    end
+
+    test "a file over max_file_bytes is not captured, and the step names it", %{ws: ws} do
+      write = fn ->
+        put(ws, "small.txt", "s\n")
+        put(ws, "edge.bin", String.duplicate("e", 1_000))
+        put(ws, "big.bin", String.duplicate("x", 1_001))
+      end
+
+      step(ws, "ses-a/t1/e1", "bash make", write, max_file_bytes: 1_000)
+      assert [%{label: "bash make", skipped: ["big.bin"]}] = Undo.steps(ws, "ses-a")
+
+      assert {:ok, [%{skipped: ["big.bin"]}]} = Undo.undo(ws, "ses-a", 1)
+      assert get(ws, "small.txt") == {:error, :enoent}
+      assert get(ws, "edge.bin") == {:error, :enoent}
+      assert get(ws, "big.bin") == {:ok, String.duplicate("x", 1_001)}
+    end
+
+    test "a captured file that grew over the limit cannot be undone, and nothing changes", %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "write f.txt", fn -> put(ws, "f.txt", "small\n") end, max_file_bytes: 1_000)
+
+      step(ws, "ses-a/t1/e2", "bash grow", fn -> put(ws, "f.txt", String.duplicate("y", 2_000)) end,
+        max_file_bytes: 1_000
+      )
+
+      assert [%{skipped: ["f.txt"]}, %{skipped: []}] = Undo.steps(ws, "ses-a")
+      assert {:error, {:conflict, %{id: "ses-a/t1/e2"}}} = Undo.undo(ws, "ses-a", 1)
+      assert get(ws, "f.txt") == {:ok, String.duplicate("y", 2_000)}
+    end
   end
 end

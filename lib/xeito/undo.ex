@@ -15,12 +15,19 @@ defmodule Xeito.Undo do
   same lines, the undo is refused and nothing changes.
 
   Not captured, so not undone: files the project ignores, the protected directories (`.git`,
-  `.xeito`, `deps`, `_build`, `node_modules`), anything outside the workspace, and any
-  workspace with more than 20,000 files (the step then runs without undo). Steps are
-  serialized per workspace while they run.
+  `.xeito`, `deps`, `_build`, `node_modules`), files over 5 MB (a step names the ones it
+  changed), anything outside the workspace, and any workspace with more than 20,000 files (the
+  step then runs without undo). Steps are serialized per workspace while they run.
+
+  Retention: a session keeps at least its last 200 steps; past 400, the oldest are dropped
+  down to 200. `forget/2` drops a session's steps (`mix xeito.log prune` calls it for the
+  sessions it deletes), and `gc/1` frees the file versions no step holds any more (run when
+  the workspace's log closes after being idle).
   """
 
   @max_files 20_000
+  @max_steps 200
+  @max_file_bytes 5_000_000
   @ident [
     {"GIT_AUTHOR_NAME", "xeito"},
     {"GIT_AUTHOR_EMAIL", "xeito@localhost"},
@@ -32,47 +39,91 @@ defmodule Xeito.Undo do
   # objects or refs elsewhere (the project's index, for one): they are cleared.
   @inherited Enum.map(~w(GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR), &{&1, nil})
 
-  @type step :: %{id: String.t(), label: String.t()}
+  @type step :: %{id: String.t(), label: String.t(), skipped: [Path.t()]}
 
   @doc """
   Runs `fun` (one agent step, effect `id`) and returns its result. If it changed the
   workspace, the change is recorded as a step of the effect's session, described by `label`.
-  Option: `:max_files` (default 20,000).
+  Options: `:max_files` (default 20,000), `:max_file_bytes` (default 5 MB), `:max_steps`
+  (default 200).
   """
   @spec step(Path.t(), String.t(), String.t(), (-> result), keyword()) :: result when result: term()
   def step(cwd, id, label, fun, opts \\ []), do: locked(cwd, fn -> snapshotted(cwd, id, label, fun, opts) end)
 
   @doc "A session's steps that can be undone, newest first."
   @spec steps(Path.t(), String.t()) :: [step()]
-  def steps(cwd, session), do: cwd |> stack(undo_ref(session)) |> Enum.map(&Map.take(&1, [:id, :label]))
+  def steps(cwd, session), do: cwd |> stack(undo_ref(session)) |> Enum.map(&public/1)
 
   @doc """
   Reverts a session's last `n` steps, newest first, and returns them. Errors:
   `:nothing_to_undo`, `{:only, count}`, `{:conflict, step}` (the user changed the same lines
-  since), `:unavailable` (no snapshot). On an error, nothing changes.
+  since), `:unavailable` (no snapshot). On an error, nothing changes. Options as for `step/5`.
   """
-  @spec undo(Path.t(), String.t(), pos_integer()) :: {:ok, [step()]} | {:error, term()}
-  def undo(cwd, session, n), do: locked(cwd, fn -> transfer(cwd, {undo_ref(session), redo_ref(session)}, n, :undo) end)
+  @spec undo(Path.t(), String.t(), pos_integer(), keyword()) :: {:ok, [step()]} | {:error, term()}
+  def undo(cwd, session, n, opts \\ []),
+    do: locked(cwd, fn -> transfer(cwd, {undo_ref(session), redo_ref(session)}, n, {:undo, opts}) end)
 
   @doc "Re-applies the last `n` undone steps of a session, oldest first; like `undo/3` otherwise."
-  @spec redo(Path.t(), String.t(), pos_integer()) :: {:ok, [step()]} | {:error, term()}
-  def redo(cwd, session, n), do: locked(cwd, fn -> transfer(cwd, {redo_ref(session), undo_ref(session)}, n, :redo) end)
+  @spec redo(Path.t(), String.t(), pos_integer(), keyword()) :: {:ok, [step()]} | {:error, term()}
+  def redo(cwd, session, n, opts \\ []),
+    do: locked(cwd, fn -> transfer(cwd, {redo_ref(session), undo_ref(session)}, n, {:redo, opts}) end)
+
+  @doc "Drops a session's steps, undone ones included."
+  @spec forget(Path.t(), String.t()) :: :ok
+  def forget(cwd, session) do
+    if File.dir?(store(cwd)),
+      do: locked(cwd, fn -> Enum.each([undo_ref(session), redo_ref(session)], &git(cwd, ["update-ref", "-d", &1])) end)
+
+    :ok
+  end
+
+  @doc "Frees the file versions that no step holds any more, and packs the rest."
+  @spec gc(Path.t()) :: :ok
+  def gc(cwd) do
+    if File.dir?(store(cwd)), do: locked(cwd, fn -> git(cwd, ~w(gc --prune=now)) end)
+    :ok
+  end
 
   defp locked(cwd, fun), do: :global.trans({{__MODULE__, cwd}, self()}, fun)
 
+  defp public(step), do: Map.take(step, [:id, :label, :skipped])
+
   # --- snapshots ---
 
+  # The workspace's tree, and the files left out for their size (with their size and mtime,
+  # to tell which ones a step changed).
   defp snapshot(cwd, opts) do
-    with true <- File.dir?(cwd),
-         :ok <- init(cwd),
-         true <- small?(cwd, opts),
-         {_, 0} <- git(cwd, ~w(add -A)),
-         {tree, 0} <- git(cwd, ~w(write-tree)) do
-      {:ok, String.trim(tree)}
+    with true <- File.dir?(cwd), :ok <- init(cwd), true <- small?(cwd, opts) do
+      capture(cwd, big_files(cwd, opts))
     else
       _ -> :error
     end
   end
+
+  defp capture(cwd, big) do
+    with {_, 0} <- git(cwd, ["add", "-A", "--", "." | Enum.map(Map.keys(big), &":(exclude,literal)#{&1}")]),
+         {_, 0} <- uncapture(cwd, Map.keys(big)),
+         {tree, 0} <- git(cwd, ~w(write-tree)) do
+      {:ok, String.trim(tree), big}
+    else
+      _ -> :error
+    end
+  end
+
+  defp big_files(cwd, opts) do
+    max = Keyword.get(opts, :max_file_bytes, @max_file_bytes)
+    {files, 0} = git(cwd, ~w(ls-files -z --others --modified --exclude-standard))
+
+    for file <- String.split(files, <<0>>, trim: true),
+        {:ok, %File.Stat{type: :regular, size: size, mtime: mtime}} <- [File.stat(Path.join(cwd, file))],
+        size > max,
+        into: %{},
+        do: {file, {size, mtime}}
+  end
+
+  # A file captured while it was small is taken out once it is over the limit.
+
+  defp uncapture(cwd, files), do: git(cwd, ["update-index", "--force-remove", "--" | files])
 
   defp init(cwd), do: if(File.dir?(store(cwd)), do: :ok, else: create(cwd))
 
@@ -97,9 +148,9 @@ defmodule Xeito.Undo do
 
   defp snapshotted(cwd, id, label, fun, opts) do
     case snapshot(cwd, opts) do
-      {:ok, before} ->
+      {:ok, before, big} ->
         result = fun.()
-        recorded(cwd, id, label, before, opts)
+        recorded(cwd, {id, label}, {before, big}, opts)
         result
 
       :error ->
@@ -107,16 +158,32 @@ defmodule Xeito.Undo do
     end
   end
 
-  defp recorded(cwd, id, label, before, opts) do
-    with {:ok, after_tree} <- snapshot(cwd, opts), do: record(cwd, id, label, before, after_tree)
+  defp recorded(cwd, step, {before, big_before}, opts) do
+    with {:ok, after_tree, big_after} <- snapshot(cwd, opts) do
+      skipped = for {file, stat} <- big_after, big_before[file] != stat, do: file
+      record(cwd, step, {before, after_tree}, Enum.sort(skipped), opts)
+    end
   end
 
-  defp record(_cwd, _id, _label, tree, tree), do: :unchanged
+  defp record(_cwd, _step, {tree, tree}, _skipped, _opts), do: :unchanged
 
-  defp record(cwd, id, label, before, after_tree) do
+  defp record(cwd, {id, label}, {before, after_tree}, skipped, opts) do
     session = id |> String.split("/") |> hd()
-    push(cwd, undo_ref(session), %{id: id, label: label, before: before, after: after_tree})
+    push(cwd, undo_ref(session), %{id: id, label: label, before: before, after: after_tree, skipped: skipped})
     git(cwd, ["update-ref", "-d", redo_ref(session)])
+    trim(cwd, undo_ref(session), Keyword.get(opts, :max_steps, @max_steps))
+  end
+
+  # Past twice the limit, the chain is rebuilt from its newest `max` steps: the cost of the
+  # rebuild is spread over the steps between two of them.
+  defp trim(cwd, ref, max) do
+    {count, 0} = git(cwd, ["rev-list", "--count", ref])
+
+    if String.to_integer(String.trim(count)) > 2 * max do
+      keep = cwd |> stack(ref) |> Enum.take(max)
+      git(cwd, ["update-ref", "-d", ref])
+      keep |> Enum.reverse() |> Enum.each(&push(cwd, ref, &1))
+    end
   end
 
   # --- stacks: a chain of commits per session, each one step ---
@@ -131,7 +198,12 @@ defmodule Xeito.Undo do
         _ -> []
       end
 
-    message = "#{step.label}\n\nid: #{step.id}\nbefore: #{step.before}"
+    message =
+      Enum.join(
+        ["#{step.label}\n\nid: #{step.id}\nbefore: #{step.before}" | Enum.map(step.skipped, &"skipped: #{&1}")],
+        "\n"
+      )
+
     {commit, 0} = git(cwd, ["commit-tree", step.after, "-m", message | parent])
     {_, 0} = git(cwd, ["update-ref", ref, String.trim(commit)])
   end
@@ -149,7 +221,8 @@ defmodule Xeito.Undo do
     with [commit, after_tree, body] <- String.split(String.trim(record), "\x1f"),
          [label, meta] <- String.split(body, "\n\n", parts: 2),
          %{"id" => id, "before" => before} <- Regex.named_captures(~r/id: (?<id>\S+)\nbefore: (?<before>\S+)/, meta) do
-      %{commit: commit, id: id, label: label, before: before, after: after_tree}
+      skipped = for [_, file] <- Regex.scan(~r/^skipped: (.+)$/m, meta), do: file
+      %{commit: commit, id: id, label: label, before: before, after: after_tree, skipped: skipped}
     else
       _ -> nil
     end
@@ -157,17 +230,17 @@ defmodule Xeito.Undo do
 
   # --- undo and redo ---
 
-  defp transfer(cwd, {from, to}, n, direction) do
+  defp transfer(cwd, {from, to}, n, {direction, opts}) do
     stack = stack(cwd, from)
     moved = Enum.take(stack, n)
 
     with :ok <- enough(stack, n, direction),
-         {:ok, current} <- current(cwd),
+         {:ok, current} <- current(cwd, opts),
          {:ok, target} <- target(cwd, current, moved, direction),
          :ok <- apply_patch(cwd, current, target) do
       Enum.each(moved, &push(cwd, to, &1))
       pop(cwd, from, Enum.at(stack, n))
-      {:ok, Enum.map(moved, &Map.take(&1, [:id, :label]))}
+      {:ok, Enum.map(moved, &public/1)}
     end
   end
 
@@ -176,7 +249,12 @@ defmodule Xeito.Undo do
   defp enough(stack, n, _direction) when length(stack) < n, do: {:error, {:only, length(stack)}}
   defp enough(_stack, _n, _direction), do: :ok
 
-  defp current(cwd), do: with(:error <- snapshot(cwd, []), do: {:error, :unavailable})
+  defp current(cwd, opts) do
+    case snapshot(cwd, opts) do
+      {:ok, tree, _big} -> {:ok, tree}
+      :error -> {:error, :unavailable}
+    end
+  end
 
   # The workspace with the steps' changes reverted (or re-applied), built in a scratch index so
   # that a conflict leaves the workspace as it was.

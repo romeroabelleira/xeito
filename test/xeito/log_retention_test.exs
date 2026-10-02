@@ -52,6 +52,20 @@ defmodule Xeito.LogRetentionTest do
     assert [{_, _}] = log_pid(ws)
   end
 
+  test "a workspace log closing when idle also collects the undo store's garbage", %{ws: ws} do
+    Xeito.Undo.step(ws, "ses-g/t1/e1", "write a.txt", fn -> File.write!(Path.join(ws, "a.txt"), "garbage\n") end)
+    Xeito.Undo.step(ws, "ses-g/t1/e2", "bash rm a.txt", fn -> File.rm!(Path.join(ws, "a.txt")) end)
+    :ok = Xeito.Undo.forget(ws, "ses-g")
+    loose = fn -> Path.wildcard(Path.join(ws, ".xeito/undo.git/objects/??/*")) end
+    assert loose.() != []
+
+    # The log opens only now, so that it goes idle after the steps above.
+    with_idle(50)
+    log = Log.for_workspace(ws)
+    Log.put_object(log, "ses-g", "session", %{cwd: ws, status: "open"})
+    eventually(fn -> log_pid(ws) == [] and loose.() == [] end)
+  end
+
   test "opening a workspace log marks orphaned open sessions interrupted, never live ones",
        %{ws: ws} do
     with_idle(100)

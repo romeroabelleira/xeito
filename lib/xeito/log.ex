@@ -65,7 +65,8 @@ defmodule Xeito.Log do
 
     spec =
       Supervisor.child_spec(
-        {__MODULE__, path: path, name: name, idle_ms: idle, reconcile: true},
+        {__MODULE__,
+         path: path, name: name, idle_ms: idle, reconcile: true, workspace: path |> Path.dirname() |> Path.dirname()},
         restart: :transient
       )
 
@@ -124,6 +125,7 @@ defmodule Xeito.Log do
       db: db,
       seqs: %{},
       idle: Keyword.get(opts, :idle_ms) || :infinity,
+      workspace: opts[:workspace],
       check: Application.get_env(:xeito, :check_log_roundtrip, false)
     }
 
@@ -131,7 +133,13 @@ defmodule Xeito.Log do
   end
 
   @impl true
-  def handle_info(:timeout, state), do: {:stop, :normal, state}
+  # Closing an idle workspace log is also when its undo store is tidied (`Xeito.Undo.gc/1`).
+  def handle_info(:timeout, %{workspace: nil} = state), do: {:stop, :normal, state}
+
+  def handle_info(:timeout, state) do
+    Xeito.Undo.gc(state.workspace)
+    {:stop, :normal, state}
+  end
 
   # Sessions recorded as open whose process is not alive in this daemon ended without closing
   # (the daemon stopped abruptly): record that, so the log does not claim they are open.
