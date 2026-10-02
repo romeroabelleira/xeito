@@ -166,7 +166,7 @@ stateDiagram-v2
    | Dominant variant ≥ 70%, a checkable end (an exit status, a test), and its branch points fit typed decisions with few values | `machine` |
    | A released skill whose runs now follow one variant | `machine` (the next rung) |
 
-   Rules decide the clear cases. A model judges the rest and, as with Risk, may only make the verdict more cautious: `machine` → `skill` → `none`.
+   P7 adds a fourth target, `script`: a request whose runs come down to the same commands becomes a fixed command, with no model at all. Rules decide the clear cases. A model judges the rest and, as with Risk, may only make the verdict more cautious: `machine` → `skill` → `none`.
 4. **Drafting.** A skill draft is a `SKILL.md`, written by a model from the cluster's best runs: their steps, the commands that worked, and the pitfalls that cost turns. A machine draft is a module whose states follow the dominant variant. Steps become states with effects, branch points become typed decisions, and the end check becomes the final transition. Each machine draft comes with a labelled example set for each new decision type, taken from the cluster's runs.
 5. **Benchmarking.** The cluster's logged prompts are replayed on scratch copies of their workspaces, comparing the candidate with the route it would replace ([06](06-observability.md#4-benchmark)). Measured: success (the run's own check, or an acceptance check), model turns, tokens, time, and the determinism budget. A candidate goes forward only if it is at least as successful and cheaper.
 6. **Reviewing.** A human sees the cluster (example prompts, the dominant variant), the draft as a diff, and the benchmark. They accept, ask for changes, or reject with a reason. Nothing is released without this step.

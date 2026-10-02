@@ -7,6 +7,8 @@ Skills for working on this repository, in the [Agent Skills](https://agentskills
 | [`elixir`](elixir/SKILL.md) | Functions, modules, data, pattern matching, error handling, tests; whether something needs a process at all |
 | [`otp`](otp/SKILL.md) | Processes, supervision, `Task`, `Registry`, ETS, bottlenecks |
 | [`skill-authoring`](skill-authoring/SKILL.md) | Writing, adapting or vendoring a skill under this convention |
+| [`xeito-machine`](xeito-machine/SKILL.md) | Writing or changing a Xeito machine: states, effects, guards, typed decisions, delegation, versions, routing, tests |
+| [`xeito-quality-gate`](xeito-quality-gate/SKILL.md) | Getting a change through the CRAP gate and mutation testing; killing surviving mutants |
 
 ## The convention
 

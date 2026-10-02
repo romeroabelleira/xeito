@@ -29,6 +29,8 @@ Skills for working on this repository are in `.agents/skills/`, under the conven
 - [`elixir`](.agents/skills/elixir/SKILL.md): writing or refactoring Elixir: modules, data, pattern matching, error handling, tests, and whether something needs a process at all.
 - [`otp`](.agents/skills/otp/SKILL.md): processes, supervision, `Task`, `Registry`, ETS, bottlenecks.
 - [`skill-authoring`](.agents/skills/skill-authoring/SKILL.md): writing, adapting or vendoring a skill.
+- [`xeito-machine`](.agents/skills/xeito-machine/SKILL.md): writing or changing a machine: states, effects, guards, typed decisions, delegation, versions, routing, tests.
+- [`xeito-quality-gate`](.agents/skills/xeito-quality-gate/SKILL.md): the CRAP gate and mutation testing, and how to kill a surviving mutant.
 
 Where a skill and this file disagree, this file wins. Don't add skills under `.claude/` or another tool's directory.
 
