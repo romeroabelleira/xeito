@@ -150,6 +150,8 @@ defmodule Xeito.Session do
       history: [],
       # The last turn stopped before it was done (step limit): a short "go ahead" continues it.
       unfinished: false,
+      # Whether this session has said that the daemon's code changed on disk (`Xeito.Preload`).
+      stale_warned: false,
       decisions: [],
       debug: %{step: false, breakpoints: []},
       live: MapSet.new(),
@@ -227,6 +229,7 @@ defmodule Xeito.Session do
   def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
 
   defp handle_request({:prompt, text}, _from, s) do
+    s = warn_if_stale(s)
     trimmed = String.trim(text)
 
     cond do
@@ -457,6 +460,21 @@ defmodule Xeito.Session do
   end
 
   @halted "Halted by the user."
+
+  # Once per session: the daemon keeps running the code it loaded at start (`Xeito.Preload`).
+  defp warn_if_stale(%{stale_warned: true} = s), do: s
+
+  defp warn_if_stale(s) do
+    if Xeito.Preload.stale?(),
+      do:
+        notice(
+          %{s | stale_warned: true},
+          "· the daemon's code changed on disk since it started (a rebuild or a dependency update), " <>
+            "and it keeps running the code it loaded then: restart it to use the new code " <>
+            "(systemctl --user restart xeitod, or stop and start mix xeito.daemon)"
+        ),
+      else: s
+  end
 
   # Stops the turn where it is (Esc in the TUI): the run and the runs under it, or the intent
   # decision before any run started.

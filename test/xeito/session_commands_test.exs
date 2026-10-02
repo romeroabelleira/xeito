@@ -19,6 +19,28 @@ defmodule Xeito.SessionCommandsTest do
     {String.to_atom(type), text}
   end
 
+  describe "a daemon whose code changed on disk after it started" do
+    setup do
+      # Every compiled file is newer than the epoch.
+      Application.put_env(:xeito, :code_loaded_at, 0)
+      on_exit(fn -> Application.delete_env(:xeito, :code_loaded_at) end)
+    end
+
+    test "says so once, with the first prompt", %{id: id} do
+      :ok = Session.prompt(id, "/help")
+
+      assert_receive {:xeito, _,
+                      %{type: "notice", attrs: %{"text" => "· the daemon's code changed on disk" <> _ = text}}},
+                     2_000
+
+      assert text =~ "restart it"
+      assert_receive {:xeito, _, %{type: "notice", attrs: %{"text" => "/" <> _}}}, 2_000
+
+      :ok = Session.prompt(id, "/help")
+      refute_receive {:xeito, _, %{type: "notice", attrs: %{"text" => "· the daemon's code" <> _}}}, 300
+    end
+  end
+
   test "help and machines are notices", %{id: id} do
     assert {:notice, "/" <> _} = reply(id, "/help")
     assert {:notice, text} = reply(id, "/machines")

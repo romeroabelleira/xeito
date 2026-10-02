@@ -20,7 +20,10 @@ defmodule Mix.Tasks.Xeito.Daemon do
 
     Application.put_env(:xeito, :api, true)
     Mix.Task.run("app.start")
-    Mix.shell().info("xeitod listening on #{Xeito.Api.default_socket()}")
+    # One consistent version of the code until a restart, whatever is rebuilt meanwhile.
+    loaded = Xeito.Preload.load_all()
+    Application.put_env(:xeito, :code_loaded_at, System.os_time(:second))
+    Mix.shell().info("xeitod listening on #{Xeito.Api.default_socket()} (#{loaded} modules loaded)")
     Process.sleep(:infinity)
   end
 end
