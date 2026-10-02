@@ -6,5 +6,6 @@
   "lib/xeito/decisions/risk.ex" => ["test/xeito/decision_test.exs"],
   "lib/xeito/machines/chat.ex" => [tests: ["test/xeito/chat_machine_test.exs"], section: "guards"],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
+  "lib/xeito/undo.ex" => ["test/xeito/undo_test.exs", "test/xeito/undo_env_test.exs"],
   "lib/xeito/tui.ex" => [tests: ["test/xeito/tui_test.exs"], section: "the prompt line"]
 }

@@ -40,14 +40,32 @@ defmodule Xeito.Effects.Local do
   @max_output 65_536
 
   @impl true
-  def run(%Effect{kind: kind} = effect, opts) when kind in [:read, :write, :edit], do: file_effect(effect, opts)
+  def run(%Effect{kind: :read} = effect, opts), do: file_effect(effect, opts)
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:write, :edit, :bash], do: step(effect, opts)
 
   def run(%Effect{kind: kind} = effect, opts) when kind in [:decide, :tier, :probe, :swap],
     do: decision_effect(effect, opts)
 
-  def run(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
   def run(%Effect{kind: :chat} = effect, opts), do: chat(effect, opts)
   def run(%Effect{kind: :machine} = effect, opts), do: machine(effect, opts)
+
+  # A change to the workspace: a step of its session for /undo, when it changed something and
+  # was requested by a run (`Xeito.Undo`). `undo: false` turns this off.
+  defp step(%Effect{id: id, args: args} = effect, opts) do
+    if is_binary(id) and Keyword.get(opts, :undo, true),
+      do: Xeito.Undo.step(workspace!(args), id, label(effect), fn -> change(effect, opts) end),
+      else: change(effect, opts)
+  end
+
+  defp change(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
+  defp change(effect, opts), do: file_effect(effect, opts)
+
+  defp label(%Effect{kind: :bash, args: %{cmd: cmd}}) do
+    cmd = cmd |> String.split() |> Enum.join(" ")
+    if String.length(cmd) > 60, do: "bash #{String.slice(cmd, 0, 60)}…", else: "bash #{cmd}"
+  end
+
+  defp label(%Effect{kind: kind, args: %{path: path}}), do: "#{kind} #{path}"
 
   defp file_effect(%Effect{kind: :read, args: %{result: ref}}, opts), do: read_back(ref, opts)
   defp file_effect(%Effect{kind: :read} = effect, _opts), do: read(effect)

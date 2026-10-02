@@ -1,0 +1,165 @@
+defmodule Xeito.UndoTest do
+  use ExUnit.Case, async: true
+
+  alias Xeito.Undo
+
+  setup do
+    ws = Path.join(System.tmp_dir!(), "xeito-undo-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(ws)
+    on_exit(fn -> File.rm_rf(ws) end)
+    %{ws: ws}
+  end
+
+  defp put(ws, path, text) do
+    file = Path.join(ws, path)
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, text)
+  end
+
+  defp get(ws, path), do: File.read(Path.join(ws, path))
+
+  # One agent step: `fun` changes the workspace.
+  defp step(ws, id, label, fun, opts \\ []), do: Undo.step(ws, id, label, fun, opts)
+
+  defp git(ws, args), do: ws |> then(&System.cmd("git", args, cd: &1, stderr_to_stdout: true)) |> elem(0)
+
+  test "steps are undone newest first and redone oldest first", %{ws: ws} do
+    put(ws, "a.txt", "0\n")
+
+    assert :result =
+             step(ws, "ses-a/t1/e1", "edit a.txt", fn ->
+               put(ws, "a.txt", "1\n")
+               :result
+             end)
+
+    step(ws, "ses-a/t1/e2", "write sub/b.txt", fn -> put(ws, "sub/b.txt", "b\n") end)
+    step(ws, "ses-a/t2/e1", "bash rm a.txt", fn -> File.rm!(Path.join(ws, "a.txt")) end)
+
+    assert [%{id: "ses-a/t2/e1", label: "bash rm a.txt"}, %{id: "ses-a/t1/e2"}, %{id: "ses-a/t1/e1"}] =
+             Undo.steps(ws, "ses-a")
+
+    assert {:ok, [%{label: "bash rm a.txt"}, %{label: "write sub/b.txt"}]} = Undo.undo(ws, "ses-a", 2)
+    assert get(ws, "a.txt") == {:ok, "1\n"}
+    assert get(ws, "sub/b.txt") == {:error, :enoent}
+    assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
+
+    assert {:ok, [%{label: "write sub/b.txt"}]} = Undo.redo(ws, "ses-a", 1)
+    assert get(ws, "sub/b.txt") == {:ok, "b\n"}
+    assert {:ok, [%{label: "bash rm a.txt"}]} = Undo.redo(ws, "ses-a", 1)
+    assert get(ws, "a.txt") == {:error, :enoent}
+
+    assert {:ok, [_, _, _]} = Undo.undo(ws, "ses-a", 3)
+    assert get(ws, "a.txt") == {:ok, "0\n"}
+    assert Undo.steps(ws, "ses-a") == []
+  end
+
+  test "a step that changes nothing is not a step", %{ws: ws} do
+    put(ws, "a.txt", "0\n")
+    step(ws, "ses-a/t1/e1", "bash ls", fn -> :ok end)
+    assert Undo.steps(ws, "ses-a") == []
+    assert Undo.undo(ws, "ses-a", 1) == {:error, :nothing_to_undo}
+    assert Undo.redo(ws, "ses-a", 1) == {:error, :nothing_to_redo}
+  end
+
+  test "more steps than there are is an error, and nothing changes", %{ws: ws} do
+    step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "1\n") end)
+    assert Undo.undo(ws, "ses-a", 2) == {:error, {:only, 1}}
+    assert get(ws, "a.txt") == {:ok, "1\n"}
+  end
+
+  test "what the user changed since is kept; a step whose lines they changed is refused", %{ws: ws} do
+    put(ws, "a.txt", "0\n")
+    step(ws, "ses-a/t1/e1", "edit a.txt", fn -> put(ws, "a.txt", "1\n") end)
+    step(ws, "ses-a/t1/e2", "write b.txt", fn -> put(ws, "b.txt", "b\n") end)
+    put(ws, "mine.txt", "mine\n")
+    put(ws, "a.txt", "user\n")
+
+    assert Undo.undo(ws, "ses-a", 2) == {:error, {:conflict, %{id: "ses-a/t1/e1", label: "edit a.txt"}}}
+    assert get(ws, "b.txt") == {:ok, "b\n"}
+    assert get(ws, "a.txt") == {:ok, "user\n"}
+
+    assert {:ok, [%{label: "write b.txt"}]} = Undo.undo(ws, "ses-a", 1)
+    assert get(ws, "b.txt") == {:error, :enoent}
+    assert get(ws, "mine.txt") == {:ok, "mine\n"}
+  end
+
+  test "a new step clears what could be redone", %{ws: ws} do
+    step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "1\n") end)
+    {:ok, _} = Undo.undo(ws, "ses-a", 1)
+    step(ws, "ses-a/t2/e1", "write b.txt", fn -> put(ws, "b.txt", "b\n") end)
+    assert Undo.redo(ws, "ses-a", 1) == {:error, :nothing_to_redo}
+  end
+
+  test "each session undoes only its own steps", %{ws: ws} do
+    step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "a\n") end)
+    step(ws, "ses-b/t1/e1", "write b.txt", fn -> put(ws, "b.txt", "b\n") end)
+
+    assert {:ok, [%{label: "write a.txt"}]} = Undo.undo(ws, "ses-a", 1)
+    assert get(ws, "a.txt") == {:error, :enoent}
+    assert get(ws, "b.txt") == {:ok, "b\n"}
+  end
+
+  test "in a git project, the project's own index, HEAD and stash are untouched", %{ws: ws} do
+    git(ws, ~w(init -q))
+    put(ws, ".gitignore", "ignored.txt\n")
+    put(ws, "a.txt", "0\n")
+    git(ws, ~w(add -A))
+    git(ws, ~w(-c user.name=t -c user.email=t@t commit -q -m init))
+    head = git(ws, ~w(rev-parse HEAD))
+
+    step(ws, "ses-a/t1/e1", "edit a.txt", fn -> put(ws, "a.txt", "1\n") end)
+    {:ok, _} = Undo.undo(ws, "ses-a", 1)
+
+    assert git(ws, ~w(rev-parse HEAD)) == head
+    assert git(ws, ~w(status --porcelain)) == ""
+    assert git(ws, ~w(stash list)) == ""
+  end
+
+  test "files the project ignores, and .xeito, are not captured", %{ws: ws} do
+    put(ws, ".gitignore", "ignored.txt\n")
+    step(ws, "ses-a/t1/e1", "write ignored.txt", fn -> put(ws, "ignored.txt", "x\n") end)
+    step(ws, "ses-a/t1/e2", "write .xeito/x", fn -> put(ws, ".xeito/x", "x\n") end)
+    assert Undo.steps(ws, "ses-a") == []
+  end
+
+  describe "the file limit: a workspace with more files than `max_files` has no undo" do
+    defp edit_f1(ws, id, max), do: step(ws, id, "edit f1.txt", fn -> put(ws, "f1.txt", "#{id}\n") end, max_files: max)
+
+    test "up to the limit, steps are recorded; over it, the step runs and nothing is copied", %{ws: ws} do
+      for i <- 1..3, do: put(ws, "f#{i}.txt", "#{i}\n")
+      edit_f1(ws, "ses-a/t1/e1", 2)
+      assert get(ws, "f1.txt") == {:ok, "ses-a/t1/e1\n"}
+      assert Undo.steps(ws, "ses-a") == []
+      refute File.exists?(Path.join(ws, ".xeito/undo.git/index"))
+
+      edit_f1(ws, "ses-a/t1/e2", 3)
+      assert [%{id: "ses-a/t1/e2"}] = Undo.steps(ws, "ses-a")
+    end
+
+    test "files already captured count, and so do new ones", %{ws: ws} do
+      for i <- 1..2, do: put(ws, "f#{i}.txt", "#{i}\n")
+      edit_f1(ws, "ses-a/t1/e1", 2)
+      for i <- 3..4, do: put(ws, "f#{i}.txt", "#{i}\n")
+      edit_f1(ws, "ses-a/t1/e2", 2)
+      assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
+    end
+
+    test "files the project ignores do not count", %{ws: ws} do
+      put(ws, ".gitignore", "big/\n")
+      put(ws, "f1.txt", "1\n")
+      for i <- 1..3, do: put(ws, "big/#{i}", "#{i}\n")
+      edit_f1(ws, "ses-a/t1/e1", 2)
+      assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
+    end
+  end
+
+  test "steps that cancel out undo to the workspace as it is", %{ws: ws} do
+    step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "a\n") end)
+    step(ws, "ses-a/t1/e2", "bash rm a.txt", fn -> File.rm!(Path.join(ws, "a.txt")) end)
+
+    assert Undo.undo(ws, "ses-a", 2) ==
+             {:ok, [%{id: "ses-a/t1/e2", label: "bash rm a.txt"}, %{id: "ses-a/t1/e1", label: "write a.txt"}]}
+
+    assert get(ws, "a.txt") == {:error, :enoent}
+  end
+end

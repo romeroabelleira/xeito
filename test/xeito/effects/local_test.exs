@@ -32,6 +32,42 @@ defmodule Xeito.Effects.LocalTest do
              Local.run(Effect.write("/tmp/x", "no", cwd: ws), [])
   end
 
+  describe "undo: write, edit and bash are steps of their session" do
+    defp with_id(effect, id), do: %{effect | id: id}
+
+    test "each change is a step, labelled by what ran; reads and runs that change nothing are not", %{ws: ws} do
+      Local.run(with_id(Effect.write("a.txt", "one\n", cwd: ws), "ses-l/t1/e1"), [])
+      Local.run(with_id(Effect.edit("a.txt", "one", "two", cwd: ws), "ses-l/t1/e2"), [])
+      Local.run(with_id(Effect.bash("touch b.txt && echo made", cwd: ws), "ses-l/t1/e3"), [])
+      Local.run(with_id(Effect.read("a.txt", cwd: ws), "ses-l/t1/e4"), [])
+      Local.run(with_id(Effect.bash("ls", cwd: ws), "ses-l/t1/e5"), [])
+
+      assert [
+               %{id: "ses-l/t1/e3", label: "bash touch b.txt && echo made"},
+               %{id: "ses-l/t1/e2", label: "edit a.txt"},
+               %{id: "ses-l/t1/e1", label: "write a.txt"}
+             ] = Xeito.Undo.steps(ws, "ses-l")
+
+      assert {:ok, _} = Xeito.Undo.undo(ws, "ses-l", 2)
+      assert File.read!(Path.join(ws, "a.txt")) == "one\n"
+      refute File.exists?(Path.join(ws, "b.txt"))
+    end
+
+    test "a long or multi-line command is labelled by its start", %{ws: ws} do
+      command = "touch c.txt\n" <> String.duplicate("# filler ", 20)
+      Local.run(with_id(Effect.bash(command, cwd: ws), "ses-l/t1/e1"), [])
+      assert [%{label: label}] = Xeito.Undo.steps(ws, "ses-l")
+      assert label == "bash " <> String.slice("touch c.txt " <> String.duplicate("# filler ", 20), 0, 60) <> "…"
+    end
+
+    test "without an effect id, or with undo off, nothing is recorded", %{ws: ws} do
+      Local.run(Effect.write("a.txt", "x", cwd: ws), [])
+      Local.run(with_id(Effect.write("b.txt", "x", cwd: ws), "ses-l/t1/e1"), undo: false)
+      assert Xeito.Undo.steps(ws, "ses-l") == []
+      assert File.exists?(Path.join(ws, "b.txt"))
+    end
+  end
+
   test "decide runs the decider, or an override" do
     effect =
       Effect.decide(Xeito.Decisions.Triage, %{test: "t", output: "sh: esbuild: command not found"})

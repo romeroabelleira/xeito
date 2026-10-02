@@ -51,6 +51,7 @@ defmodule Xeito.Session do
   alias Xeito.Session.Router
   alias Xeito.Skills
   alias Xeito.Source.RepoMap
+  alias Xeito.Undo
 
   # The history window trims with slack: past 80 messages it drops back to 60, so its first
   # message changes once every ~20 messages rather than every turn. The log stores a conversation
@@ -93,10 +94,11 @@ defmodule Xeito.Session do
   @turn_commands ~w(approve deny halt)
   @info_commands ~w(why budget help machines)
   @debug_commands ~w(step continue next decide break)
+  @undo_commands ~w(undo redo)
 
   @doc "The slash commands the session takes, without the slash."
   @spec commands() :: [String.t()]
-  def commands, do: @start_commands ++ @turn_commands ++ @info_commands ++ @debug_commands
+  def commands, do: @start_commands ++ @turn_commands ++ @info_commands ++ @debug_commands ++ @undo_commands
 
   @doc "Subscribes the caller to the session's events."
   @spec subscribe(String.t()) :: :ok
@@ -426,14 +428,30 @@ defmodule Xeito.Session do
   defp command(command, s), do: command(String.split(command, ~r/\s+/, parts: 2) ++ [""], command, s)
 
   defp command([name, arg | _], raw, s) do
-    cond do
-      name in @start_commands or String.starts_with?(name, "skill:") -> start_command(name, arg, raw, s)
-      name in @turn_commands -> turn_command(name, s)
-      name in @info_commands -> info_command(name, arg, s)
-      name in @debug_commands -> debug_command(name, arg, raw, s)
-      true -> unknown_command(raw, s)
+    case command_group(name) do
+      :start -> start_command(name, arg, raw, s)
+      :turn -> turn_command(name, s)
+      :info -> info_command(name, arg, s)
+      :debug -> debug_command(name, arg, raw, s)
+      :undo -> undo_command(name, arg, s)
+      nil -> unknown_command(raw, s)
     end
   end
+
+  @command_groups Map.new(
+                    for {group, names} <- [
+                          start: @start_commands,
+                          turn: @turn_commands,
+                          info: @info_commands,
+                          debug: @debug_commands,
+                          undo: @undo_commands
+                        ],
+                        name <- names,
+                        do: {name, group}
+                  )
+
+  defp command_group("skill:" <> _name), do: :start
+  defp command_group(name), do: @command_groups[name]
 
   # Commands that start a turn.
   defp start_command("machine", rest, _raw, s), do: machine_command(rest, s)
@@ -461,6 +479,58 @@ defmodule Xeito.Session do
   defp debug_arg_command("decide", value, _raw, s), do: step({:decide, value}, s)
   defp debug_arg_command("break", "clear", _raw, s), do: set_debug(%{s.debug | breakpoints: []}, s)
   defp debug_arg_command("break", spec, _raw, s), do: add_breakpoint(spec, s)
+
+  # /undo [n] and /redo [n]: this session's last n steps in the workspace (`Xeito.Undo`). The
+  # model is told, so that it does not take the files to be as it left them.
+  defp undo_command(name, arg, s) do
+    case count(arg) do
+      {:ok, n} -> name |> undo_or_redo(s, n) |> undone(name, s)
+      :error -> error(s, "/#{name} [n]: n steps, 1 or more (/#{name} alone is one)")
+    end
+  end
+
+  defp count(""), do: {:ok, 1}
+
+  defp count(arg) do
+    case Integer.parse(arg) do
+      {n, ""} when n > 0 -> {:ok, n}
+      _ -> :error
+    end
+  end
+
+  defp undo_or_redo("undo", s, n), do: Undo.undo(s.cwd, s.id, n)
+  defp undo_or_redo("redo", s, n), do: Undo.redo(s.cwd, s.id, n)
+
+  defp undone({:ok, steps}, name, s) do
+    labels = Enum.map(steps, & &1.label)
+    s = %{s | history: s.history ++ [%{role: "user", content: undo_note(name, labels)}]}
+    notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n"))
+  end
+
+  defp undone({:error, reason}, name, s), do: error(s, undo_error(reason, name))
+
+  defp undo_notice("undo", labels), do: "undid #{steps(labels)} (/redo reverses this):\n"
+  defp undo_notice("redo", labels), do: "redid #{steps(labels)}:\n"
+
+  defp undo_note("undo", labels),
+    do: "(I undid #{length(labels)} of your steps: #{Enum.join(labels, "; ")}. Those files are as they were before them.)"
+
+  defp undo_note("redo", labels),
+    do: "(I redid #{length(labels)} of your steps that I had undone: #{Enum.join(labels, "; ")}.)"
+
+  defp steps(labels), do: plural(length(labels))
+  defp plural(1), do: "1 step"
+  defp plural(n), do: "#{n} steps"
+
+  defp undo_error({:only, n}, name), do: "only #{plural(n)} to #{name}; nothing was #{name}ne"
+
+  defp undo_error({:conflict, step}, name),
+    do: "can't #{name} #{step.label}: those lines changed since; nothing was #{name}ne"
+
+  defp undo_error(nothing, name) when nothing in [:nothing_to_undo, :nothing_to_redo], do: "nothing to #{name}"
+
+  defp undo_error(_unavailable_or_changed, name),
+    do: "can't #{name} now: no snapshot of the workspace (no git, or too many files), or it changed meanwhile"
 
   defp unknown_command(raw, s), do: error(s, "unknown command /#{raw}; try /help")
 
@@ -906,6 +976,7 @@ defmodule Xeito.Session do
     /skill:<name> [request]   run a skill (pi / Agent Skills format)
     /run <command>            run a command once
     /approve · /deny          answer a command waiting for review (or type what to do instead)
+    /undo [n] · /redo [n]     revert this session's last n file changes, or put them back
     /halt                     stop the turn where it is (Esc in the TUI); "go ahead" continues it
     /why                      the last decisions, with tier and confidence
     /budget <usd>             off-box spend limit per run

@@ -43,6 +43,64 @@ defmodule Xeito.SessionCommandsTest do
     end
   end
 
+  describe "/undo and /redo: this session's steps in the workspace" do
+    # An agent step of this session that writes `path` (as the local runner records one).
+    defp agent_step(ws, id, path, text),
+      do: Xeito.Undo.step(ws, id, "write #{path}", fn -> File.write!(Path.join(ws, path), text) end)
+
+    test "/undo n reverts the last n steps and tells the model; /redo puts them back", %{id: id, ws: ws} do
+      agent_step(ws, "#{id}/t1/e1", "a.txt", "a\n")
+      agent_step(ws, "#{id}/t1/e2", "b.txt", "b\n")
+
+      assert reply(id, "/undo 2") == {:notice, "undid 2 steps (/redo reverses this):\n  write b.txt\n  write a.txt\n"}
+      refute File.exists?(Path.join(ws, "a.txt"))
+      refute File.exists?(Path.join(ws, "b.txt"))
+
+      assert %{role: "user", content: "(I undid 2 of your steps: write b.txt; write a.txt. " <> _} =
+               List.last(Session.history(id))
+
+      assert reply(id, "/redo") == {:notice, "redid 1 step:\n  write a.txt\n"}
+      assert File.read!(Path.join(ws, "a.txt")) == "a\n"
+      assert %{content: "(I redid 1 of your steps that I had undone: write a.txt.)"} = List.last(Session.history(id))
+    end
+
+    test "nothing to undo or redo, more than there is, a bad count", %{id: id, ws: ws} do
+      assert reply(id, "/undo") == {:error, "nothing to undo"}
+      assert reply(id, "/redo") == {:error, "nothing to redo"}
+      agent_step(ws, "#{id}/t1/e1", "a.txt", "a\n")
+      assert reply(id, "/undo 3") == {:error, "only 1 step to undo; nothing was undone"}
+
+      for bad <- ["/undo two", "/undo 0", "/redo -1"] do
+        assert {:error, usage} = reply(id, bad)
+        assert usage =~ ~r{^/(undo|redo) \[n\]: n steps, 1 or more}
+      end
+    end
+
+    test "a step whose lines the user changed since is not undone", %{id: id, ws: ws} do
+      agent_step(ws, "#{id}/t1/e1", "a.txt", "a\n")
+      File.write!(Path.join(ws, "a.txt"), "mine\n")
+
+      assert reply(id, "/undo") ==
+               {:error, "can't undo write a.txt: those lines changed since; nothing was undone"}
+
+      assert File.read!(Path.join(ws, "a.txt")) == "mine\n"
+    end
+
+    test "a command a run ran is a step: /run touch x.txt, then /undo", %{id: id, ws: ws} do
+      :ok = Session.prompt(id, "/run touch x.txt")
+      assert_receive {:xeito, _, %{type: "turn_finished"}}, 5_000
+      assert File.exists?(Path.join(ws, "x.txt"))
+
+      assert reply(id, "/undo") == {:notice, "undid 1 step (/redo reverses this):\n  bash touch x.txt\n"}
+      refute File.exists?(Path.join(ws, "x.txt"))
+    end
+
+    test "steps of another session are not this session's to undo", %{id: id, ws: ws} do
+      agent_step(ws, "ses-other/t1/e1", "a.txt", "a\n")
+      assert reply(id, "/undo") == {:error, "nothing to undo"}
+    end
+  end
+
   test "commands/0: the daemon's commands, each explained by /help", %{id: id} do
     assert {:notice, help} = reply(id, "/help")
     assert "halt" in Session.commands()
