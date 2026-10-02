@@ -110,6 +110,80 @@ Proposals are **diffs to machine definitions or decision policies**, never to pr
 
 A later step (P7 in the [implementation plan](../implementation-plan.md)) lets the large or remote model *draft* proposals from mining output. Even then, the proposal goes through `reviewing`, and the drafting model is a decider in the meta machine like any other.
 
+## Promotion: from free chat to skills and machines
+
+The meta machine improves what already exists. New behaviour starts as free chat: a request with no dedicated machine goes to `Chat`, and the model works it out step by step. **Promotion** is the process that notices when the same kind of request keeps coming back, and turns it into something cheaper and more reliable. It is a state machine of its own, logged like any other.
+
+### The ladder
+
+Each rung adds structure, and each step up is earned from the log:
+
+| Rung | What it is | Control flow | Cost per request |
+|---|---|---|---|
+| **Free chat** | the `Chat` machine with the general tools | the model decides every step | highest; varies most |
+| **Skill** | a written procedure (`SKILL.md`, pi format) the model loads | the model, guided by the procedure | lower; varies less |
+| **Machine** | a `Xeito.Machine` with typed decisions | fixed states and transitions; the model only where a decision is typed | lowest; deterministic where it can be |
+
+A pattern usually climbs one rung at a time. A skill comes first, because it is cheap to write and to throw away. It becomes a machine once its runs follow the same steps. A pattern can also go down a rung: a release that does worse than what it replaced is retired.
+
+### The process
+
+```mermaid
+stateDiagram-v2
+  [*] --> collecting
+  collecting --> analysing: N new chat runs, or weekly
+  analysing --> selecting: clusters found
+  analysing --> collecting: nothing frequent enough
+  selecting --> drafting: target skill or machine
+  selecting --> collecting: target none (reason logged)
+  drafting --> benchmarking
+  benchmarking --> reviewing: candidate ≥ baseline
+  benchmarking --> drafting: worse (once more, then dropped)
+  reviewing --> releasing: accepted
+  reviewing --> drafting: changes asked for
+  reviewing --> collecting: rejected (reason logged)
+  releasing --> monitoring
+  monitoring --> collecting: holds up after N uses
+  monitoring --> retiring: worse than the baseline it replaced
+  retiring --> collecting
+```
+
+1. **Collecting.** Every finished turn is already in the log: the prompt, the Intent decision, the route ("no dedicated machine for intent X"), every tool call and result, the outcome, tokens and time. Nothing extra is recorded for promotion.
+2. **Analysing.** Each free-chat run (and each run of a released skill) gets a **trace signature**:
+   - the Intent value;
+   - its tool sequence, abstracted. A step is `read`, `edit` or `bash:<verb>` (`bash:mix test`, `bash:git diff`), and paths are reduced to their role (a test file, a source file, config);
+   - its outcome: answered or failed, checks passed, reviews denied or answered with text, halted;
+   - its cost: model turns, tokens, time.
+
+   Runs are grouped twice: by prompt (embeddings, so "add a test for X" and "write tests for Y" meet) and by signature (exact variants, then a directly-follows graph per group). A **candidate** is a prompt cluster with at least N runs in the window, with its dominant variant and that variant's share.
+3. **Selecting** (typed decision `PromotionTarget`: `skill`, `machine` or `none`), rules first:
+
+   | Evidence | Target |
+   |---|---|
+   | Fewer than N runs, or cheap anyway | `none` |
+   | Mostly failing, denied or halted | `none`. This is a bug report, not a candidate. |
+   | Frequent, mostly successful, but no dominant variant | `skill`: the model needs guidance, not fixed steps |
+   | Dominant variant ≥ 70%, a checkable end (an exit status, a test), and its branch points fit typed decisions with few values | `machine` |
+   | A released skill whose runs now follow one variant | `machine` (the next rung) |
+
+   Rules decide the clear cases. A model judges the rest and, as with Risk, may only make the verdict more cautious: `machine` → `skill` → `none`.
+4. **Drafting.** A skill draft is a `SKILL.md`, written by a model from the cluster's best runs: their steps, the commands that worked, and the pitfalls that cost turns. A machine draft is a module whose states follow the dominant variant. Steps become states with effects, branch points become typed decisions, and the end check becomes the final transition. Each machine draft comes with a labelled example set for each new decision type, taken from the cluster's runs.
+5. **Benchmarking.** The cluster's logged prompts are replayed on scratch copies of their workspaces, comparing the candidate with the route it would replace ([06](06-observability.md#4-benchmark)). Measured: success (the run's own check, or an acceptance check), model turns, tokens, time, and the determinism budget. A candidate goes forward only if it is at least as successful and cheaper.
+6. **Reviewing.** A human sees the cluster (example prompts, the dominant variant), the draft as a diff, and the benchmark. They accept, ask for changes, or reject with a reason. Nothing is released without this step.
+7. **Releasing.** A skill is written to the project's skills directory (or the user's), which is discovered on the next turn. A machine is registered, and the router sends its intent and hints to it.
+8. **Monitoring.** After release, the new route's runs are compared with the baseline the benchmark promised: success, cost, how often a human overrides it, and conformance to its declared machine. If it holds up after N uses, the candidate is closed. If not, it is **retired**: the route is removed and the draft archived with the evidence, and requests go back down the ladder.
+
+### What it logs
+
+The process adds three object types to the log: **candidate** (a cluster with its signature and statistics), **proposal** (a draft with its benchmark) and **release** (what went live, and when). Each links to the runs it came from, so every skill and machine can answer *which requests produced me, and on what evidence*. The W3C PROV export ([P5](../implementation-plan.md#p5--ocel-export-and-process-mining-4-weeks)) carries that provenance outside.
+
+### Gates
+
+- **Every release passes a human.**
+- **Every candidate beats its baseline** on replayed requests before review.
+- **Promotion never touches Risk, Policy or Budget.** A new machine runs its commands through the same `Risk` decision as chat.
+- The drafting model is a decider like any other: logged, replayable, and never the one that approves.
+
 ## Privacy
 
 All mining is local. Before any object leaves the box (shared benchmarks, bug reports), file paths and code contents are hashed, and rationales are optionally redacted. The OCEL file is the unit of sharing, and it is scrubbed deterministically.
