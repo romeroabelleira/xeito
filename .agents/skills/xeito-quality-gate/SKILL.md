@@ -1,6 +1,6 @@
 ---
 name: xeito-quality-gate
-description: Get a change in this repository through its quality gates, the CRAP score per function (max 30) and mutation testing (mix xeito.mutate). Use when mix ci or the pre-commit hook rejects a function as too risky, when a mutant survives, when adding a source to test/mutate.exs, or when deciding how to test new code so that it passes both.
+description: Get a change in this repository through its quality gates, the CRAP score per function (max 6) and mutation testing (mix xeito.mutate). Use when mix ci or the pre-commit hook rejects a function as too risky, when a mutant survives, when adding a source to test/mutate.exs, or when deciding how to test new code so that it passes both.
 ---
 
 # Quality gates
@@ -9,11 +9,14 @@ description: Get a change in this repository through its quality gates, the CRAP
 
 ## CRAP: complexity times untested-ness
 
-Each function scores `complexity² × (1 − coverage)³ + complexity` (`test/support/xeito/crap.ex`). Over 30, the run fails and names the function, its complexity and its coverage. Complexity counts 1, plus one for each further function clause, `if`/`unless`, `&&`/`||`/`and`/`or`, each `case`/`cond`/`fn` clause after the first, each `<-` of a `with` and each `else` clause after the first.
+Each function scores `complexity² × (1 − coverage)³ + complexity` (`test/support/xeito/crap.ex`). Over 6, the run fails and names the function, its complexity and its coverage. Complexity counts 1, plus one for each further function clause, `if`/`unless`, `&&`/`||`/`and`/`or`, each `case`/`cond`/`fn` clause after the first, each `<-` of a `with` and each `else` clause after the first.
 
 What the score tells you:
-- **Coverage low:** the function does something no test exercises. Untested, complexity 5 is already 30. Write the tests first; that is the fix most of the time.
-- **Complexity high even when covered** (over 30 at full coverage): split it. The usual shape is a dispatch, one small function per case (`Effects.Local.run/2` hands each effect kind to its own function); a long `case` in a body becomes function clauses or helpers.
+- **Coverage low:** the function does something no test exercises. Untested, complexity 3 already fails (2 scores exactly 6). Write the tests first; that is the fix most of the time. `XEITO_CRAP_SHOW="Mod.fun/2" mix test --cover` lists the lines no test runs.
+- **Complexity over 6, even when covered:** split it, after its tests are in place.
+  - A dispatch on a name or kind becomes themed dispatchers of at most six clauses each (`Session.command/3` hands commands to `start_command`, `turn_command`, `info_command`, `debug_command`), or a lookup table where the cases differ only by name (the TUI's key table).
+  - A process callback (`handle_event/4`, `handle_info/2`) dispatches on the kind of message to small functions.
+  - The branches of a long body become helpers; every extra `if`, `&&` or guard `and` counts.
 - Code that only wires processes, terminals or sockets (a mix task's `run/1`, a TUI's `init/1`) scores high when untested. Move its logic into pure functions you can test, and keep the wiring thin.
 
 `test/crap_baseline.exs` held older debt and is empty; it may only shrink. Never add a function to it.

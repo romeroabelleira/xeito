@@ -577,14 +577,18 @@ defmodule Xeito.Machines.Chat do
 
   defp whole_read(_call, _result), do: %{}
 
-  defp about(%{name: "bash", arguments: %{"command" => cmd}}),
-    do: "output of `" <> String.slice(cmd, 0, 80) <> if(String.length(cmd) > 80, do: "…`", else: "`")
-
-  defp about(%{name: "read", arguments: %{"path" => path} = args}) when path != "" do
-    detail = args["symbol"] || args["lines"] || if(args["outline"], do: "outline")
-    "read of #{path}" <> if(detail, do: " (#{detail})", else: "")
-  end
+  defp about(%{name: "bash", arguments: %{"command" => cmd}}), do: "output of `" <> clip(cmd) <> "`"
+  defp about(%{name: "read", arguments: %{"path" => path} = args}) when path != "", do: "read of #{path}" <> detail(args)
 
   defp about(%{name: "read", arguments: %{"result" => ref}}), do: "full output of #{ref}"
   defp about(%{name: name}), do: "#{name} result"
+
+  defp clip(cmd), do: if(String.length(cmd) > 80, do: String.slice(cmd, 0, 80) <> "…", else: cmd)
+
+  defp detail(args) do
+    case args["symbol"] || args["lines"] || (args["outline"] == true && "outline") do
+      detail when detail in [nil, false] -> ""
+      detail -> " (#{detail})"
+    end
+  end
 end

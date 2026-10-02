@@ -118,36 +118,33 @@ defmodule Xeito.Source do
     end
   end
 
-  defp collect({:defmodule, meta, [alias, [{:do, body} | _]]} = node, module, depth) do
-    name = module_name(alias, module)
+  defp collect({:__block__, _meta, children}, module, depth), do: Enum.flat_map(children, &collect(&1, module, depth))
+  defp collect({kind, _meta, args} = node, module, depth) when is_list(args), do: collect_call(kind, node, module, depth)
+  defp collect(_node, _module, _depth), do: []
 
+  defp collect_call(:defmodule, {_, meta, [alias, [{:do, body} | _]]} = node, module, depth) do
+    name = module_name(alias, module)
     [entry(:defmodule, name, nil, meta, node, depth) | collect(body, name, depth + 1)]
   end
 
-  defp collect({kind, meta, [head | _]} = node, module, depth) when kind in @defs do
+  defp collect_call(kind, {_, meta, [head | _]} = node, module, depth) when kind in @defs do
     case signature(head) do
       nil -> []
       sig -> [entry(kind, sig, module, meta, node, depth)]
     end
   end
 
-  defp collect({:describe, meta, [name, [{:do, body} | _]]} = node, module, depth) when is_binary(name),
+  defp collect_call(:describe, {_, meta, [name, [{:do, body} | _]]} = node, module, depth) when is_binary(name),
     do: [entry(:describe, inspect(name), module, meta, node, depth) | collect(body, module, depth + 1)]
 
-  defp collect({:test, meta, [name | _]} = node, module, depth) when is_binary(name),
+  defp collect_call(:test, {_, meta, [name | _]} = node, module, depth) when is_binary(name),
     do: [entry(:test, inspect(name), module, meta, node, depth)]
 
-  defp collect({:__block__, _meta, children}, module, depth), do: Enum.flat_map(children, &collect(&1, module, depth))
+  # Definitions inside other blocks (quote, if, a DSL's do-blocks) still count.
+  defp collect_call(_kind, {_, _meta, args}, module, depth), do: Enum.flat_map(args, &do_block(&1, module, depth))
 
-  defp collect({_call, _meta, args}, module, depth) when is_list(args) do
-    # Definitions inside other blocks (quote, if, a DSL's do-blocks) still count.
-    Enum.flat_map(args, fn
-      [{:do, body} | _] -> collect(body, module, depth)
-      _ -> []
-    end)
-  end
-
-  defp collect(_node, _module, _depth), do: []
+  defp do_block([{:do, body} | _], module, depth), do: collect(body, module, depth)
+  defp do_block(_arg, _module, _depth), do: []
 
   defp entry(kind, name, module, meta, node, depth) do
     %{
@@ -202,15 +199,8 @@ defmodule Xeito.Source do
       entries,
       nil,
       fn
-        e, nil ->
-          {:cont, e}
-
-        e, %{kind: k, name: n, module: m} = acc
-        when e.kind == k and e.name == n and e.module == m and k != :defmodule ->
-          {:cont, %{acc | last: max(acc.last, e.last), clauses: acc.clauses + 1, nodes: acc.nodes ++ e.nodes}}
-
-        e, acc ->
-          {:cont, acc, e}
+        e, nil -> {:cont, e}
+        e, acc -> if same_definition?(acc, e), do: {:cont, merge(acc, e)}, else: {:cont, acc, e}
       end,
       fn
         nil -> {:cont, nil}
@@ -219,17 +209,26 @@ defmodule Xeito.Source do
     )
   end
 
-  defp matches?(%{kind: :defmodule, name: module}, name), do: module == name or String.ends_with?(module, "." <> name)
+  defp same_definition?(a, b), do: a.kind == b.kind and a.name == b.name and a.module == b.module and a.kind != :defmodule
+
+  defp merge(acc, e), do: %{acc | last: max(acc.last, e.last), clauses: acc.clauses + 1, nodes: acc.nodes ++ e.nodes}
+
+  defp matches?(%{kind: :defmodule, name: module}, name), do: in_module?(module, name)
 
   defp matches?(%{kind: kind, name: sig, module: module}, name) when kind in @defs do
     {mod, fun} = split_name(name)
-    [fname, _arity] = String.split(sig, "/")
-
-    (fun == sig or fun == fname) and
-      (mod == nil or (module != nil and (module == mod or String.ends_with?(module, "." <> mod))))
+    named?(sig, fun) and in_module?(module, mod)
   end
 
   defp matches?(%{name: test}, name), do: test == inspect(name) or test == name
+
+  # `fun/2` matches by name and arity, `fun` by name alone.
+  defp named?(sig, fun), do: fun == sig or fun == sig |> String.split("/") |> hd()
+
+  # A module matches by its full name or its last parts (`Cart` for `Shop.Cart`); none asked, any.
+  defp in_module?(_module, nil), do: true
+  defp in_module?(nil, _name), do: false
+  defp in_module?(module, name), do: module == name or String.ends_with?(module, "." <> name)
 
   # "Mod.Sub.fun/2" → {"Mod.Sub", "fun/2"}; "fun" → {nil, "fun"}.
   defp split_name(name) do

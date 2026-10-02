@@ -106,6 +106,7 @@ defmodule Xeito.ChatMachineTest do
       assert about("read", %{"path" => "lib/a.ex", "symbol" => "f/1"}) == "read of lib/a.ex (f/1)"
       assert about("read", %{"path" => "lib/a.ex", "lines" => "1-9"}) == "read of lib/a.ex (1-9)"
       assert about("read", %{"path" => "lib/a.ex", "outline" => true}) == "read of lib/a.ex (outline)"
+      assert about("read", %{"path" => "lib/a.ex", "outline" => false}) == "read of lib/a.ex"
       assert about("read", %{"path" => "", "result" => "ses/t1/e3"}) == "full output of ses/t1/e3"
     end
 

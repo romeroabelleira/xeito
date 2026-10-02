@@ -37,17 +37,17 @@ defmodule Xeito.Api.Connection do
   def handle_info({:tcp_closed, _}, s), do: {:stop, :normal, s}
   def handle_info({:tcp_error, _, _}, s), do: {:stop, :normal, s}
 
-  def handle_info({:xeito, "session:" <> session, event}, s) do
-    send_line(s, %{event: event.type, session: session, run: event.run, attrs: event.attrs})
+  def handle_info(msg, s) do
+    forward(msg, s)
     {:noreply, s}
   end
 
-  def handle_info({:xeito_monitor, snapshot}, s) do
-    send_line(s, %{event: "monitor", attrs: snapshot})
-    {:noreply, s}
-  end
+  # Session events and monitor snapshots go to the client as they come.
+  defp forward({:xeito, "session:" <> session, event}, s),
+    do: send_line(s, %{event: event.type, session: session, run: event.run, attrs: event.attrs})
 
-  def handle_info(_msg, s), do: {:noreply, s}
+  defp forward({:xeito_monitor, snapshot}, s), do: send_line(s, %{event: "monitor", attrs: snapshot})
+  defp forward(_msg, _s), do: :ok
 
   defp split(buffer) do
     parts = String.split(buffer, "\n")
@@ -74,23 +74,39 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  defp handle("start", req, s) do
-    opts = Keyword.put(s.defaults, :cwd, req["cwd"] || File.cwd!())
+  defp handle(cmd, req, s) when cmd in ~w(start attach resume), do: open_session(cmd, req, s)
+  defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions), do: daemon_request(cmd, req, s)
 
+  # A followed session that closed while idle is resumed transparently from its workspace log.
+  defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
+    do: session_request(cmd, id, req, s)
+
+  defp handle(cmd, _req, s), do: unknown(cmd, s)
+
+  defp unknown(cmd, s), do: {%{ok: false, error: "unknown or incomplete command #{cmd}"}, s}
+
+  defp open_session("start", req, s), do: start_session(Keyword.put(s.defaults, :cwd, workspace(req)), s)
+  defp open_session("attach", %{"session" => id} = req, s), do: attach(id, req, s)
+  defp open_session("resume", %{"session" => id} = req, s), do: resume(id, workspace(req), s)
+  defp open_session(cmd, _req, s), do: unknown(cmd, s)
+
+  defp workspace(req), do: req["cwd"] || File.cwd!()
+
+  defp start_session(opts, s) do
     case Session.start(opts) do
       {:ok, id} -> {%{ok: true, session: id}, follow(s, id, opts[:cwd])}
       {:error, reason} -> {%{ok: false, error: inspect(reason)}, s}
     end
   end
 
-  defp handle("attach", %{"session" => id} = req, s) do
+  defp attach(id, req, s) do
     cond do
       exists?(id) ->
         status = Session.status(id)
         {%{ok: true, session: id, status: status}, follow(s, id, status.cwd)}
 
       req["cwd"] ->
-        handle("resume", req, s)
+        resume(id, req["cwd"], s)
 
       true ->
         {%{ok: false, error: "no such session"}, s}
@@ -98,42 +114,27 @@ defmodule Xeito.Api.Connection do
   end
 
   # A session the daemon no longer holds (it restarted) is rebuilt from the workspace log.
-  defp handle("resume", %{"session" => id} = req, s) do
-    opts = Keyword.merge(s.defaults, id: id, cwd: req["cwd"] || File.cwd!())
-
-    case Session.start(opts) do
-      {:ok, ^id} ->
-        {%{ok: true, session: id, status: Session.status(id)}, follow(s, id, opts[:cwd])}
-
-      {:error, reason} ->
-        {%{ok: false, error: inspect(reason)}, s}
+  defp resume(id, cwd, s) do
+    case Session.start(Keyword.merge(s.defaults, id: id, cwd: cwd)) do
+      {:ok, ^id} -> {%{ok: true, session: id, status: Session.status(id)}, follow(s, id, cwd)}
+      {:error, reason} -> {%{ok: false, error: inspect(reason)}, s}
     end
   end
 
   # Status-bar data: the connection receives monitor snapshots while it is subscribed.
-  defp handle("monitor", req, s) do
-    if req["on"] == false,
-      do: Monitor.unsubscribe(self()),
-      else: Monitor.subscribe(self())
-
+  defp daemon_request("monitor", req, s) do
+    if req["on"] == false, do: Monitor.unsubscribe(self()), else: Monitor.subscribe(self())
     {%{ok: true}, s}
   end
 
-  defp handle("machines", req, s) do
-    cwd = req["cwd"] || (req["session"] && s.sessions[req["session"]]) || File.cwd!()
-    {%{ok: true, machines: Router.describe(cwd)}, s}
-  end
+  defp daemon_request("machines", req, s), do: {%{ok: true, machines: Router.describe(machines_cwd(req, s))}, s}
 
-  defp handle("sessions", _req, s) do
+  defp daemon_request("sessions", _req, s) do
     ids = Registry.select(Xeito.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
     {%{ok: true, sessions: Enum.map(ids, &Session.status/1)}, s}
   end
 
-  # A followed session that closed while idle is resumed transparently from its workspace log.
-  defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
-    do: session_request(cmd, id, req, s)
-
-  defp handle(cmd, _req, s), do: {%{ok: false, error: "unknown or incomplete command #{cmd}"}, s}
+  defp machines_cwd(req, s), do: req["cwd"] || (req["session"] && s.sessions[req["session"]]) || File.cwd!()
 
   defp session_request(cmd, id, req, s) do
     cond do
@@ -144,18 +145,22 @@ defmodule Xeito.Api.Connection do
   end
 
   defp resume_then(cmd, id, req, cwd, s) do
-    case handle("resume", %{"session" => id, "cwd" => cwd}, s) do
+    case resume(id, cwd, s) do
       {%{ok: true}, s} -> {session_cmd(cmd, id, req), s}
       failed -> failed
     end
   end
 
   defp session_cmd("prompt", id, req), do: result(Session.prompt(id, req["text"] || ""))
-  defp session_cmd("approve", id, _req), do: result(Session.approve(id))
-  defp session_cmd("deny", id, _req), do: result(Session.deny(id))
-  defp session_cmd("status", id, _req), do: %{ok: true, status: Session.status(id)}
-  defp session_cmd("history", id, _req), do: %{ok: true, history: Session.history(id)}
-  defp session_cmd("workspace", id, _req), do: %{ok: true, workspace: Session.workspace(id)}
+  defp session_cmd(cmd, id, _req) when cmd in ~w(approve deny), do: result(answer(cmd, id))
+  defp session_cmd(cmd, id, _req), do: query(cmd, id)
+
+  defp answer("approve", id), do: Session.approve(id)
+  defp answer("deny", id), do: Session.deny(id)
+
+  defp query("status", id), do: %{ok: true, status: Session.status(id)}
+  defp query("history", id), do: %{ok: true, history: Session.history(id)}
+  defp query("workspace", id), do: %{ok: true, workspace: Session.workspace(id)}
 
   defp result(:ok), do: %{ok: true}
   defp result({:error, reason}), do: %{ok: false, error: to_string(reason)}

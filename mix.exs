@@ -12,7 +12,7 @@ defmodule Xeito.MixProject do
       aliases: aliases(),
       # `mix test --cover` scores every function's CRAP (complexity and coverage) and fails above
       # the maximum (test/support/xeito/crap.ex).
-      test_coverage: [tool: Xeito.Crap, crap_max: 30],
+      test_coverage: [tool: Xeito.Crap, crap_max: 6],
       # Data for the CRAP gate and mutation testing, not test files.
       test_ignore_filters: ["test/crap_baseline.exs", "test/mutate.exs"],
       dialyzer: [

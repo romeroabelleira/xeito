@@ -49,8 +49,7 @@ defmodule Xeito.Skills do
   def load(file) do
     with {:ok, text} <- File.read(file),
          {:ok, meta} <- frontmatter(text),
-         name when is_binary(name) and name != "" <- meta["name"],
-         desc when is_binary(desc) and desc != "" <- meta["description"] do
+         {:ok, name, desc} <- name_and_description(meta) do
       [
         %{
           name: name,
@@ -63,6 +62,11 @@ defmodule Xeito.Skills do
       _ -> []
     end
   end
+
+  defp name_and_description(%{"name" => name, "description" => desc})
+       when is_binary(name) and name != "" and is_binary(desc) and desc != "", do: {:ok, name, desc}
+
+  defp name_and_description(_meta), do: :error
 
   @doc "The instructions of `SKILL.md` without its frontmatter."
   @spec body(t()) :: String.t()

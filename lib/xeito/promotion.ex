@@ -167,7 +167,6 @@ defmodule Xeito.Promotion do
   @spec target(map(), keyword()) :: {:machine | :skill | :none, String.t()}
   def target(summary, opts) do
     min_runs = Keyword.get(opts, :min_runs, 5)
-    [{top, _} | _] = summary.variants
 
     cond do
       summary.runs < min_runs ->
@@ -179,14 +178,22 @@ defmodule Xeito.Promotion do
       summary.turns < 3 ->
         {:none, "#{summary.turns} model turns on average: cheap already"}
 
-      summary.dominant >= 0.7 and List.last(top) in @test_steps ->
-        {:machine, "#{pct(summary.dominant)}% of runs follow one variant, which ends in a check"}
+      true ->
+        machine_or_skill(summary)
+    end
+  end
 
-      summary.dominant >= 0.7 ->
+  # Fixed steps that end in a check make a machine; anything less, a skill.
+  defp machine_or_skill(%{variants: [{top, _} | _], dominant: dominant}) do
+    cond do
+      dominant >= 0.7 and List.last(top) in @test_steps ->
+        {:machine, "#{pct(dominant)}% of runs follow one variant, which ends in a check"}
+
+      dominant >= 0.7 ->
         {:skill, "one variant dominates, but it ends without a check"}
 
       true ->
-        {:skill, "no variant dominates (#{pct(summary.dominant)}% at most): guidance, not fixed steps"}
+        {:skill, "no variant dominates (#{pct(dominant)}% at most): guidance, not fixed steps"}
     end
   end
 

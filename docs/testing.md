@@ -43,9 +43,9 @@ Tests never touch your real configuration. Logs and workspaces go to temporary d
 
 ## 3. Change risk: the CRAP gate
 
-`mix test --cover` (in `mix ci`) scores every function: `complexity² × (1 − coverage)³ + complexity`. Above 30 the run fails and names the function, its complexity and coverage. The fix is a test, or a simpler function: one clause per case, or a dispatch to small functions.
+`mix test --cover` (in `mix ci`) scores every function: `complexity² × (1 − coverage)³ + complexity`. Above 6 the run fails and names the function, its complexity and coverage. A fully tested function may be as complex as 6; an untested one fails from complexity 3. The fix is a test first, then, if it is still over, a simpler function: a dispatch split by theme into dispatchers of at most six clauses, a lookup table where the cases differ only by name, or helpers for the branches of a long body. `XEITO_CRAP_SHOW="Mod.fun/2"` lists a function's lines that no test runs.
 
-`test/crap_baseline.exs` lists older functions allowed above 30. It is empty and may only shrink. Never add new code to it. The run prints the five highest scores, which is worth a glance before a function gets there.
+`test/crap_baseline.exs` lists older functions allowed above the maximum. It is empty and may only shrink. Never add new code to it. The run prints the five highest scores, which is worth a glance before a function gets there.
 
 ## 4. Mutation testing: would a test notice?
 

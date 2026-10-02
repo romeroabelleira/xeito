@@ -158,8 +158,32 @@ defmodule Xeito.Tui do
   # --- events → messages ---------------------------------------------------------------------
 
   @impl true
-  def event_to_msg(%Event.Key{key: key, modifiers: mods}, _state)
-      when key in [:c, "c", :d, "d", :t, "t"] and mods != [] do
+  def event_to_msg(%Event.Key{} = key, state), do: key_to_msg(key, state)
+  def event_to_msg(%Event.Resize{width: w, height: h}, _state), do: {:msg, {:resize, w, h}}
+  def event_to_msg(_event, _state), do: :ignore
+
+  @keys %{
+    enter: :submit,
+    escape: :halt,
+    ESC: :halt,
+    up: {:recall, :older},
+    down: {:recall, :newer},
+    page_up: {:scroll, 10},
+    page_down: {:scroll, -10}
+  }
+
+  defp key_to_msg(%Event.Key{key: key, modifiers: mods}, _state) when key in [:c, "c", :d, "d", :t, "t"] and mods != [],
+    do: control_key(key, mods)
+
+  defp key_to_msg(%Event.Key{key: key} = event, _state) do
+    case Map.get(@keys, key) do
+      nil -> {:msg, {:input, event}}
+      msg -> {:msg, msg}
+    end
+  end
+
+  # Ctrl-T toggles the status bar; Ctrl-C and Ctrl-D quit. Other modifiers do nothing.
+  defp control_key(key, mods) do
     cond do
       :ctrl not in mods -> :ignore
       key in [:t, "t"] -> {:msg, :toggle_bar}
@@ -167,25 +191,10 @@ defmodule Xeito.Tui do
     end
   end
 
-  def event_to_msg(%Event.Key{key: :enter}, _state), do: {:msg, :submit}
-  def event_to_msg(%Event.Key{key: key}, _state) when key in [:escape, :ESC], do: {:msg, :halt}
-  def event_to_msg(%Event.Key{key: :up}, _state), do: {:msg, {:recall, :older}}
-  def event_to_msg(%Event.Key{key: :down}, _state), do: {:msg, {:recall, :newer}}
-  def event_to_msg(%Event.Key{key: :page_up}, _state), do: {:msg, {:scroll, 10}}
-  def event_to_msg(%Event.Key{key: :page_down}, _state), do: {:msg, {:scroll, -10}}
-
-  def event_to_msg(%Event.Resize{width: w, height: h}, _state), do: {:msg, {:resize, w, h}}
-  def event_to_msg(%Event.Key{} = event, _state), do: {:msg, {:input, event}}
-  def event_to_msg(_event, _state), do: :ignore
-
   # Daemon events and request replies arrive as plain process messages.
   # Each monitor tick also refreshes the workspace (git, budget) if it is older than 10 s.
-  def handle_info({:xeito_event, %{"event" => "monitor", "attrs" => snapshot}}, state) do
-    if state.workspace_at == nil or now() - state.workspace_at > 10_000,
-      do: request(state, %{"cmd" => "workspace", "session" => state.session})
-
-    {%{state | monitor: snapshot, workspace_at: state.workspace_at || now()}, []}
-  end
+  def handle_info({:xeito_event, %{"event" => "monitor", "attrs" => snapshot}}, state),
+    do: {on_monitor(snapshot, state), []}
 
   def handle_info({:xeito_event, %{"event" => "workspace", "attrs" => ws}}, state),
     do: {%{state | workspace: ws, workspace_at: now()}, []}
@@ -195,16 +204,25 @@ defmodule Xeito.Tui do
   def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state), do: {append(state, "✗ #{error}\n"), []}
 
   # Only the timer of the latest key counts; older ones are stale.
-  def handle_info({:blink, gen}, %{blink: gen} = state) do
-    if now() < state.blink_until do
-      Process.send_after(self(), {:blink, gen}, @blink_ms)
-      {%{state | cursor_on: not state.cursor_on}, []}
-    else
-      {%{state | cursor_on: true}, []}
-    end
+  def handle_info({:blink, gen}, %{blink: gen} = state), do: {blink(gen, state), []}
+  def handle_info(_msg, state), do: {state, []}
+
+  defp on_monitor(snapshot, state) do
+    if state.workspace_at == nil or now() - state.workspace_at > 10_000,
+      do: request(state, %{"cmd" => "workspace", "session" => state.session})
+
+    %{state | monitor: snapshot, workspace_at: state.workspace_at || now()}
   end
 
-  def handle_info(_msg, state), do: {state, []}
+  # The cursor blinks until `blink_until`, then stays solid with no timer running.
+  defp blink(gen, state) do
+    if now() < state.blink_until do
+      Process.send_after(self(), {:blink, gen}, @blink_ms)
+      %{state | cursor_on: not state.cursor_on}
+    else
+      %{state | cursor_on: true}
+    end
+  end
 
   # --- update --------------------------------------------------------------------------------
 
@@ -222,61 +240,56 @@ defmodule Xeito.Tui do
   end
 
   defp handle_update(:quit, state), do: {state, [TermUI.Command.quit(:normal)]}
+  defp handle_update(:submit, state), do: state.input |> TextInput.get_value() |> String.trim() |> submit(state)
+  defp handle_update({:review, answer}, state), do: review(answer, state)
+  defp handle_update({:recall, direction}, state), do: state |> recall(direction) |> recalled(state)
+  defp handle_update(:halt, state), do: halt(state)
+  defp handle_update(msg, state), do: screen_update(msg, state)
 
-  defp handle_update(:submit, state) do
-    case String.trim(TextInput.get_value(state.input)) do
-      "" when state.paused ->
-        request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/next"})
-        {%{state | paused: false}, []}
-
-      "" ->
-        {state, []}
-
-      text ->
-        run_line(text, remember(state, text))
-    end
+  # An empty line steps a paused run, and otherwise does nothing.
+  defp submit("", %{paused: true} = state) do
+    request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/next"})
+    {%{state | paused: false}, []}
   end
 
-  defp handle_update({:review, answer}, state) do
-    cmd = if answer == "y", do: "approve", else: "deny"
+  defp submit("", state), do: {state, []}
+  defp submit(text, state), do: run_line(text, remember(state, text))
+
+  defp review(answer, state) do
+    {cmd, said} = if answer == "y", do: {"approve", "approved"}, else: {"deny", "denied"}
     request(state, %{"cmd" => cmd, "session" => state.session})
-
-    {append(%{state | waiting: false}, "  #{if answer == "y", do: "approved", else: "denied"}\n"), []}
+    {append(%{state | waiting: false}, "  #{said}\n"), []}
   end
 
-  defp handle_update({:recall, direction}, state) do
-    case recall(state, direction) do
-      {:ok, text, state} -> {%{state | input: put_text(state.input, text)}, []}
-      :none -> {state, []}
-    end
-  end
+  defp recalled({:ok, text, state}, _state), do: {%{state | input: put_text(state.input, text)}, []}
+  defp recalled(:none, state), do: {state, []}
 
   # Halts the running turn (the daemon's `/halt`); with nothing running, Esc does nothing.
-  defp handle_update(:halt, %{leaf: leaf} = state) when leaf in ["idle", "disconnected"], do: {state, []}
+  defp halt(%{leaf: leaf} = state) when leaf in ["idle", "disconnected"], do: {state, []}
 
-  defp handle_update(:halt, state) do
+  defp halt(state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/halt"})
     {state, []}
   end
 
-  defp handle_update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
+  defp screen_update(:toggle_bar, state), do: {set_bar(state, not state.bar), []}
 
-  defp handle_update({:statusbar, args}, state) do
+  defp screen_update({:statusbar, args}, state) do
     state = %{state | input: TextInput.clear(state.input)}
     {statusbar(String.split(args, ~r/[\s,]+/, trim: true), state), []}
   end
 
-  defp handle_update({:input, event}, state) do
+  defp screen_update({:input, event}, state) do
     {:ok, input} = TextInput.handle_event(event, state.input)
     {%{state | input: input}, []}
   end
 
-  defp handle_update({:scroll, n}, state), do: {%{state | scroll: max(state.scroll + n, 0)}, []}
+  defp screen_update({:scroll, n}, state), do: {%{state | scroll: max(state.scroll + n, 0)}, []}
 
-  defp handle_update({:resize, w, h}, state),
+  defp screen_update({:resize, w, h}, state),
     do: {%{state | width: w, height: h, input: Map.put(state.input, :width, w - 2)}, []}
 
-  defp handle_update(_msg, state), do: {state, []}
+  defp screen_update(_msg, state), do: {state, []}
 
   # --- status bar preferences ----------------------------------------------------------------
 
@@ -285,43 +298,37 @@ defmodule Xeito.Tui do
     %{state | bar: bar, monitor: if(bar, do: state.monitor)}
   end
 
-  defp statusbar([], state), do: state |> set_bar(not state.bar) |> save_prefs()
-  defp statusbar(["on"], state), do: state |> set_bar(true) |> save_prefs()
-  defp statusbar(["off"], state), do: state |> set_bar(false) |> save_prefs()
+  defp statusbar(args, state) when args in [[], ["on"], ["off"]],
+    do: state |> set_bar(visible?(args, state)) |> save_prefs()
+
   defp statusbar(["reset"], state), do: save_prefs(%{set_bar(state, true) | hidden: []})
 
-  defp statusbar([verb | names], state) when verb in ["show", "hide"] and names != [] do
+  defp statusbar([verb | names], state) when verb in ["show", "hide"] and names != [],
+    do: set_segments(verb, names, state)
+
+  defp statusbar(["segments"], state), do: list_segments(state)
+
+  defp statusbar(_args, state),
+    do: append(state, "/statusbar [on|off|reset|segments] · /statusbar show|hide <segment>[,<segment>]\n")
+
+  # A bare /statusbar toggles.
+  defp visible?([], state), do: not state.bar
+  defp visible?(["on"], _state), do: true
+  defp visible?(["off"], _state), do: false
+
+  defp set_segments(verb, names, state) do
     case names -- StatusBar.segments() do
-      [] ->
-        hidden =
-          if verb == "hide",
-            do: Enum.uniq(state.hidden ++ names),
-            else: state.hidden -- names
-
-        save_prefs(%{state | hidden: hidden})
-
-      unknown ->
-        append(state, "✗ unknown segment #{Enum.join(unknown, ", ")}; see /statusbar segments\n")
+      [] -> save_prefs(%{state | hidden: hidden(verb, names, state.hidden)})
+      unknown -> append(state, "✗ unknown segment #{Enum.join(unknown, ", ")}; see /statusbar segments\n")
     end
   end
 
-  defp statusbar(["segments"], state) do
-    listed =
-      Enum.map_join(StatusBar.segments(), " ", fn seg ->
-        if seg in state.hidden, do: "·#{seg}", else: seg
-      end)
+  defp hidden("hide", names, hidden), do: Enum.uniq(hidden ++ names)
+  defp hidden("show", names, hidden), do: hidden -- names
 
-    append(
-      state,
-      "status bar #{if state.bar, do: "on", else: "off"} · segments: #{listed} (· hidden)\n"
-    )
-  end
-
-  defp statusbar(_args, state) do
-    append(
-      state,
-      "/statusbar [on|off|reset|segments] · /statusbar show|hide <segment>[,<segment>]\n"
-    )
+  defp list_segments(state) do
+    listed = Enum.map_join(StatusBar.segments(), " ", &if(&1 in state.hidden, do: "·#{&1}", else: &1))
+    append(state, "status bar #{if state.bar, do: "on", else: "off"} · segments: #{listed} (· hidden)\n")
   end
 
   # Preferences are saved on every change; a failed write keeps them for this session only.
@@ -428,28 +435,33 @@ defmodule Xeito.Tui do
       |> String.graphemes()
       |> Enum.map_join(&Enum.at(~w(⁰ ¹ ² ³ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹), String.to_integer(&1)))
 
-  defp track(state, "run_selected", %{"attrs" => a}),
+  @progress ["run_selected", "state_entered", "decision_made", "intent"]
+
+  defp track(state, type, event) when type in @progress, do: progress(state, type, event)
+  defp track(state, type, _event), do: turn_status(state, type)
+
+  # Where the run is, and what it has cost so far.
+  defp progress(state, "run_selected", %{"attrs" => a}),
     do: %{state | machine: short(a["machine"]), started: now(), decisions: 0, usd: 0.0}
 
-  defp track(state, "state_entered", %{"run" => run, "attrs" => %{"state" => leaf}}) do
+  defp progress(state, "state_entered", %{"run" => run, "attrs" => %{"state" => leaf}}) do
     if internal?(run), do: state, else: %{state | leaf: to_string(leaf)}
   end
 
-  defp track(state, "decision_made", %{"attrs" => a}) do
-    usd = if is_number(a["usd"]), do: a["usd"], else: 0.0
-    %{state | decisions: state.decisions + 1, tier: a["actor"], usd: state.usd + usd}
-  end
+  defp progress(state, "decision_made", %{"attrs" => a}),
+    do: %{state | decisions: state.decisions + 1, tier: a["actor"], usd: state.usd + usd(a["usd"])}
 
-  defp track(state, "intent", %{"attrs" => a}),
+  defp progress(state, "intent", %{"attrs" => a}),
     do: %{state | decisions: state.decisions + 1, leaf: "intent", tier: a["actor"]}
 
-  defp track(state, "human_needed", _event), do: %{state | waiting: true}
-  defp track(state, "paused", _event), do: %{state | paused: true}
+  defp usd(usd) when is_number(usd), do: usd
+  defp usd(_usd), do: 0.0
 
-  defp track(state, "turn_finished", _event), do: %{state | leaf: "idle", waiting: false, paused: false, started: nil}
-
-  defp track(state, "disconnected", _event), do: %{state | leaf: "disconnected"}
-  defp track(state, _type, _event), do: state
+  defp turn_status(state, "human_needed"), do: %{state | waiting: true}
+  defp turn_status(state, "paused"), do: %{state | paused: true}
+  defp turn_status(state, "turn_finished"), do: %{state | leaf: "idle", waiting: false, paused: false, started: nil}
+  defp turn_status(state, "disconnected"), do: %{state | leaf: "disconnected"}
+  defp turn_status(state, _type), do: state
 
   defp internal?(run), do: String.ends_with?(run, "/esc") or String.ends_with?(run, "/intent")
 
@@ -573,19 +585,16 @@ defmodule Xeito.Tui do
         do: " · #{Float.round((now() - state.started) / 1000, 1)} s",
         else: ""
 
-    review =
-      cond do
-        state.waiting -> " · review: y / n"
-        state.paused -> " · paused: Enter steps"
-        true -> ""
-      end
-
     scroll = if state.scroll > 0, do: " · scrolled", else: ""
     tier = if state.tier, do: " · tier #{state.tier}", else: ""
     cost = if state.usd > 0, do: " · $#{Float.round(state.usd, 4)}", else: ""
 
-    " state #{state.leaf}#{elapsed}#{tier} · #{state.decisions} decisions#{cost}#{review}#{scroll}"
+    " state #{state.leaf}#{elapsed}#{tier} · #{state.decisions} decisions#{cost}#{waiting_for(state)}#{scroll}"
   end
+
+  defp waiting_for(%{waiting: true}), do: " · review: y / n"
+  defp waiting_for(%{paused: true}), do: " · paused: Enter steps"
+  defp waiting_for(_state), do: ""
 
   # A marked line wraps after its gutter; its continuation lines are indented to match.
   defp wrap({:marked, color, small, text}, width) do

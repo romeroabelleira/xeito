@@ -93,8 +93,7 @@ defmodule Xeito.Tiers.OpenRouter do
 
   defp parse(type, choice, resp, model, started) do
     content = get_in(choice, ["message", "content"]) || ""
-    served_by = served_by(resp["model"] || model, resp["provider"])
-    cost = cost(resp["usage"] || %{})
+    {served_by, cost} = served_and_cost(resp, model)
 
     case get_in(choice, ["logprobs", "content"]) do
       [_ | _] = logprobs ->
@@ -104,6 +103,8 @@ defmodule Xeito.Tiers.OpenRouter do
         terminal(type, content, served_by, started, cost)
     end
   end
+
+  defp served_and_cost(resp, model), do: {served_by(resp["model"] || model, resp["provider"]), cost(resp["usage"] || %{})}
 
   defp probabilities(type, content, logprobs), do: Large.probabilities(content, logprobs, type)
 

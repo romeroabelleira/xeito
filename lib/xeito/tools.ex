@@ -125,37 +125,44 @@ defmodule Xeito.Tools do
     end
   end
 
-  defp effect("skill", %{"name" => skill} = args, ctx) when is_binary(skill) and is_map(ctx) do
+  defp effect("skill", args, ctx), do: skill_effect(args, ctx)
+  defp effect(name, args, ctx), do: tool_effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
+
+  defp skill_effect(%{"name" => skill} = args, ctx) when is_binary(skill) do
     case Enum.find(Map.get(ctx, :skills, []), &(&1.name == skill)) do
       nil -> {:error, "no skill named #{inspect(skill)}"}
       %{dir: dir} -> Effect.read(args["file"] || "SKILL.md", cwd: dir, reply: :tool_done)
     end
   end
 
-  defp effect(name, args, ctx) when is_map(ctx), do: effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
+  defp skill_effect(_args, _ctx), do: nil
 
-  defp effect("read", %{"result" => r}, opts) when is_binary(r) and r != "" and is_list(opts),
-    do: Effect.read("", [result: r] ++ opts)
+  # nil for arguments of the wrong shape.
+  defp tool_effect("read", args, opts), do: read_effect(args, opts)
+  defp tool_effect("write", args, opts), do: write_effect(args, opts)
+  defp tool_effect("edit", args, opts), do: edit_effect(args, opts)
+  defp tool_effect("bash", %{"command" => c}, opts) when is_binary(c), do: Effect.bash(c, opts)
+  defp tool_effect(_name, _args, _opts), do: nil
 
-  defp effect("read", %{"path" => p} = args, opts) when is_binary(p) and is_list(opts) do
-    case args do
-      %{"symbol" => s} when is_binary(s) and s != "" -> Effect.read(p, [symbol: s] ++ opts)
-      %{"outline" => true} -> Effect.read(p, [outline: true] ++ opts)
-      %{"lines" => l} when is_binary(l) and l != "" -> Effect.read(p, [lines: l] ++ opts)
-      _ -> Effect.read(p, opts)
-    end
-  end
+  defp read_effect(%{"result" => r}, opts) when is_binary(r) and r != "", do: Effect.read("", [result: r] ++ opts)
+  defp read_effect(%{"path" => p} = args, opts) when is_binary(p), do: Effect.read(p, read_view(args) ++ opts)
+  defp read_effect(_args, _opts), do: nil
 
-  defp effect("write", %{"path" => p, "content" => c}, opts) when is_binary(p) and is_binary(c) and is_list(opts),
+  # One definition, the outline, or a line range of a file; else the whole file.
+  defp read_view(%{"symbol" => s}) when is_binary(s) and s != "", do: [symbol: s]
+  defp read_view(%{"outline" => true}), do: [outline: true]
+  defp read_view(%{"lines" => l}) when is_binary(l) and l != "", do: [lines: l]
+  defp read_view(_args), do: []
+
+  defp write_effect(%{"path" => p, "content" => c}, opts) when is_binary(p) and is_binary(c),
     do: protected(p, opts) || Effect.write(p, c, opts)
 
-  defp effect("edit", %{"path" => p, "old_text" => o, "new_text" => n}, opts)
-       when is_binary(p) and is_binary(o) and is_binary(n) and is_list(opts),
-       do: protected(p, opts) || Effect.edit(p, o, n, opts)
+  defp write_effect(_args, _opts), do: nil
 
-  defp effect("bash", %{"command" => c}, opts) when is_binary(c) and is_list(opts), do: Effect.bash(c, opts)
+  defp edit_effect(%{"path" => p, "old_text" => o, "new_text" => n}, opts)
+       when is_binary(p) and is_binary(o) and is_binary(n), do: protected(p, opts) || Effect.edit(p, o, n, opts)
 
-  defp effect(_name, _args, opts) when is_list(opts), do: nil
+  defp edit_effect(_args, _opts), do: nil
 
   @dependency_reason "holds fetched dependencies or build output: they are not rebuilt from " <>
                        "edited sources and are replaced on the next fetch, so the edit would " <>
@@ -199,14 +206,16 @@ defmodule Xeito.Tools do
 
   def result_text(%{exit_status: status, output: output}), do: "exit status #{status}\n#{output}"
 
-  def result_text(%{ok: true, content: content}), do: content
-
-  def result_text(%{ok: true, syntax_error: error}),
-    do: "ok, applied; but the file no longer parses: #{error}. Fix it before continuing."
-
-  def result_text(%{ok: true}), do: "ok"
+  def result_text(%{ok: true} = result), do: ok_text(result)
   def result_text(%{ok: false, error: error}), do: "error: #{format_error(error)}"
   def result_text(other), do: inspect(other)
+
+  defp ok_text(%{content: content}), do: content
+
+  defp ok_text(%{syntax_error: error}),
+    do: "ok, applied; but the file no longer parses: #{error}. Fix it before continuing."
+
+  defp ok_text(_result), do: "ok"
 
   defp format_error(error) when is_binary(error), do: error
   defp format_error(error), do: inspect(error)

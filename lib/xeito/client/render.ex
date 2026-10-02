@@ -23,15 +23,8 @@ defmodule Xeito.Client.Render do
 
   defp render(%{"event" => "delta", "attrs" => %{"text" => text}}, _pad), do: text
 
-  defp render(%{"event" => "intent", "attrs" => a}, pad),
-    do: "#{pad}◆ intent: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
-
-  defp render(%{"event" => "run_selected", "attrs" => a}, pad), do: "#{pad}  → #{short(a["machine"])} · #{a["reason"]}\n"
-
-  defp render(%{"event" => "decision_made", "attrs" => a}, pad) do
-    type = a["decision_type"] |> to_string() |> short() |> Macro.underscore()
-    "#{pad}◆ #{type}: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
-  end
+  defp render(%{"event" => type, "attrs" => a}, pad)
+       when type in ~w(intent run_selected decision_made human_needed paused), do: decision_line(type, a, pad)
 
   defp render(%{"event" => "effect_requested", "attrs" => %{"kind" => kind, "args" => args}}, pad),
     do: requested(to_string(kind), args, pad)
@@ -39,38 +32,49 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "effect_completed", "attrs" => %{"kind" => kind, "result" => r}}, pad),
     do: completed(to_string(kind), r, pad)
 
-  # The chat loop's own states are visible through its tool calls and streamed text.
-  defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, _pad)
-       when state in ["risk_check", "thinking", "executing", "answered"], do: ""
+  defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad), do: state_line(state, pad)
+  defp render(event, _pad), do: message_line(event)
 
-  defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad), do: "#{pad}· #{state}\n"
+  # What was decided, and what waits for a human.
+  defp decision_line("intent", a, pad), do: "#{pad}◆ intent: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
+  defp decision_line("run_selected", a, pad), do: "#{pad}  → #{short(a["machine"])} · #{a["reason"]}\n"
 
-  defp render(%{"event" => "human_needed", "attrs" => %{"call" => call}}, pad),
+  defp decision_line("decision_made", a, pad) do
+    type = a["decision_type"] |> to_string() |> short() |> Macro.underscore()
+    "#{pad}◆ #{type}: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
+  end
+
+  defp decision_line("human_needed", %{"call" => call}, pad),
     do: "#{pad}? review: #{review_what(call)} — y approves, n denies, or say what to do instead\n"
 
+  defp decision_line("paused", a, pad),
+    do: "#{pad}‖ paused in #{a["state"]} before #{paused_what(a)} — /next · /decide <value> · /continue\n"
+
+  defp decision_line(_type, _attrs, _pad), do: ""
+
+  # The chat loop's own states are visible through its tool calls and streamed text.
+  defp state_line(state, _pad) when state in ["risk_check", "thinking", "executing", "answered"], do: ""
+  defp state_line(state, pad), do: "#{pad}· #{state}\n"
+
   # A chat answer was already streamed; other machines get a one-line summary.
-  defp render(%{"event" => "paused", "attrs" => a}, pad) do
-    "#{pad}‖ paused in #{a["state"]} before #{paused_what(a)} — /next · /decide <value> · /continue\n"
-  end
+  defp message_line(%{"event" => "turn_finished", "attrs" => a}),
+    do: "#{mark(to_string(a["status"]))} #{a["final_state"]}#{answer_summary(a)}\n"
 
-  defp render(%{"event" => "turn_finished", "attrs" => a}, _pad) do
-    mark = mark(to_string(a["status"]))
-    "#{mark} #{a["final_state"]}#{answer_summary(a)}\n"
-  end
-
-  defp render(%{"event" => "closed"}, _pad), do: "· session closed while idle; the next prompt resumes it from the log\n"
-
-  defp render(%{"event" => "notice", "attrs" => %{"text" => text}}, _pad), do: text <> "\n"
-  defp render(%{"event" => "error", "attrs" => %{"text" => text}}, _pad), do: "✗ " <> text <> "\n"
-  defp render(_event, _pad), do: ""
+  defp message_line(%{"event" => "closed"}), do: "· session closed while idle; the next prompt resumes it from the log\n"
+  defp message_line(%{"event" => "notice", "attrs" => %{"text" => text}}), do: text <> "\n"
+  defp message_line(%{"event" => "error", "attrs" => %{"text" => text}}), do: "✗ " <> text <> "\n"
+  defp message_line(_event), do: ""
 
   defp requested("bash", %{"cmd" => cmd}, pad), do: "#{pad}  $ #{cmd}\n"
-  defp requested("read", %{"path" => _} = a, pad), do: "#{pad}  #{read_label(a)}\n"
-  defp requested("write", %{"path" => p} = a, pad), do: "#{pad}  write #{p} (#{count_lines(a["content"])} lines)\n"
-  defp requested("edit", %{"path" => p} = a, pad), do: "#{pad}  edit #{p}\n" <> diff(a["old"], a["new"], pad)
+  defp requested(kind, args, pad) when kind in ~w(read write edit), do: file_requested(kind, args, pad)
   defp requested("machine", %{"machine" => m}, pad), do: "#{pad}  ↳ delegating to #{short(m)}\n"
   defp requested("chat", _args, pad), do: pad
   defp requested(_kind, _args, _pad), do: ""
+
+  defp file_requested("read", %{"path" => _} = a, pad), do: "#{pad}  #{read_label(a)}\n"
+  defp file_requested("write", %{"path" => p} = a, pad), do: "#{pad}  write #{p} (#{count_lines(a["content"])} lines)\n"
+  defp file_requested("edit", %{"path" => p} = a, pad), do: "#{pad}  edit #{p}\n" <> diff(a["old"], a["new"], pad)
+  defp file_requested(_kind, _args, _pad), do: ""
 
   defp completed("bash", %{"exit_status" => status, "output" => out}, pad), do: "#{pad}    exit #{status}#{tail(out)}\n"
   defp completed("chat", %{"error" => error}, pad), do: "\n#{pad}  ✗ model error: #{inspect(error)}\n"

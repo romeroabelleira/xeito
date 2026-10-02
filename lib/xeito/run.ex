@@ -293,11 +293,14 @@ defmodule Xeito.Run do
   end
 
   @impl :gen_statem
-  def handle_event({:call, from}, {:event, name, event_data, actor}, leaf, data) do
-    process(leaf, data, name, event_data, actor, [], from)
-  end
+  def handle_event({:call, from}, request, leaf, data), do: call(request, from, leaf, data)
+  def handle_event(:info, {:xeito_effect, _id, _result} = msg, leaf, data), do: effect_result(msg, leaf, data)
+  def handle_event(:state_timeout, name, leaf, data), do: timed_out(name, leaf, data)
 
-  def handle_event({:call, from}, {:halt, actor}, leaf, data) do
+  defp call({:event, name, event_data, actor}, from, leaf, data),
+    do: process(leaf, data, name, event_data, actor, [], from)
+
+  defp call({:halt, actor}, from, leaf, data) do
     Enum.each(data.tasks, fn {_id, pid} -> Process.exit(pid, :kill) end)
 
     halted =
@@ -306,11 +309,14 @@ defmodule Xeito.Run do
     finish(leaf, data, from, :halted, [halted])
   end
 
-  def handle_event({:call, from}, :snapshot, leaf, data) do
-    {:keep_state_and_data, [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
-  end
+  defp call(:snapshot, from, leaf, data),
+    do: {:keep_state_and_data, [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
 
-  def handle_event({:call, from}, {:debug, settings}, leaf, data) do
+  defp call({:debug, settings}, from, leaf, data), do: set_debug(settings, from, leaf, data)
+  defp call({:step, _how}, from, _leaf, %{held: nil}), do: {:keep_state_and_data, [{:reply, from, {:error, :not_paused}}]}
+  defp call({:step, how}, from, leaf, data), do: release(leaf, data, from, how)
+
+  defp set_debug(settings, from, leaf, data) do
     data = %{data | debug: Map.merge(%{step: false, breakpoints: []}, settings)}
 
     if data.held && not data.debug.step,
@@ -318,19 +324,12 @@ defmodule Xeito.Run do
       else: {:keep_state, data, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, {:step, _how}, _leaf, %{held: nil}),
-    do: {:keep_state_and_data, [{:reply, from, {:error, :not_paused}}]}
-
-  def handle_event({:call, from}, {:step, how}, leaf, data), do: release(leaf, data, from, how)
-
   # While a result is held, further results wait in order; timeouts are dropped (a paused
   # run is under human control, and the next state re-arms its own timeout).
-  def handle_event(:info, {:xeito_effect, id, _} = msg, _leaf, %{held: held} = data) when held != nil,
+  defp effect_result({_, id, _} = msg, _leaf, %{held: held} = data) when held != nil,
     do: {:keep_state, %{data | queued: data.queued ++ [msg], tasks: Map.delete(data.tasks, id)}}
 
-  def handle_event(:state_timeout, _name, _leaf, %{held: held}) when held != nil, do: :keep_state_and_data
-
-  def handle_event(:info, {:xeito_effect, id, result} = msg, leaf, data) do
+  defp effect_result({_, id, result} = msg, leaf, data) do
     data = %{data | tasks: Map.delete(data.tasks, id)}
 
     case Map.fetch(data.effects, id) do
@@ -344,11 +343,8 @@ defmodule Xeito.Run do
     end
   end
 
-  # --- step mode and breakpoints -------------------------------------------------------------
-
-  def handle_event(:state_timeout, name, leaf, data) do
-    process(leaf, data, name, %{}, :code, [], nil)
-  end
+  defp timed_out(_name, _leaf, %{held: held}) when held != nil, do: :keep_state_and_data
+  defp timed_out(name, leaf, data), do: process(leaf, data, name, %{}, :code, [], nil)
 
   defp complete(leaf, data, id, result) do
     case Map.pop(data.effects, id) do
@@ -380,6 +376,8 @@ defmodule Xeito.Run do
         )
     end
   end
+
+  # --- step mode and breakpoints -------------------------------------------------------------
 
   defp pause?(%{debug: %{step: true}}, _leaf, _effect, _result), do: true
 

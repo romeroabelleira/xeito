@@ -229,42 +229,13 @@ defmodule Xeito.Session do
   def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
 
   defp handle_request({:prompt, text}, _from, s) do
-    s = warn_if_stale(s)
-    trimmed = String.trim(text)
-
-    cond do
-      String.match?(
-        trimmed,
-        ~r{^/(approve|deny|halt|why|budget|help|machines|step|next|continue|break|decide)\b}
-      ) ->
-        "/" <> command = trimmed
-        {:reply, :ok, command(command, s)}
-
-      # While a review waits, text is the answer: what to do instead of the call.
-      s.waiting != nil and trimmed != "" and not String.starts_with?(trimmed, "/") ->
-        {:reply, :ok, instruct(trimmed, s)}
-
-      s.root != nil ->
-        {:reply, {:error, :busy}, s}
-
-      true ->
-        s = %{s | turn: s.turn + 1, prompt: text}
-        emit(s, "prompt", nil, %{"text" => text})
-
-        case trimmed do
-          "/" <> command -> {:reply, :ok, command(command, s)}
-          _ -> {:reply, :ok, route_prompt(text, trimmed, s)}
-        end
-    end
+    {reply, s} = prompt(String.trim(text), text, warn_if_stale(s))
+    {:reply, reply, s}
   end
 
-  defp handle_request({:human, _answer}, _from, %{waiting: nil} = s), do: {:reply, {:error, :nothing_to_approve}, s}
-
   defp handle_request({:human, answer}, _from, s) do
-    case answer_human(s.waiting.run, answer) do
-      :ok -> {:reply, :ok, %{s | waiting: nil}}
-      :ignored -> {:reply, {:error, :not_accepted}, s}
-    end
+    {reply, s} = human_answer(answer, s)
+    {:reply, reply, s}
   end
 
   defp handle_request(:status, _from, s) do
@@ -290,12 +261,58 @@ defmodule Xeito.Session do
     {:reply, attrs, s}
   end
 
+  # Commands that act on a running turn (or need none) are taken while it runs; while a review
+  # waits, text is the answer: what to do instead of the call.
+  defp prompt(trimmed, text, s) do
+    cond do
+      Regex.match?(~r{^/(approve|deny|halt|why|budget|help|machines|step|next|continue|break|decide)\b}, trimmed) ->
+        "/" <> command = trimmed
+        {:ok, command(command, s)}
+
+      answers_review?(trimmed, s) ->
+        {:ok, instruct(trimmed, s)}
+
+      s.root != nil ->
+        {{:error, :busy}, s}
+
+      true ->
+        {:ok, start_turn(text, trimmed, s)}
+    end
+  end
+
+  defp answers_review?(trimmed, s), do: s.waiting != nil and trimmed != "" and not String.starts_with?(trimmed, "/")
+
+  defp start_turn(text, trimmed, s) do
+    s = %{s | turn: s.turn + 1, prompt: text}
+    emit(s, "prompt", nil, %{"text" => text})
+
+    case trimmed do
+      "/" <> command -> command(command, s)
+      _ -> route_prompt(text, trimmed, s)
+    end
+  end
+
+  defp human_answer(_answer, %{waiting: nil} = s), do: {{:error, :nothing_to_approve}, s}
+
+  defp human_answer(answer, s) do
+    case answer_human(s.waiting.run, answer) do
+      :ok -> {:ok, %{s | waiting: nil}}
+      :ignored -> {{:error, :not_accepted}, s}
+    end
+  end
+
   # An intent decided after its turn was halted (or for an earlier prompt) starts nothing.
   @impl true
   def handle_info({:intent, text, _decision}, %{root: root, prompt: prompt} = s) when root != :deciding or text != prompt,
     do: {:noreply, s}
 
-  def handle_info({:intent, text, decision}, s) do
+  def handle_info({:intent, text, decision}, s), do: {:noreply, on_intent(text, decision, s)}
+  def handle_info(:idle_check, s), do: idle_check(s)
+  def handle_info({:xeito, run_id, event}, s) when is_binary(run_id), do: {:noreply, on_run_event(run_id, event, s)}
+
+  def handle_info(_msg, s), do: {:noreply, s}
+
+  defp on_intent(text, decision, s) do
     s = %{s | decisions: Enum.take([decision | s.decisions], 10)}
 
     cost = decision.cost || %{}
@@ -317,15 +334,14 @@ defmodule Xeito.Session do
 
     # Small talk needs no tools, and without tools the model's answer streams at once. Only when
     # the small-talk rule says so: a model's `other` can be a reply to an unfinished turn.
-    input =
-      if machine == Chat and decision.value == :other and decision.actor == :rule and not s.unfinished,
-        do: Map.put(input, :tools, false),
-        else: input
-
-    {:noreply, start_machine(machine, input, reason, s)}
+    input = if small_talk?(machine, decision, s), do: Map.put(input, :tools, false), else: input
+    start_machine(machine, input, reason, s)
   end
 
-  def handle_info(:idle_check, s) do
+  defp small_talk?(machine, decision, s),
+    do: machine == Chat and decision.value == :other and decision.actor == :rule and not s.unfinished
+
+  defp idle_check(s) do
     if not busy?(s) and now() - s.active_at >= s.idle_timeout do
       emit(s, "closed", nil, %{"reason" => "idle", "idle_ms" => s.idle_timeout})
       {:stop, :normal, s}
@@ -335,16 +351,14 @@ defmodule Xeito.Session do
     end
   end
 
-  def handle_info({:xeito, run_id, event}, s) when is_binary(run_id) do
+  defp on_run_event(run_id, event, s) do
     if String.starts_with?(run_id, s.id <> "/") do
       emit(s, event.type, run_id, event.attrs)
-      {:noreply, track(run_id, event, %{s | active_at: now()})}
+      track(run_id, event, %{s | active_at: now()})
     else
-      {:noreply, s}
+      s
     end
   end
-
-  def handle_info(_msg, s), do: {:noreply, s}
 
   # An idle close (:normal) or a clean daemon stop (:shutdown) records the session closed. A
   # crash records nothing; the next time the workspace log opens, it marks the session
@@ -401,28 +415,44 @@ defmodule Xeito.Session do
 
   defp command(command, s), do: command(String.split(command, ~r/\s+/, parts: 2) ++ [""], command, s)
 
-  defp command(["machine", rest | _], _raw, s), do: machine_command(rest, s)
-  defp command(["skill:" <> name, rest | _], _raw, s), do: skill_command(name, rest, s)
+  defp command([name, arg | _], raw, s) do
+    cond do
+      name in ["machine", "run"] or String.starts_with?(name, "skill:") -> start_command(name, arg, raw, s)
+      name in ["approve", "deny", "halt"] -> turn_command(name, s)
+      name in ["why", "budget", "help", "machines"] -> info_command(name, arg, s)
+      name in ["step", "continue", "next", "decide", "break"] -> debug_command(name, arg, raw, s)
+      true -> unknown_command(raw, s)
+    end
+  end
 
-  defp command(["run", cmd | _], _raw, s) when cmd != "",
-    do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
+  # Commands that start a turn.
+  defp start_command("machine", rest, _raw, s), do: machine_command(rest, s)
+  defp start_command("skill:" <> name, rest, _raw, s), do: skill_command(name, rest, s)
+  defp start_command("run", "", raw, s), do: unknown_command(raw, s)
+  defp start_command("run", cmd, _raw, s), do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
 
-  defp command(["approve" | _], _raw, s), do: human_command(:approved, s)
-  defp command(["deny" | _], _raw, s), do: human_command(:denied, s)
-  defp command(["halt" | _], _raw, s), do: halt(s)
-  defp command(["why" | _], _raw, s), do: why(s)
-  defp command(["budget", usd | _], _raw, s), do: budget(usd, s)
-  defp command(["help" | _], _raw, s), do: notice(s, help())
-  defp command(["machines" | _], _raw, s), do: notice(s, machines_text(s))
-  defp command(["step" | _], _raw, s), do: set_debug(%{s.debug | step: not s.debug.step}, s)
-  defp command(["continue" | _], _raw, s), do: set_debug(%{s.debug | step: false}, s)
-  defp command(["next" | _], _raw, s), do: step(:next, s)
-  defp command(["decide", value | _], _raw, s) when value != "", do: step({:decide, value}, s)
+  # Commands for the turn that is running.
+  defp turn_command("approve", s), do: human_command(:approved, s)
+  defp turn_command("deny", s), do: human_command(:denied, s)
+  defp turn_command("halt", s), do: halt(s)
 
-  defp command(["break", "clear" | _], _raw, s), do: set_debug(%{s.debug | breakpoints: []}, s)
+  defp info_command("why", _arg, s), do: why(s)
+  defp info_command("budget", usd, s), do: budget(usd, s)
+  defp info_command("help", _arg, s), do: notice(s, help())
+  defp info_command("machines", _arg, s), do: notice(s, machines_text(s))
 
-  defp command(["break", spec | _], _raw, s) when spec != "", do: add_breakpoint(spec, s)
-  defp command(_parts, raw, s), do: error(s, "unknown command /#{raw}; try /help")
+  # Step mode and breakpoints.
+  defp debug_command("step", _arg, _raw, s), do: set_debug(%{s.debug | step: not s.debug.step}, s)
+  defp debug_command("continue", _arg, _raw, s), do: set_debug(%{s.debug | step: false}, s)
+  defp debug_command("next", _arg, _raw, s), do: step(:next, s)
+  defp debug_command(name, arg, raw, s), do: debug_arg_command(name, arg, raw, s)
+
+  defp debug_arg_command(_name, "", raw, s), do: unknown_command(raw, s)
+  defp debug_arg_command("decide", value, _raw, s), do: step({:decide, value}, s)
+  defp debug_arg_command("break", "clear", _raw, s), do: set_debug(%{s.debug | breakpoints: []}, s)
+  defp debug_arg_command("break", spec, _raw, s), do: add_breakpoint(spec, s)
+
+  defp unknown_command(raw, s), do: error(s, "unknown command /#{raw}; try /help")
 
   defp machine_command(rest, s) do
     [name | prompt] = String.split(rest, ~r/\s+/, parts: 2) ++ [""]
@@ -590,9 +620,7 @@ defmodule Xeito.Session do
     %{s | waiting: waiting}
   end
 
-  defp track(run_id, %{type: "state_exited", attrs: %{"state" => :ask_human}}, s) do
-    if s.waiting && s.waiting.run == run_id, do: %{s | waiting: nil}, else: s
-  end
+  defp track(run_id, %{type: "state_exited", attrs: %{"state" => :ask_human}}, s), do: review_ended(run_id, s)
 
   defp track(run_id, %{type: "run_finished"} = event, %{root: run_id} = s) do
     {:ok, result} = Run.result(s.log, run_id)
@@ -613,18 +641,22 @@ defmodule Xeito.Session do
     }
   end
 
-  defp track(run_id, %{type: "paused"}, s), do: %{s | paused: run_id}
+  defp track(run_id, event, s), do: track_run(run_id, event, s)
 
-  defp track(run_id, %{type: "run_started"}, s) do
+  defp review_ended(run_id, s), do: if(s.waiting && s.waiting.run == run_id, do: %{s | waiting: nil}, else: s)
+
+  # The runs that are live (for step mode) and the one that is paused.
+  defp track_run(run_id, %{type: "paused"}, s), do: %{s | paused: run_id}
+
+  defp track_run(run_id, %{type: "run_started"}, s) do
     if internal?(run_id), do: s, else: %{s | live: MapSet.put(s.live, run_id)}
   end
 
-  defp track(run_id, %{type: "run_finished"}, s),
+  defp track_run(run_id, %{type: "run_finished"}, s),
     do: %{s | live: MapSet.delete(s.live, run_id), paused: unpause(s.paused, run_id)}
 
-  defp track(run_id, %{type: type}, s) when type != "delta", do: %{s | paused: unpause(s.paused, run_id)}
-
-  defp track(_run_id, _event, s), do: s
+  defp track_run(run_id, %{type: type}, s) when type != "delta", do: %{s | paused: unpause(s.paused, run_id)}
+  defp track_run(_run_id, _event, s), do: s
 
   defp stopped?(%{status: :halted}), do: true
   defp stopped?(%{ctx: ctx}), do: Map.get(ctx, :stopped, false) == true
@@ -703,19 +735,15 @@ defmodule Xeito.Session do
     with {:ok, state} <- existing_atom(name), do: {:ok, {:state, state}}
   end
 
-  def parse_breakpoint("decision:" <> name) do
-    module = Module.concat(Xeito.Decisions, Macro.camelize(name))
-    if Code.ensure_loaded?(module), do: {:ok, {:decision, module}}, else: :error
-  end
-
-  def parse_breakpoint("conf<" <> x) do
-    case Float.parse(x) do
-      {f, ""} -> {:ok, {:confidence_below, f}}
-      _ -> :error
-    end
-  end
+  def parse_breakpoint("decision:" <> name), do: decision_breakpoint(Module.concat(Xeito.Decisions, Macro.camelize(name)))
+  def parse_breakpoint("conf<" <> x), do: x |> Float.parse() |> confidence_breakpoint()
 
   def parse_breakpoint(_spec), do: :error
+
+  defp decision_breakpoint(module), do: if(Code.ensure_loaded?(module), do: {:ok, {:decision, module}}, else: :error)
+
+  defp confidence_breakpoint({f, ""}), do: {:ok, {:confidence_below, f}}
+  defp confidence_breakpoint(_parsed), do: :error
 
   defp pending_call(run_id) do
     case Run.whereis(run_id) && Run.snapshot(run_id) do
@@ -730,16 +758,20 @@ defmodule Xeito.Session do
   defp answer(_machine, %{status: :halted}), do: @halted
   defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || ctx |> Map.get(:error) |> to_text()
 
-  defp answer(FixFailingTest, %{state: state, ctx: ctx}) do
-    fix = get_in(ctx, [:fix, :answer])
-    "fix_failing_test ended in #{state}" <> if(fix, do: ": " <> fix, else: "")
-  end
+  defp answer(FixFailingTest, %{state: state, ctx: ctx}), do: "fix_failing_test ended in #{state}" <> fix_answer(ctx)
 
   defp answer(machine, %{state: state} = result) do
     ctx = Map.get(result, :ctx, %{})
 
     Map.get(ctx, :answer) ||
       ctx |> Map.get(:error) |> to_text() |> default("#{inspect(machine)} ended in #{state}")
+  end
+
+  defp fix_answer(ctx) do
+    case get_in(ctx, [:fix, :answer]) do
+      nil -> ""
+      fix -> ": " <> fix
+    end
   end
 
   defp default("", fallback), do: fallback

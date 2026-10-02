@@ -56,18 +56,19 @@ defmodule Xeito.Tiers.Large do
 
     with {:ok, %{"value" => value}} <- JSON.decode(content),
          [_ | _] = at_value <- drop_to_value(logprobs) do
-      tops = Enum.map(hd(at_value)["top_logprobs"] || [], &{&1["token"], &1["logprob"]})
-
-      case Scoring.one_step(tops, options) do
-        empty when map_size(empty) == 0 -> own_probability(value, at_value)
-        probs -> probs
-      end
+      at_value |> tops() |> Scoring.one_step(options) |> or_own(value, at_value)
     else
       {:ok, _} -> %{}
       {:error, _} -> %{}
       [] -> chosen_only(content)
     end
   end
+
+  defp tops([first | _]), do: Enum.map(first["top_logprobs"] || [], &{&1["token"], &1["logprob"]})
+
+  # No usable alternatives at the value: the chosen value's own probability.
+  defp or_own(probs, value, at_value) when map_size(probs) == 0, do: own_probability(value, at_value)
+  defp or_own(probs, _value, _at_value), do: probs
 
   # Tokens from the first one after `"value": "` onwards.
   defp drop_to_value(logprobs) do

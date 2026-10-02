@@ -70,17 +70,10 @@ defmodule Xeito.Decision.Eval do
     end)
   end
 
-  defp predict(_mod, type, :rules, _input, normalized, _majority, _opts) do
+  defp predict(_mod, type, decider, _input, normalized, majority, _opts) when decider in [:rules, :baseline] do
     case Decider.apply_rules(type, normalized) do
-      {:ok, value, _} -> %{predicted: value, confidence: 1.0, probabilities: %{value => 1.0}}
-      :none -> %{predicted: :abstain, confidence: nil, probabilities: %{}}
-    end
-  end
-
-  defp predict(_mod, type, :baseline, _input, normalized, majority, _opts) do
-    case Decider.apply_rules(type, normalized) do
-      {:ok, value, _} -> %{predicted: value, confidence: 1.0, probabilities: %{value => 1.0}}
-      :none -> %{predicted: majority, confidence: 1.0, probabilities: %{majority => 1.0}}
+      {:ok, value, _} -> certain(value)
+      :none -> without_rule(decider, majority)
     end
   end
 
@@ -109,6 +102,12 @@ defmodule Xeito.Decision.Eval do
         %{predicted: :abstain, confidence: nil, probabilities: %{}, error: inspect(reason)}
     end
   end
+
+  defp certain(value), do: %{predicted: value, confidence: 1.0, probabilities: %{value => 1.0}}
+
+  # Where no rule fires, rules alone abstain; the static rule answers the most frequent label.
+  defp without_rule(:rules, _majority), do: %{predicted: :abstain, confidence: nil, probabilities: %{}}
+  defp without_rule(:baseline, majority), do: certain(majority)
 
   @doc "Metrics for one decider's results."
   @spec metrics([map()], [atom()]) :: map()

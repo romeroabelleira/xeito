@@ -40,6 +40,9 @@ defmodule Xeito.ToolsTest do
 
     test "bad arguments, an unknown tool, or no tools at all" do
       assert {:error, "invalid arguments for bash: %{}"} = effect("bash", %{})
+      assert {:error, "invalid arguments for edit: " <> _} = effect("edit", %{"path" => "a.ex"})
+      assert {:error, "invalid arguments for write: " <> _} = effect("write", %{"path" => "a.ex"})
+      assert {:error, "invalid arguments for read: " <> _} = effect("read", %{})
       assert {:error, "unknown tool \"fly\"; available: read, write, edit, bash"} = effect("fly", %{})
 
       assert {:error, "no tools are available in this turn; answer in text"} =

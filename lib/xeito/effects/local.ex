@@ -40,17 +40,25 @@ defmodule Xeito.Effects.Local do
   @max_output 65_536
 
   @impl true
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:read, :write, :edit], do: file_effect(effect, opts)
+
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:decide, :tier, :probe, :swap],
+    do: decision_effect(effect, opts)
+
   def run(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
-  def run(%Effect{kind: :read, args: %{result: ref}}, opts), do: read_back(ref, opts)
-  def run(%Effect{kind: :read} = effect, _opts), do: read(effect)
-  def run(%Effect{kind: :write, args: args}, _opts), do: write(args)
-  def run(%Effect{kind: :edit, args: args}, _opts), do: edit(args)
   def run(%Effect{kind: :chat} = effect, opts), do: chat(effect, opts)
   def run(%Effect{kind: :machine} = effect, opts), do: machine(effect, opts)
-  def run(%Effect{kind: :decide} = effect, opts), do: decide(effect, opts)
-  def run(%Effect{kind: :tier, args: args}, opts), do: tier(args, opts)
-  def run(%Effect{kind: :probe, args: args}, opts), do: probe(args, opts)
-  def run(%Effect{kind: :swap, args: args}, opts), do: swap(args, opts)
+
+  defp file_effect(%Effect{kind: :read, args: %{result: ref}}, opts), do: read_back(ref, opts)
+  defp file_effect(%Effect{kind: :read} = effect, _opts), do: read(effect)
+  defp file_effect(%Effect{kind: :write, args: args}, _opts), do: write(args)
+  defp file_effect(%Effect{kind: :edit, args: args}, _opts), do: edit(args)
+
+  # A decision, a tier's answer, and the escalation's model probes and swaps.
+  defp decision_effect(%Effect{kind: :decide} = effect, opts), do: decide(effect, opts)
+  defp decision_effect(%Effect{kind: :tier, args: args}, opts), do: tier(args, opts)
+  defp decision_effect(%Effect{kind: :probe, args: args}, opts), do: probe(args, opts)
+  defp decision_effect(%Effect{kind: :swap, args: args}, opts), do: swap(args, opts)
 
   defp bash(%Effect{args: args} = effect, opts) do
     cwd = workspace!(args)

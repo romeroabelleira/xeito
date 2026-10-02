@@ -53,11 +53,7 @@ defmodule Xeito.Client.StatusBar do
   def count(usage, %{"event" => event} = e), do: count_event(usage, event, e)
 
   defp count_event(usage, type, %{"attrs" => a}) when type in ["decision_made", "intent"] do
-    decision = %{
-      type: if(type == "intent", do: "intent", else: short_type(a["decision_type"])),
-      actor: to_string(a["actor"] || "none"),
-      ms: a["latency_ms"]
-    }
+    decision = %{type: decision_type(type, a), actor: to_string(a["actor"] || "none"), ms: a["latency_ms"]}
 
     usage
     |> call(decision.actor)
@@ -70,17 +66,23 @@ defmodule Xeito.Client.StatusBar do
     usage
     |> call("chat")
     |> add_cost(r)
-    |> Map.put(:ctx, r["tokens_in"] || usage.ctx)
+    |> Map.put(:ctx, context(r, usage))
     |> Map.put(:last_reply, %{ms: r["latency_ms"], first_ms: r["first_token_ms"]})
   end
 
-  defp count_event(usage, "transition", %{"attrs" => %{"actor" => actor}}) do
-    {code, total} = usage.det
-    code = if to_string(actor) in ["code", "rule"], do: code + 1, else: code
-    %{usage | det: {code, total + 1}}
-  end
+  defp count_event(usage, "transition", %{"attrs" => %{"actor" => actor}}),
+    do: %{usage | det: determinism(usage.det, actor)}
 
   defp count_event(usage, _type, _event), do: usage
+
+  defp decision_type("intent", _attrs), do: "intent"
+  defp decision_type(_type, attrs), do: short_type(attrs["decision_type"])
+
+  defp context(reply, usage), do: reply["tokens_in"] || usage.ctx
+
+  # Steps taken by code or rules, out of all steps.
+  defp determinism({code, total}, actor) when actor in [:code, :rule, "code", "rule"], do: {code + 1, total + 1}
+  defp determinism({code, total}, _actor), do: {code, total + 1}
 
   defp short_type(nil), do: "decision"
 
@@ -180,27 +182,32 @@ defmodule Xeito.Client.StatusBar do
   defp render(names, texts),
     do: @segments |> Enum.map(&elem(&1, 0)) |> Enum.filter(&(&1 in names)) |> Enum.map(&texts[&1]) |> join()
 
-  defp segment(:gpu, _u, nil, _w), do: "status: waiting for the daemon's monitor…"
-  defp segment(:gpu, _u, m, _w), do: gpu(m["system"]["gpus"])
-  defp segment(:models, _u, nil, _w), do: ""
+  defp segment(name, _u, m, _w) when name in [:gpu, :models, :cpu, :queue], do: machine_segment(name, m)
+  defp segment(name, _u, _m, w) when name in [:git, :budget], do: workspace_segment(name, w)
+  defp segment(name, u, m, _w), do: usage_segment(name, u, m)
 
-  defp segment(:models, _u, %{"models" => models}, _w),
+  # From the daemon's monitor: nothing to show before its first snapshot.
+  defp machine_segment(:gpu, nil), do: "status: waiting for the daemon's monitor…"
+  defp machine_segment(_name, nil), do: ""
+  defp machine_segment(:gpu, m), do: gpu(m["system"]["gpus"])
+
+  defp machine_segment(:models, %{"models" => models}),
     do: join([large(models["large"]), small(models["small"]), s1(models["system_one"])])
 
-  defp segment(:cpu, _u, nil, _w), do: ""
-  defp segment(:cpu, _u, m, _w), do: cpu(m["system"])
-  defp segment(:git, _u, _m, %{"missing" => true}), do: "⚠ workspace missing"
-  defp segment(:git, _u, _m, w), do: git(w && w["git"])
-  defp segment(:calls, u, _m, _w), do: calls(u)
-  defp segment(:tokens, u, m, _w), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)
-  defp segment(:det, u, _m, _w), do: det(u.det)
-  defp segment(:decision, u, _m, _w), do: last_decision(u.last_decision)
-  defp segment(:reply, u, _m, _w), do: last_reply(u.last_reply)
+  defp machine_segment(:cpu, m), do: cpu(m["system"])
+  defp machine_segment(:queue, m), do: queues(m)
 
-  defp segment(:cost, u, _m, _w), do: "$#{:erlang.float_to_binary(u.usd * 1.0, decimals: 4)} · ~#{energy(u.joules)}"
+  defp workspace_segment(:git, %{"missing" => true}), do: "⚠ workspace missing"
+  defp workspace_segment(:git, w), do: git(w && w["git"])
+  defp workspace_segment(:budget, w), do: budget(w && w["budget"])
 
-  defp segment(:budget, _u, _m, w), do: budget(w && w["budget"])
-  defp segment(:queue, _u, m, _w), do: queues(m)
+  # From the session's usage.
+  defp usage_segment(:calls, u, _m), do: calls(u)
+  defp usage_segment(:tokens, u, m), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)
+  defp usage_segment(:det, u, _m), do: det(u.det)
+  defp usage_segment(:decision, u, _m), do: last_decision(u.last_decision)
+  defp usage_segment(:reply, u, _m), do: last_reply(u.last_reply)
+  defp usage_segment(:cost, u, _m), do: "$#{:erlang.float_to_binary(u.usd * 1.0, decimals: 4)} · ~#{energy(u.joules)}"
 
   @doc false
   def system_line(monitor, workspace \\ nil),

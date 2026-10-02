@@ -5,8 +5,10 @@ defmodule Xeito.Crap do
   complexity and coverage the share of the function's executable lines the tests ran.
 
   The suite fails when a function scores above the maximum (`test_coverage: [crap_max: n]` in
-  `mix.exs`, default #{30}). Thirty is the threshold its authors proposed: a function may be as
-  complex as 30 if it is fully tested, while an untested function reaches 30 at complexity 5.
+  `mix.exs`, default #{6}). The metric's authors proposed 30; this repository holds every function
+  to 6 (since 2026-10-02). A fully tested function may then be as complex as 6, and an untested
+  one fails from complexity 3: any logic needs tests, and anything more complex needs splitting,
+  however well tested.
 
   Complexity counts 1 for the function, plus one for each further clause, `if`/`unless`,
   `&&`/`||`/`and`/`or` (also in guards), each `case`/`cond`/`receive`/`fn` clause after the
@@ -22,7 +24,7 @@ defmodule Xeito.Crap do
   @compile {:no_warn_undefined, :cover}
 
   @defs [:def, :defp, :defmacro, :defmacrop]
-  @default_max 30
+  @default_max 6
 
   @type function_info :: %{
           module: String.t(),

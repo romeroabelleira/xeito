@@ -130,8 +130,7 @@ defmodule Xeito.Decisions.Risk do
 
   defp read_only?("sed", segment), do: Regex.match?(~r/^sed\s+-n\s+'?\d+(,(\d+|\$))?p'?(\s+[^\s-][^\s;]*)*$/, segment)
 
-  defp read_only?("cd", segment),
-    do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
+  defp read_only?("cd", segment), do: into_subdirectory?(segment)
 
   # `xargs` feeding a read-only command (`find … | xargs grep -l x`) is as safe as that command.
   defp read_only?("xargs", segment) do
@@ -140,6 +139,9 @@ defmodule Xeito.Decisions.Risk do
   end
 
   defp read_only?(_word, _segment), do: false
+
+  defp into_subdirectory?(segment),
+    do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
 
   # --- writes inside the workspace ---------------------------------------------------------
   #
@@ -182,7 +184,7 @@ defmodule Xeito.Decisions.Risk do
       else: with({:ok, [command | args]} <- words(segment), do: command_paths(command, args))
   end
 
-  defp command_paths("sed", args), do: sed_paths(args, %{in_place: false, script: nil, files: []})
+  defp command_paths("sed", args), do: args |> sed_options(%{in_place: false, script: nil}) |> sed_files()
 
   defp command_paths(command, args) when command in @writers do
     {options, paths} = Enum.split_with(args, &String.starts_with?(&1, "-"))
@@ -191,23 +193,26 @@ defmodule Xeito.Decisions.Risk do
 
   defp command_paths(_command, _args), do: :error
 
-  # `sed -i[SUFFIX] [-i ''] [-E|-r] [-e] 's/a/b/flags' FILE...`
-  defp sed_paths(["-i", "" | rest], acc), do: sed_paths(rest, %{acc | in_place: true})
-  defp sed_paths(["-i" <> _suffix | rest], acc), do: sed_paths(rest, %{acc | in_place: true})
-  defp sed_paths([flag | rest], acc) when flag in ["-E", "-r"], do: sed_paths(rest, acc)
-  defp sed_paths(["-e", script | rest], %{script: nil} = acc), do: sed_paths(rest, %{acc | script: script})
-  defp sed_paths(["-" <> _ | _], _acc), do: :error
-  defp sed_paths([script | rest], %{script: nil} = acc), do: sed_paths(rest, %{acc | script: script})
-  defp sed_paths([file | rest], acc), do: sed_paths(rest, %{acc | files: [file | acc.files]})
+  # `sed -i[SUFFIX] [-i ''] [-E|-r] [-e SCRIPT] [SCRIPT] FILE...`: the options first, then the
+  # files. Any other option ends the options and fails below, as a script or as a file.
+  defp sed_options(["-i", "" | rest], acc), do: sed_options(rest, %{acc | in_place: true})
+  defp sed_options(["-i" <> _suffix | rest], acc), do: sed_options(rest, %{acc | in_place: true})
+  defp sed_options([flag | rest], acc) when flag in ["-E", "-r"], do: sed_options(rest, acc)
+  defp sed_options(["-e", script | rest], %{script: nil} = acc), do: sed_options(rest, %{acc | script: script})
+  defp sed_options(rest, acc), do: {acc, rest}
 
-  defp sed_paths([], %{in_place: true, script: script, files: [_ | _] = files}) do
-    if substitution?(script), do: {:ok, files}, else: :error
+  defp sed_files({%{in_place: true, script: nil} = acc, [script | files]}),
+    do: sed_files({%{acc | script: script}, files})
+
+  # Every file is a path: an option after the script is refused, not guessed.
+  defp sed_files({%{in_place: true, script: script}, [_ | _] = files}) do
+    if one_substitution?(script) and not Enum.any?(files, &String.starts_with?(&1, "-")), do: {:ok, files}, else: :error
   end
 
-  defp sed_paths([], _acc), do: :error
+  defp sed_files(_parsed), do: :error
 
   # One `s` command with no flag that writes a file or runs a command (`w`, `e`).
-  defp substitution?(script),
+  defp one_substitution?(script),
     do: Regex.match?(~r/^s([^\w\s\\])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gIi0-9]*$/, script)
 
   # Shell words: plain ones without anything the shell would expand or interpret, or single-quoted.
@@ -283,31 +288,55 @@ defmodule Xeito.Decisions.Risk do
     end
   end
 
-  defp scan([], nil, cur, acc), do: {:ok, Enum.reverse([segment(cur) | acc])}
-  defp scan([], _quote, _cur, _acc), do: :unsafe
+  defp scan(chars, nil, cur, acc), do: plain(chars, cur, acc)
+  defp scan(chars, "'", cur, acc), do: single_quoted(chars, cur, acc)
+  defp scan(chars, "\"", cur, acc), do: double_quoted(chars, cur, acc)
+
+  defp plain([], cur, acc), do: {:ok, Enum.reverse([segment(cur) | acc])}
+  defp plain([quote | rest], cur, acc) when quote in ["'", "\""], do: scan(rest, quote, [quote | cur], acc)
+  defp plain(["\\", c | rest], cur, acc), do: plain(rest, [c, "\\" | cur], acc)
+
+  defp plain([c | rest] = chars, cur, acc) do
+    cond do
+      substitution_or_unsafe?(chars) -> :unsafe
+      operator = operator(chars) -> operate(operator, cur, acc)
+      true -> plain(rest, [c | cur], acc)
+    end
+  end
 
   # Inside single quotes nothing is special.
-  defp scan(["'" | rest], "'", cur, acc), do: scan(rest, nil, ["'" | cur], acc)
-  defp scan([c | rest], "'", cur, acc), do: scan(rest, "'", [c | cur], acc)
-  defp scan(["'" | rest], nil, cur, acc), do: scan(rest, "'", ["'" | cur], acc)
+  defp single_quoted([], _cur, _acc), do: :unsafe
+  defp single_quoted(["'" | rest], cur, acc), do: scan(rest, nil, ["'" | cur], acc)
+  defp single_quoted([c | rest], cur, acc), do: single_quoted(rest, [c | cur], acc)
 
-  # Substitution runs a command, also inside double quotes.
-  defp scan(["`" | _], _quote, _cur, _acc), do: :unsafe
-  defp scan(["$", "(" | _], _quote, _cur, _acc), do: :unsafe
-  defp scan(["\\", c | rest], quote, cur, acc), do: scan(rest, quote, [c, "\\" | cur], acc)
-  defp scan(["\"" | rest], "\"", cur, acc), do: scan(rest, nil, ["\"" | cur], acc)
-  defp scan([c | rest], "\"", cur, acc), do: scan(rest, "\"", [c | cur], acc)
-  defp scan(["\"" | rest], nil, cur, acc), do: scan(rest, "\"", ["\"" | cur], acc)
+  # Inside double quotes a backslash escapes, and substitution still runs a command.
+  defp double_quoted([], _cur, _acc), do: :unsafe
+  defp double_quoted(["\"" | rest], cur, acc), do: scan(rest, nil, ["\"" | cur], acc)
+  defp double_quoted(["\\", c | rest], cur, acc), do: double_quoted(rest, [c, "\\" | cur], acc)
 
-  # Unquoted operators.
-  defp scan(["&", "&" | rest], nil, cur, acc), do: split(rest, cur, acc)
-  defp scan(["|", "|" | rest], nil, cur, acc), do: split(rest, cur, acc)
-  defp scan([op | rest], nil, cur, acc) when op in ["|", ";", "\n"], do: split(rest, cur, acc)
-  defp scan(["&", ">" | rest], nil, cur, acc), do: redirect(rest, cur, acc)
-  defp scan(["&" | _], nil, _cur, _acc), do: :unsafe
-  defp scan([">" | rest], nil, cur, acc), do: redirect(rest, cur, acc)
-  defp scan(["<", c | _], nil, _cur, _acc) when c in ["(", "<"], do: :unsafe
-  defp scan([c | rest], nil, cur, acc), do: scan(rest, nil, [c | cur], acc)
+  defp double_quoted([c | rest] = chars, cur, acc),
+    do: if(substitution?(chars), do: :unsafe, else: double_quoted(rest, [c | cur], acc))
+
+  # Command and process substitution, heredocs, and background jobs.
+  defp substitution_or_unsafe?(chars), do: substitution?(chars) or unsafe_operator?(chars)
+
+  defp substitution?(["`" | _]), do: true
+  defp substitution?(["$", "(" | _]), do: true
+  defp substitution?(_chars), do: false
+
+  defp unsafe_operator?(["<", c | _]) when c in ["(", "<"], do: true
+  defp unsafe_operator?(["&" | rest]), do: not match?([c | _] when c in ["&", ">"], rest)
+  defp unsafe_operator?(_chars), do: false
+
+  # Unquoted operators: `&&`, `||`, `|`, `;` and newlines separate commands; `&>` and `>` redirect.
+  defp operator([op, op | rest]) when op in ["&", "|"], do: {:split, rest}
+  defp operator([op | rest]) when op in ["|", ";", "\n"], do: {:split, rest}
+  defp operator(["&", ">" | rest]), do: {:redirect, rest}
+  defp operator([">" | rest]), do: {:redirect, rest}
+  defp operator(_chars), do: nil
+
+  defp operate({:split, rest}, cur, acc), do: split(rest, cur, acc)
+  defp operate({:redirect, rest}, cur, acc), do: redirect(rest, cur, acc)
 
   defp split(rest, cur, acc), do: scan(rest, nil, [], [segment(cur) | acc])
 

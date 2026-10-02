@@ -115,26 +115,32 @@ defmodule Xeito.Chat do
   end
 
   defp chunk(chunk, acc, on_delta) do
-    message = chunk["message"] || %{}
-    text = message["content"] || ""
+    {text, calls} = parts(chunk["message"] || %{})
     if text != "", do: on_delta.(text)
-
-    calls =
-      for %{"function" => f} <- message["tool_calls"] || [],
-          do: %{name: f["name"], arguments: arguments(f["arguments"])}
-
-    content = if text == "", do: acc.content, else: [text | acc.content]
-    final = if chunk["done"], do: chunk, else: acc.final
-    first = acc.first_ms || first_ms(acc.started, text, calls)
 
     %{
       acc
-      | content: content,
+      | content: add_text(acc.content, text),
         tool_calls: Enum.reverse(calls, acc.tool_calls),
-        final: final,
-        first_ms: first
+        final: final(chunk, acc.final),
+        first_ms: acc.first_ms || first_ms(acc.started, text, calls)
     }
   end
+
+  # A message's text and tool calls.
+  defp parts(message) do
+    calls =
+      for %{"function" => f} <- message["tool_calls"] || [], do: %{name: f["name"], arguments: arguments(f["arguments"])}
+
+    {message["content"] || "", calls}
+  end
+
+  defp add_text(content, ""), do: content
+  defp add_text(content, text), do: [text | content]
+
+  # The last chunk carries the token counts.
+  defp final(%{"done" => true} = chunk, _final), do: chunk
+  defp final(_chunk, final), do: final
 
   # Time to the first chunk that carries text or a tool call (what the user starts to see).
   defp first_ms(_started, "", []), do: nil
