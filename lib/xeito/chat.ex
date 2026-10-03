@@ -18,6 +18,7 @@ defmodule Xeito.Chat do
   statechart, not a long hidden monologue, carries the plan.
   """
 
+  alias Xeito.Backends
   alias Xeito.Tiers
   alias Xeito.Tiers.Queue
 
@@ -44,7 +45,7 @@ defmodule Xeito.Chat do
       tools: tools,
       stream: true,
       think: Keyword.get(cfg, :think, false),
-      options: Tiers.context_options(cfg, %{temperature: Keyword.get(cfg, :temperature, 0.2)}),
+      options: Backends.context_options(cfg, %{temperature: Keyword.get(cfg, :temperature, 0.2)}),
       keep_alive: Keyword.get(cfg, :keep_alive, "10m")
     }
 
@@ -59,7 +60,7 @@ defmodule Xeito.Chat do
 
     opts =
       [method: :post, url: "/api/chat", json: body, into: &into(&1, &2, on_delta)] ++
-        Tiers.req_options(Keyword.put_new(cfg, :timeout, 600_000))
+        Backends.req_options(Keyword.put_new(cfg, :timeout, 600_000))
 
     case Req.request(opts) do
       {:ok, %{status: 200}} ->

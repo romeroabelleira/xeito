@@ -1,20 +1,20 @@
-defmodule Xeito.Tiers.Remote do
+defmodule Xeito.Backends.Anthropic do
   @moduledoc """
-  Remote tier: the Anthropic Messages API over raw HTTP (there is no official Elixir SDK).
+  Anthropic backend: the Messages API over raw HTTP (there is no official Elixir SDK).
 
   * The model is `cfg[:model]`, default `claude-opus-5`. Output is constrained with
     `output_config.format` (`json_schema` with the decision's enum). The request runs at
     `effort: "low"`, which suits a classification.
   * Server-side refusal fallback is enabled (`fallbacks: "default"`, beta
     `server-side-fallback-2026-07-01`). A final `stop_reason: "refusal"` is an error, not a value.
-  * The API exposes no token log-probabilities, so this tier returns **no calibrated
+  * The API exposes no token log-probabilities, so this backend returns **no calibrated
     confidence**. Its result is marked `terminal: true`: the escalation accepts it without a
-    threshold, and only where `Xeito.Policy` allows the remote tier at all.
+    threshold, and only where `Xeito.Policy` allows an off-box tier at all.
   * Cost: `usage.input_tokens` / `output_tokens` priced with `cfg[:price_per_mtok]`
     (`{input, output}` USD per million tokens; default the published `claude-opus-5` rates).
   """
 
-  @behaviour Xeito.Tiers
+  @behaviour Xeito.Backends
 
   alias Xeito.Decision.Prompt
   alias Xeito.Decision.Type

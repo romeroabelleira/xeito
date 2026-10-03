@@ -318,12 +318,12 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
 
   The kind also exists in both places, local (Laya) and hosted (Jev).
 - **The small language model tier (`small`, llama-server) goes.** No small model passed the P2 gate ([bench 2](../bench/2-decisions.md)), so every decision type runs on `deciders [:large]`. If the P7 fine-tuning produces one that passes, it comes back as a tier.
-- **Remote means OpenRouter.** Both hosted language model tiers use the OpenRouter backend, and one key serves both. The direct Anthropic backend (`Xeito.Tiers.Remote`) is removed. In P3b it was kept for Anthropic's server-side refusal fallback; going through OpenRouter loses that, and a refusal becomes an error that escalates to the human.
+- **Remote means OpenRouter.** Both hosted language model tiers use the OpenRouter backend, and one key serves both. The direct Anthropic backend (`Xeito.Backends.Anthropic`) is removed. In P3b it was kept for Anthropic's server-side refusal fallback; going through OpenRouter loses that, and a refusal becomes an error that escalates to the human.
 - **Remote tiers are opt-in, and off for now.** A remote tier has no default model. It exists only once its model and key file are both set; unset, it is not in any ladder, makes no requests and shows as not configured in the monitor. This matches operation today: every decision type runs on `deciders [:large]`, and the default policy forbids off-box tiers. Since 2026-10-03 the operator does not want remote tiers in operation, and after the rename none is configured.
 - **Off-box is in the name.** Every `remote*` tier is off-box: under the policy's `remote:` gate, the locality rule (`:local_only` never leaves) and the spend budget. `Xeito.Policy` no longer keeps a separate list of off-box tiers.
 - **Ladder order:** `local_decision` → `remote_decision` → `local` → `remote` → `remote_frontier` → human. Policy and configuration drop tiers from it, as now.
 
-1. **Separate backends from tiers.** The backends are `Xeito.Backends.{SystemOne, Ollama, OpenRouter}`. A tier is a configuration slot that names a backend, a URL, a model, a key file and a context size. Nothing is renamed in this step.
+1. **Separate backends from tiers** (done 2026-10-03). The API a tier speaks is a backend in `Xeito.Backends`: `SystemOne`, `LlamaServer`, `Ollama` (decisions and model residency, formerly `Tiers.Large` and `Tiers.Ollama`), `OpenRouter` and `Anthropic`; the last two of these go in step 2. A tier's configuration may name its backend (`backend:`); without one, each tier keeps its old default, so nothing changes in operation. `Xeito.Tiers.run/4` dispatches by backend, an unknown backend is an error, and the monitor probes a tier through its backend's API. Nothing is renamed in this step.
 2. **Rename.** The rename covers:
    - the escalation machine (2.0.0, with states named after the tiers);
    - the `deciders` lists of the decision types;

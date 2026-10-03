@@ -127,6 +127,24 @@ defmodule Xeito.MonitorTest do
     assert %{configured: false} = models.remote
   end
 
+  test "a tier is probed through its backend's API; off-box backends are not probed" do
+    Req.Test.stub(:mon_backend, fn conn ->
+      "/api/ps" = conn.request_path
+      Req.Test.json(conn, %{"models" => []})
+    end)
+
+    models =
+      Models.read(
+        tiers: [
+          small: [url: "http://x.test", model: "m", backend: :ollama, plug: {Req.Test, :mon_backend}],
+          remote: [url: "http://unreachable.test", model: "r", backend: :openrouter]
+        ]
+      )
+
+    assert %{configured: true, model: "m", up: true, loaded: []} = models.small
+    assert models.remote == %{configured: true}
+  end
+
   test "the monitor polls only while someone watches" do
     name = :"mon_#{System.unique_integer([:positive])}"
     mon = start_supervised!({Monitor, name: name, interval: 20, models: [tiers: []]})

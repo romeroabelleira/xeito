@@ -1,12 +1,12 @@
-defmodule Xeito.Tiers.OpenRouter do
+defmodule Xeito.Backends.OpenRouter do
   @moduledoc """
-  OpenRouter tier: hosted **open-weight** models through OpenRouter's OpenAI-compatible
+  OpenRouter backend: hosted **open-weight** models through OpenRouter's OpenAI-compatible
   `POST /api/v1/chat/completions`, with token log-probabilities for a calibrated confidence.
 
   It fills the gap between the local large tier and the remote Claude tier: models too large
   for the local GPU, or the local large model's own family without a swap, answering with a
   confidence the escalation can threshold. Claude stays on the direct Anthropic tier
-  (`Xeito.Tiers.Remote`); through OpenRouter it would lose the server-side refusal fallback and
+  (`Xeito.Backends.Anthropic`); through OpenRouter it would lose the server-side refusal fallback and
   still return no logprobs (`docs/architecture/04-delegation.md#openrouter`).
 
   Request:
@@ -18,20 +18,20 @@ defmodule Xeito.Tiers.OpenRouter do
       `cfg[:providers]` pins providers (`provider.only`).
 
   Result: the confidence comes from the `top_logprobs` at the value's first token, as for the
-  local large tier (`Xeito.Tiers.Large.probabilities/3`). An endpoint that returns no logprobs
+  local large tier (`Xeito.Backends.Ollama.probabilities/3`). An endpoint that returns no logprobs
   yields a `terminal: true` result without confidence. A refusal is an error. Cost is
   OpenRouter's own `usage.cost` (USD), plus token counts; the model provenance names the
   provider endpoint that served the request (`openrouter:<model>@<provider>`).
 
-  Off-box: `Xeito.Policy` gates this tier exactly like `:remote`.
+  Off-box: `Xeito.Policy` gates the `:openrouter` tier exactly like `:remote`.
   """
 
-  @behaviour Xeito.Tiers
+  @behaviour Xeito.Backends
 
+  alias Xeito.Backends
+  alias Xeito.Backends.Ollama
   alias Xeito.Decision.Prompt
   alias Xeito.Decision.Type
-  alias Xeito.Tiers
-  alias Xeito.Tiers.Large
 
   @impl true
   def decide(type, input, cfg) do
@@ -45,7 +45,7 @@ defmodule Xeito.Tiers.OpenRouter do
         json: body(type, input, cfg),
         headers: headers()
       ] ++
-        Tiers.req_options(Keyword.put_new(cfg, :timeout, 60_000))
+        Backends.req_options(Keyword.put_new(cfg, :timeout, 60_000))
 
     case Req.request(opts) do
       {:ok, %{status: 200, body: %{"choices" => [choice | _]} = resp}} ->
@@ -106,9 +106,9 @@ defmodule Xeito.Tiers.OpenRouter do
 
   defp served_and_cost(resp, model), do: {served_by(resp["model"] || model, resp["provider"]), cost(resp["usage"] || %{})}
 
-  defp probabilities(type, content, logprobs), do: Large.probabilities(content, logprobs, type)
+  defp probabilities(type, content, logprobs), do: Ollama.probabilities(content, logprobs, type)
 
-  defp result(probs, type, model, started, cost), do: Tiers.result(type, probs, model, started, cost)
+  defp result(probs, type, model, started, cost), do: Backends.result(type, probs, model, started, cost)
 
   defp terminal(type, content, model, started, cost) do
     with {:ok, %{"value" => raw}} <- JSON.decode(content),
@@ -146,7 +146,7 @@ defmodule Xeito.Tiers.OpenRouter do
   """
   @spec key_info(keyword()) :: {:ok, map()} | {:error, term()}
   def key_info(cfg) do
-    case Req.request([method: :get, url: "/v1/key"] ++ Tiers.req_options(cfg)) do
+    case Req.request([method: :get, url: "/v1/key"] ++ Backends.req_options(cfg)) do
       {:ok, %{status: 200, body: %{"data" => data}}} -> {:ok, data}
       {:ok, %{status: status, body: body}} -> {:error, {:http, status, body}}
       {:error, reason} -> {:error, reason}

@@ -47,6 +47,8 @@ stateDiagram-v2
 | `human` | ask in the TUI; the run waits | configurable |
 | `verify` | the guard on the decision's output (file exists, command parses, …) | 1 s |
 
+A tier is a place on this ladder; the API it speaks is its *backend* (`Xeito.Backends`: System One, llama-server, Ollama, OpenRouter, Anthropic), named in the tier's configuration (P4d).
+
 ### As implemented (P3)
 
 `Xeito.Machines.Escalation` implements this as a regular machine: one child run per decision, logged in the same OCEL log with a `part_of` relation to the requesting run.
@@ -57,7 +59,7 @@ stateDiagram-v2
 
 ### OpenRouter
 
-`Xeito.Tiers.OpenRouter` (P3b) adds an **off-box tier with calibrated confidence**: hosted open-weight models through OpenRouter's OpenAI-compatible chat completions, with the decision's JSON Schema as `response_format` and `logprobs`/`top_logprobs`. Its confidence is computed exactly like the local large tier's, so it takes part in thresholds and cascades instead of being terminal.
+`Xeito.Backends.OpenRouter` (P3b) adds an **off-box tier with calibrated confidence**: hosted open-weight models through OpenRouter's OpenAI-compatible chat completions, with the decision's JSON Schema as `response_format` and `logprobs`/`top_logprobs`. Its confidence is computed exactly like the local large tier's, so it takes part in thresholds and cascades instead of being terminal.
 - **Routing restrictions in every request.** `provider.require_parameters: true` (only endpoints that honour both the schema and logprobs), `data_collection: "deny"`, and `zdr: true` (zero data retention) by default. Providers can be pinned. Both filters rest on OpenRouter's knowledge of provider policies; they narrow the exposure, they do not make the tier local.
 - **Same gate as `remote`.** `Xeito.Policy` treats `openrouter` and `remote` as *off-box tiers*: one `remote:` switch, the same locality rule (`:local_only` never leaves), the same per-run spend budget. `Risk` never reaches either, and `mix xeito.eval` skips them for types that forbid them.
 - **Why Claude stays on the direct tier.** OpenRouter does offer an Anthropic-compatible Messages endpoint and passes `output_config` (effort, JSON-schema format) through, but not Anthropic's server-side refusal fallback. Claude returns no logprobs either way, and under `zdr: true` Claude requests are routed away from Anthropic's own endpoints to cloud endpoints where structured output is not uniformly supported. The direct Anthropic tier keeps all of this simpler.

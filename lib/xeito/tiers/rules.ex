@@ -1,7 +1,7 @@
 defmodule Xeito.Tiers.Rules do
   @moduledoc "The rules tier: the decision type's deterministic rules, as a tier (confidence 1.0)."
 
-  @behaviour Xeito.Tiers
+  @behaviour Xeito.Backends
 
   alias Xeito.Decider
 

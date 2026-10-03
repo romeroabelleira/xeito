@@ -1,8 +1,8 @@
-defmodule Xeito.Tiers.Small do
+defmodule Xeito.Backends.LlamaServer do
   @moduledoc """
-  Small generative tier: a grammar-free *scoring* call against llama-server.
+  llama-server backend: a grammar-free *scoring* call, for a small generative model.
 
-  Instead of generating the answer, the tier renders the chat prompt (`/apply-template`),
+  Instead of generating the answer, the backend renders the chat prompt (`/apply-template`),
   prefills the assistant turn up to the value (`{"value": "`), and asks for exactly one token
   with `n_probs` alternatives (`/completion`, `n_predict: 1`). The top tokens are mapped to
   the options they start, and the mass is renormalised (`Xeito.Decision.Scoring`). If a token
@@ -12,12 +12,12 @@ defmodule Xeito.Tiers.Small do
   part of the prompt is cached by the server (`cache_prompt`).
   """
 
-  @behaviour Xeito.Tiers
+  @behaviour Xeito.Backends
 
+  alias Xeito.Backends
   alias Xeito.Decision.Prompt
   alias Xeito.Decision.Scoring
   alias Xeito.Decision.Type
-  alias Xeito.Tiers
 
   @prefill ~s({"value": ")
   @max_depth 4
@@ -30,7 +30,7 @@ defmodule Xeito.Tiers.Small do
          {:ok, probs} <- score(prompt <> @prefill, options(type), cfg, 0) do
       # One forward pass over the prompt; no generated tokens are kept (~4 bytes per token).
       cost = %{tokens_in: div(byte_size(prompt), 4), tokens_out: 0}
-      Tiers.result(type, probs, Keyword.get(cfg, :model, "small"), started, cost)
+      Backends.result(type, probs, Keyword.get(cfg, :model, "small"), started, cost)
     end
   end
 
@@ -121,7 +121,7 @@ defmodule Xeito.Tiers.Small do
   end
 
   defp post(path, body, cfg) do
-    case Req.request([method: :post, url: path, json: body] ++ Tiers.req_options(cfg)) do
+    case Req.request([method: :post, url: path, json: body] ++ Backends.req_options(cfg)) do
       {:ok, %{status: 200, body: body}} -> {:ok, body}
       {:ok, %{status: status, body: body}} -> {:error, {:http, status, body}}
       {:error, reason} -> {:error, reason}

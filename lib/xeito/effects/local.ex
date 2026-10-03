@@ -22,6 +22,7 @@ defmodule Xeito.Effects.Local do
 
   @behaviour Xeito.Effects.Runner
 
+  alias Xeito.Backends.Ollama
   alias Xeito.Budget
   alias Xeito.Chat
   alias Xeito.Decider
@@ -33,7 +34,6 @@ defmodule Xeito.Effects.Local do
   alias Xeito.Run
   alias Xeito.RunSupervisor
   alias Xeito.Tiers
-  alias Xeito.Tiers.Ollama
   alias Xeito.Tools
   alias Xeito.Tools.Shape
 

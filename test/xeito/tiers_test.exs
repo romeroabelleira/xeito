@@ -1,14 +1,16 @@
 defmodule Xeito.TiersTest do
   use ExUnit.Case, async: true
 
+  alias Xeito.Backends
+  alias Xeito.Backends.Anthropic
+  alias Xeito.Backends.LlamaServer
+  alias Xeito.Backends.Ollama
+  alias Xeito.Backends.OpenRouter
+  alias Xeito.Backends.SystemOne
   alias Xeito.Decider
   alias Xeito.Decision
   alias Xeito.Decisions.Triage
-  alias Xeito.Tiers.Large
-  alias Xeito.Tiers.OpenRouter
-  alias Xeito.Tiers.Remote
-  alias Xeito.Tiers.Small
-  alias Xeito.Tiers.SystemOne
+  alias Xeito.Tiers
 
   @input %{test: "CheckoutTest", output: "left: 107.0 right: 108.0", diff_stat: "lib/pricing.ex"}
 
@@ -49,7 +51,7 @@ defmodule Xeito.TiersTest do
              SystemOne.decide(type(), @input, cfg(:laya))
   end
 
-  test "Small prefills the value, scores one token and resolves ambiguous prefixes" do
+  test "LlamaServer prefills the value, scores one token and resolves ambiguous prefixes" do
     ambiguous = Decision.type!(Xeito.TestMachines.AmbiguousType)
 
     Req.Test.stub(:llama, fn conn ->
@@ -79,14 +81,14 @@ defmodule Xeito.TiersTest do
     end)
 
     assert {:ok, %{value: :test_bug, probabilities: probs}} =
-             Small.decide(ambiguous, %{output: "x"}, cfg(:llama))
+             LlamaServer.decide(ambiguous, %{output: "x"}, cfg(:llama))
 
     assert_in_delta probs[:test_bug], 0.6 * 0.75 / 0.9, 1.0e-9
     assert_in_delta probs[:test_flaky], 0.6 * 0.25 / 0.9, 1.0e-9
     assert_in_delta probs[:env_problem], 0.3 / 0.9, 1.0e-9
   end
 
-  test "Large reads logprobs at the value position" do
+  test "Ollama reads logprobs at the value position" do
     Req.Test.stub(:ollama, fn conn ->
       {req, conn} = body(conn)
       assert length(req["format"]["properties"]["value"]["enum"]) == 4
@@ -116,7 +118,7 @@ defmodule Xeito.TiersTest do
     end)
 
     assert {:ok, %{value: :code_bug, confidence: c, probabilities: probs}} =
-             Large.decide(type(), @input, cfg(:ollama, model: "big"))
+             Ollama.decide(type(), @input, cfg(:ollama, model: "big"))
 
     assert_in_delta c, 0.9 / 0.98, 1.0e-9
     assert_in_delta probs[:test_bug], 0.08 / 0.98, 1.0e-9
@@ -124,8 +126,8 @@ defmodule Xeito.TiersTest do
 
   describe "the large tier's context window" do
     test "num_ctx is added to the options only when a context is configured" do
-      assert Xeito.Tiers.context_options([context: 65_536], %{temperature: 0}) == %{temperature: 0, num_ctx: 65_536}
-      assert Xeito.Tiers.context_options([], %{temperature: 0}) == %{temperature: 0}
+      assert Backends.context_options([context: 65_536], %{temperature: 0}) == %{temperature: 0, num_ctx: 65_536}
+      assert Backends.context_options([], %{temperature: 0}) == %{temperature: 0}
     end
 
     test "a decision sends the configured context, so it shares the chat's loaded model" do
@@ -135,12 +137,12 @@ defmodule Xeito.TiersTest do
         Req.Test.json(conn, %{"message" => %{"content" => ~s({"value": "code_bug"})}, "logprobs" => []})
       end)
 
-      Large.decide(type(), @input, cfg(:ollama_ctx, model: "big", context: 65_536))
+      Ollama.decide(type(), @input, cfg(:ollama_ctx, model: "big", context: 65_536))
       assert_received {:options, %{"num_ctx" => 65_536, "temperature" => 0}}
     end
   end
 
-  test "Remote sends structured output with refusal fallback and prices usage" do
+  test "Anthropic sends structured output with refusal fallback and prices usage" do
     Req.Test.stub(:anthropic, fn conn ->
       {req, conn} = body(conn)
       assert conn.request_path == "/v1/messages"
@@ -168,12 +170,12 @@ defmodule Xeito.TiersTest do
     end)
 
     assert {:ok, %{value: :code_bug, confidence: nil, terminal: true, cost: cost}} =
-             Remote.decide(type(), @input, cfg(:anthropic))
+             Anthropic.decide(type(), @input, cfg(:anthropic))
 
     assert cost == %{tokens_in: 1_000, tokens_out: 100, usd: 0.0075}
   end
 
-  test "Remote treats a refusal as an error, not a value" do
+  test "Anthropic treats a refusal as an error, not a value" do
     Req.Test.stub(:anthropic_refusal, fn conn ->
       Req.Test.json(conn, %{
         "stop_reason" => "refusal",
@@ -183,7 +185,7 @@ defmodule Xeito.TiersTest do
     end)
 
     assert {:error, {:refusal, %{"category" => "cyber"}}} =
-             Remote.decide(type(), @input, cfg(:anthropic_refusal))
+             Anthropic.decide(type(), @input, cfg(:anthropic_refusal))
   end
 
   defp openai_logprobs do
@@ -270,6 +272,36 @@ defmodule Xeito.TiersTest do
              OpenRouter.decide(type(), @input, cfg(:openrouter_refusal, model: "some/model"))
   end
 
+  describe "a tier's backend" do
+    test "each tier has a default backend, and its configuration may name another" do
+      assert Tiers.backend(:system_one, []) == :system_one
+      assert Tiers.backend(:small, []) == :llama_server
+      assert Tiers.backend(:large, []) == :ollama
+      assert Tiers.backend(:openrouter, []) == :openrouter
+      assert Tiers.backend(:remote, []) == :anthropic
+      assert Tiers.backend(:remote, backend: :openrouter) == :openrouter
+    end
+
+    test "a tier speaks its backend's API" do
+      Req.Test.stub(:remote_via_openrouter, fn conn ->
+        assert conn.request_path == "/v1/chat/completions"
+
+        Req.Test.json(conn, %{
+          "model" => "m",
+          "choices" => [%{"message" => %{"content" => ~s({"value": "flaky"})}}],
+          "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 3, "cost" => 0.00001}
+        })
+      end)
+
+      assert {:ok, %{value: :flaky, model: "openrouter:m"}} =
+               Tiers.run(:remote, type(), @input, cfg(:remote_via_openrouter, backend: :openrouter, model: "m"))
+    end
+
+    test "an unknown backend is an error, not a crash" do
+      assert {:error, {:unknown_backend, :nope}} = Tiers.run(:remote, type(), @input, cfg(:unused, backend: :nope))
+    end
+  end
+
   describe "Decider" do
     test "a low-confidence tier falls through to the next; evidence keeps the attempt" do
       Req.Test.stub(:laya_low, fn conn ->
@@ -341,11 +373,11 @@ defmodule Xeito.TiersTest do
       cfg(stub, model: "m", retry: false)
     end
 
-    test "an HTTP error or a transport error is an error, for Large and System One" do
-      assert {:error, {:http, 500, _}} = Large.decide(type(), @input, failing(:large_500, {:status, 500}))
+    test "an HTTP error or a transport error is an error, for Ollama and System One" do
+      assert {:error, {:http, 500, _}} = Ollama.decide(type(), @input, failing(:large_500, {:status, 500}))
 
       assert {:error, %Req.TransportError{reason: :econnrefused}} =
-               Large.decide(type(), @input, failing(:large_down, :down))
+               Ollama.decide(type(), @input, failing(:large_down, :down))
 
       assert {:error, {:http, 503, _}} = SystemOne.decide(type(), @input, failing(:s1_503, {:status, 503}))
       assert {:error, %Req.TransportError{}} = SystemOne.decide(type(), @input, failing(:s1_down, :down))
@@ -365,13 +397,13 @@ defmodule Xeito.TiersTest do
                SystemOne.decide(type(), @input, cfg(:s1_choice))
     end
 
-    test "Large's probabilities: from the value's own tokens, from the answer alone, or none" do
+    test "Ollama's probabilities: from the value's own tokens, from the answer alone, or none" do
       token = fn t, lp -> %{"token" => t, "logprob" => lp, "top_logprobs" => []} end
       prefix = [token.(~s({"), 0.0), token.("value", 0.0), token.(~s(":), 0.0), token.(~s( "), 0.0)]
 
       # No usable alternatives at the value: the chosen value's own probability.
       own =
-        Large.probabilities(
+        Ollama.probabilities(
           ~s({"value": "flaky"}),
           prefix ++ [token.("fl", -0.1), token.("aky", -0.2), token.(~s("}), 0.0)],
           type()
@@ -380,12 +412,12 @@ defmodule Xeito.TiersTest do
       assert_in_delta own["flaky"], :math.exp(-0.3), 1.0e-9
 
       # No logprobs at all: the answer counts as certain.
-      assert Large.probabilities(~s({"value": "flaky"}), [], type()) == %{"flaky" => 1.0}
+      assert Ollama.probabilities(~s({"value": "flaky"}), [], type()) == %{"flaky" => 1.0}
 
       # Not JSON, or JSON without a value: no probabilities.
-      assert Large.probabilities("not json", prefix, type()) == %{}
-      assert Large.probabilities(~s({"other": 1}), prefix, type()) == %{}
-      assert Large.probabilities("not json", [], type()) == %{}
+      assert Ollama.probabilities("not json", prefix, type()) == %{}
+      assert Ollama.probabilities(~s({"other": 1}), prefix, type()) == %{}
+      assert Ollama.probabilities("not json", [], type()) == %{}
     end
   end
 end
