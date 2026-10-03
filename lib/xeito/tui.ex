@@ -3,13 +3,13 @@ defmodule Xeito.Tui do
   The terminal UI: a client of `xeitod` in the Elm architecture of TermUI
   (`docs/architecture/07-harness-frontend.md`, `docs/architecture/08-tech-stack.md#the-tui-the-weakest-link`).
 
-      ┌ xeito · ~/src/shop · FixFailingTest ─────────────────────────────┐
+      ┌ xeito · FixFailingTest ───────────────────────────────────────────┐
       │ transcript (Xeito.Client.Render): intent, decisions, tool calls,  │
       │ streamed model output                                             │
       │ ───────────────────────────────────────────────────────────────── │
       │ > prompt                                                          │
       │ ───────────────────────────────────────────────────────────────── │
-      │ state verifying · 14.2 s · 3 decisions · review: y/n              │
+      │ ◆ state verifying · 14.2 s · review: y/n        ~/src/shop (main) │
       └───────────────────────────────────────────────────────────────────┘
 
   A toggleable **status bar** (Ctrl-T, or `/statusbar`; segments with `/statusbar show|hide`,
@@ -18,6 +18,11 @@ defmodule Xeito.Tui do
   queues (`Xeito.Client.StatusBar`). While it is hidden, the daemon does not poll for it.
 
   `/quit` (or `/exit`, Ctrl-D, Ctrl-C) closes the TUI; the session keeps running in the daemon.
+
+  The status line starts with a marker: `○` idle, a spinner while the session works, `◆` (on
+  a highlighted line) when it waits for you, `✗` without a daemon. Like the cursor, the
+  spinner's timer runs only while there is work. At its right end, where commands run: the
+  workspace, shortened from the left, and its git branch.
 
   The prompt's cursor blinks like an editor's: solid while you type, blinking in between, and
   solid again (with no timer running) after 10 s without a key.
@@ -48,6 +53,11 @@ defmodule Xeito.Tui do
   # an idle TUI stops waking up.
   @blink_ms 530
   @blink_for_ms 10_000
+  # The working marker: a spinner, one frame per tick while the session works.
+  @spin_ms 100
+  @frames ~w(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+  # The workspace in the status line is shortened from the left to about this many characters.
+  @place_max 30
   @placeholder "ask, or /help"
 
   # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
@@ -119,6 +129,10 @@ defmodule Xeito.Tui do
       # A Risk decision waiting for the line it marks: `{colour, confidence in superscript}`.
       marker: nil,
       blink: 0,
+      # The spinner's frame, the generation of its timer, and whether a timer is running.
+      frame: 0,
+      spin_gen: 0,
+      spinning: false,
       blink_until: 0,
       # Earlier prompts for Up/Down, newest first; the one shown (-1: the line being typed,
       # kept as the draft meanwhile).
@@ -207,13 +221,17 @@ defmodule Xeito.Tui do
   def handle_info({:xeito_event, %{"event" => "workspace", "attrs" => ws}}, state),
     do: {%{state | workspace: ws, workspace_at: now()}, []}
 
-  def handle_info({:xeito_event, event}, state), do: {apply_event(state, event), []}
+  def handle_info({:xeito_event, event}, state), do: {state |> apply_event(event) |> spin(), []}
 
   def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state), do: {append(state, "✗ #{error}\n"), []}
 
-  # Only the timer of the latest key counts; older ones are stale.
-  def handle_info({:blink, gen}, %{blink: gen} = state), do: {blink(gen, state), []}
+  # The cursor's and the spinner's timers. Only the latest timer of each counts; older ones are stale.
+  def handle_info({timer, gen}, state) when timer in [:blink, :spin], do: {tick(timer, gen, state), []}
   def handle_info(_msg, state), do: {state, []}
+
+  defp tick(:blink, gen, %{blink: gen} = state), do: blink(gen, state)
+  defp tick(:spin, gen, %{spin_gen: gen} = state), do: spin_tick(gen, state)
+  defp tick(_timer, _gen, state), do: state
 
   defp on_monitor(snapshot, state) do
     if state.workspace_at == nil or now() - state.workspace_at > 10_000,
@@ -221,6 +239,31 @@ defmodule Xeito.Tui do
 
     %{state | monitor: snapshot, workspace_at: state.workspace_at || now()}
   end
+
+  # The spinner's timer starts when work starts and stops itself at the first tick after work
+  # stops (idle, or waiting for you), so an idle TUI does not wake up.
+  defp spin(%{spinning: false} = state) do
+    if working?(state) do
+      gen = state.spin_gen + 1
+      Process.send_after(self(), {:spin, gen}, @spin_ms)
+      %{state | spinning: true, spin_gen: gen}
+    else
+      state
+    end
+  end
+
+  defp spin(state), do: state
+
+  defp spin_tick(gen, state) do
+    if working?(state) do
+      Process.send_after(self(), {:spin, gen}, @spin_ms)
+      %{state | frame: state.frame + 1}
+    else
+      %{state | spinning: false}
+    end
+  end
+
+  defp working?(state), do: state.leaf not in ["idle", "disconnected"] and not state.waiting and not state.paused
 
   # The cursor blinks until `blink_until`, then stays solid with no timer running.
   defp blink(gen, state) do
@@ -573,7 +616,7 @@ defmodule Xeito.Tui do
 
     stack(:vertical, [
       text(
-        pad(" xeito · #{state.cwd} · #{state.machine || "ready"}", state.width),
+        pad(" xeito · #{state.machine || "ready"}", state.width),
         header_style()
       ),
       stack(:vertical, Enum.map(visible(state, body_height), &line_node/1)),
@@ -584,7 +627,7 @@ defmodule Xeito.Tui do
       ]),
       border(state.width),
       stack(:vertical, Enum.map(bar, &text(pad(" " <> &1, state.width), bar_style()))),
-      text(pad(status_line(state), state.width), status_style(state))
+      text(status_line(state, state.width), status_style(state))
     ])
   end
 
@@ -650,8 +693,28 @@ defmodule Xeito.Tui do
     shown ++ List.duplicate("", height - length(shown))
   end
 
-  @doc false
-  def status_line(state) do
+  @doc """
+  The status line, `width` columns: the working marker, the run's state, and at the right end
+  the workspace (shortened from the left) with its git branch. When it does not all fit, the
+  state gives way.
+  """
+  def status_line(state, width) do
+    right = " #{place(state)} "
+    left = " #{marker(state)} " <> run_status(state)
+    fit(left, max(width - String.length(right), 1)) <> right
+  end
+
+  defp fit(text, room) do
+    if String.length(text) <= room, do: String.pad_trailing(text, room), else: String.slice(text, 0, room - 1) <> "…"
+  end
+
+  # Idle, working (the spinner), waiting for you (a review or a paused step), or disconnected.
+  defp marker(%{leaf: "disconnected"}), do: "✗"
+  defp marker(%{waiting: waiting, paused: paused}) when waiting or paused, do: "◆"
+  defp marker(%{leaf: "idle"}), do: "○"
+  defp marker(state), do: Enum.at(@frames, rem(state.frame, length(@frames)))
+
+  defp run_status(state) do
     elapsed =
       if state.started,
         do: " · #{Float.round((now() - state.started) / 1000, 1)} s",
@@ -661,7 +724,39 @@ defmodule Xeito.Tui do
     tier = if state.tier, do: " · tier #{state.tier}", else: ""
     cost = if state.usd > 0, do: " · $#{Float.round(state.usd, 4)}", else: ""
 
-    " state #{state.leaf}#{elapsed}#{tier} · #{state.decisions} decisions#{cost}#{waiting_for(state)}#{scroll}"
+    "state #{state.leaf}#{elapsed}#{tier} · #{state.decisions} decisions#{cost}#{waiting_for(state)}#{scroll}"
+  end
+
+  # Where commands run: the workspace, with `~` for the home directory, and its git branch.
+  defp place(state) do
+    branch = get_in(state.workspace || %{}, ["git", "branch"])
+    short_path(state.cwd) <> if(branch, do: " (#{branch})", else: "")
+  end
+
+  defp short_path(path) do
+    home = System.user_home() || "/nonexistent"
+
+    path =
+      if path == home or String.starts_with?(path, home <> "/"),
+        do: "~" <> String.replace_prefix(path, home, ""),
+        else: path
+
+    if String.length(path) <= @place_max, do: path, else: shorten(path)
+  end
+
+  # The last directories that fit, after `…/` (or `~/…/` under the home directory).
+  defp shorten(path) do
+    lead = if String.starts_with?(path, "~/"), do: "~/…/", else: "…/"
+
+    path
+    |> Path.split()
+    |> Enum.reverse()
+    |> Enum.reduce_while([], fn part, kept ->
+      if kept == [] or String.length(lead <> Path.join([part | kept])) <= @place_max,
+        do: {:cont, [part | kept]},
+        else: {:halt, kept}
+    end)
+    |> then(&(lead <> Path.join(&1)))
   end
 
   defp waiting_for(%{waiting: true}), do: " · review: y / n"
@@ -691,7 +786,7 @@ defmodule Xeito.Tui do
   defp header_style, do: Style.new(attrs: [:reverse])
   defp bar_style, do: Style.new(fg: :cyan)
 
-  defp status_style(%{waiting: true}), do: Style.new(fg: :black, bg: :yellow)
+  defp status_style(%{waiting: waiting, paused: paused}) when waiting or paused, do: Style.new(fg: :black, bg: :yellow)
   defp status_style(_state), do: Style.new(attrs: [:dim])
 
   defp short(nil), do: nil

@@ -503,7 +503,7 @@ defmodule Xeito.TuiTest do
 
       assert %{machine: "Chat", leaf: "thinking", decisions: 2, tier: "small", usd: 0.25} = state
       assert is_integer(state.started)
-      assert Tui.status_line(state) =~ ~r/^ state thinking · \d+\.\d s · tier small · 2 decisions · \$0\.25$/
+      assert Tui.status_line(state, 80) =~ ~r/^ ⠋ state thinking · \d+\.\d s · tier small · 2 decisions · \$0\.25 +\/w $/
     end
 
     test "intent, a review, a pause, the end of a turn and a lost daemon" do
@@ -511,13 +511,13 @@ defmodule Xeito.TuiTest do
       assert %{leaf: "intent", decisions: 1, tier: "rule"} = state
 
       waiting = Tui.apply_event(state, event("human_needed", %{}))
-      assert Tui.status_line(waiting) =~ "review: y / n"
+      assert Tui.status_line(waiting, 80) =~ "review: y / n"
       paused = Tui.apply_event(state, event("paused", %{}))
-      assert Tui.status_line(%{paused | scroll: 3}) =~ "paused: Enter steps · scrolled"
+      assert Tui.status_line(%{paused | scroll: 3}, 80) =~ "paused: Enter steps · scrolled"
 
       done = Tui.apply_event(%{waiting | paused: true}, event("turn_finished", %{}))
       assert %{leaf: "idle", waiting: false, paused: false, started: nil} = done
-      assert Tui.status_line(done) == " state idle · tier rule · 1 decisions"
+      assert Tui.status_line(done, 80) =~ ~r/^ ○ state idle · tier rule · 1 decisions +\/w $/
       assert Tui.apply_event(done, event("disconnected", %{})).leaf == "disconnected"
     end
   end
@@ -566,7 +566,77 @@ defmodule Xeito.TuiTest do
     test "the status line stays at the bottom, below the border, and shows a pending review" do
       rows = %{tui(status_bar: false) | waiting: true} |> Tui.view() |> screen()
       assert border?(Enum.at(rows, -2))
-      assert List.last(rows) =~ ~r/^ state idle .* review: y \/ n/
+      assert List.last(rows) =~ ~r/^ ◆ state idle .* review: y \/ n/
+    end
+
+    test "the header names the machine; where commands run is in the status line" do
+      [header | _] = %{tui(status_bar: false) | machine: "Chat"} |> Tui.view() |> screen()
+      assert String.trim_trailing(header) == " xeito · Chat"
+    end
+  end
+
+  describe "the status line: a working marker, and where commands run" do
+    defp marker(state), do: state |> Tui.status_line(80) |> String.slice(1, 1)
+    defp working(state \\ tui()), do: Tui.apply_event(state, event("state_entered", %{"state" => "thinking"}))
+
+    test "idle is a still circle, waiting for you a still diamond, a lost daemon a cross" do
+      assert marker(tui()) == "○"
+      assert marker(Tui.apply_event(working(), event("human_needed", %{}))) == "◆"
+      assert marker(Tui.apply_event(working(), event("paused", %{}))) == "◆"
+      assert marker(Tui.apply_event(tui(), event("disconnected", %{}))) == "✗"
+    end
+
+    test "working is a spinner: each tick of its timer shows the next frame, around and around" do
+      state = working()
+      assert marker(state) == "⠋"
+
+      frames =
+        state
+        |> Stream.iterate(fn s -> s |> then(&Tui.handle_info({:spin, &1.spin_gen}, &1)) |> elem(0) end)
+        |> Enum.take(11)
+        |> Enum.map(&marker/1)
+
+      assert frames == ~w(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ ⠋)
+    end
+
+    test "the timer starts when work starts and stops when it stops, so an idle TUI sleeps" do
+      {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "thinking"})}, tui())
+      assert_receive {:spin, gen}, 500
+
+      # More events while working start no second timer.
+      {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "executing"})}, state)
+      refute_receive {:spin, _}, 300
+
+      {state, []} = Tui.handle_info({:spin, gen}, state)
+      assert_receive {:spin, ^gen}, 500
+
+      {done, []} = Tui.handle_info({:xeito_event, event("turn_finished", %{})}, state)
+      {done, []} = Tui.handle_info({:spin, gen}, done)
+      refute_receive {:spin, _}, 300
+      assert marker(done) == "○"
+
+      # Waiting for you stops it too; a stale tick changes nothing.
+      {waiting, []} = Tui.handle_info({:xeito_event, event("human_needed", %{})}, working())
+      assert {:spin, waiting.spin_gen} |> Tui.handle_info(waiting) |> elem(0) |> marker() == "◆"
+      assert Tui.handle_info({:spin, -1}, state) == {state, []}
+    end
+
+    test "the workspace, shortened from the left, and its git branch, at the right end" do
+      home = System.user_home!()
+      state = %{tui(cwd: Path.join(home, "Development/xeito")) | workspace: %{"git" => %{"branch" => "main"}}}
+      line = Tui.status_line(state, 80)
+      assert String.length(line) == 80
+      assert String.ends_with?(line, " ~/Development/xeito (main) ")
+
+      deep = %{tui(cwd: "/very/long/path/with/many/levels/and/a/project") | workspace: %{"git" => nil}}
+      assert String.ends_with?(Tui.status_line(deep, 80), " …/many/levels/and/a/project ")
+    end
+
+    test "on a narrow screen the state gives way, the workspace stays" do
+      state = %{tui(cwd: "/srv/app") | workspace: %{"git" => %{"branch" => "dev"}}}
+      line = Tui.status_line(state, 30)
+      assert line == " ○ state idle… /srv/app (dev) "
+      assert String.length(line) == 30
     end
   end
 

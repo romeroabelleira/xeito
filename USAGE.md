@@ -92,7 +92,7 @@ The screen has four parts:
 - a header with the project and the active machine
 - the transcript
 - the prompt line, between two thin lines
-- a status line with state, elapsed time, tier, number of decisions and spend
+- a status line with a marker (`○` idle, a spinner while working, `◆` highlighted when it waits for you), state, elapsed time, tier, number of decisions and spend, and at its right end the workspace (shortened, `~/…/app`) and its git branch
 
 Type a request and press Enter:
 
