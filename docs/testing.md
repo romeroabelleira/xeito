@@ -9,7 +9,7 @@ mix deps.get
 mix ci
 ```
 
-`mix ci` is the whole check, and CI runs exactly the same command:
+`mix ci` is the whole check, and CI runs the same command. On a push to `main`, CI leaves out mutation testing (`XEITO_MUTATE=off`), since it ran here before the commit; it runs nightly over every source (`XEITO_MUTATE=all`, also for a manual run here) and on pull requests:
 
 | Step | What it catches |
 |---|---|

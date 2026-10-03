@@ -123,6 +123,16 @@ defmodule Xeito.Mutate do
   end
 
   @doc """
+  The mode `XEITO_MUTATE` selects: `:off`, `:all` (every configured source), or, unset,
+  `:changed` (an `only_when_changed` source only when it changed; see `select/3`).
+  """
+  @spec mode(String.t() | nil) :: :off | :all | :changed
+  def mode(value) when value in [nil, ""], do: :changed
+  def mode("off"), do: :off
+  def mode("all"), do: :all
+  def mode(other), do: raise(ArgumentError, ~s(XEITO_MUTATE must be "off" or "all", or unset; not #{inspect(other)}))
+
+  @doc """
   Splits a plan into what to mutate and the sources skipped: an entry with
   `only_when_changed: true` is mutated only when it or one of its tests is among `changed`
   (paths), or when what changed is unknown (`:all`).

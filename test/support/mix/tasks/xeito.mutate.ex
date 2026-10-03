@@ -12,7 +12,8 @@ defmodule Mix.Tasks.Xeito.Mutate do
   section (`section: "guards"`, the lines under a `# --- guards ---` comment), and one marked
   `only_when_changed: true` is mutated only when it or its tests differ from
   `$XEITO_MUTATE_BASE` (default `HEAD`, so uncommitted changes; CI sets the commit before the
-  push), or when that cannot be told. A given path uses `--test`, else its
+  push), or when that cannot be told. `XEITO_MUTATE=all` mutates every configured source, and
+  `XEITO_MUTATE=off` none (CI's pushes to `main`, which run it nightly instead). A given path uses `--test`, else its
   tests from that file, else the files under `test/` that use its modules. The tests must pass on
   the real code first. `--lines` mutates only those lines (repeatable); `--timeout` is the
   per-test timeout in ms (default 5000; a mutant that loops is killed by it).
@@ -29,10 +30,17 @@ defmodule Mix.Tasks.Xeito.Mutate do
 
   @impl true
   def run(args) do
+    case Mutate.mode(System.get_env("XEITO_MUTATE")) do
+      :off -> Mix.shell().info("mutation testing is off (XEITO_MUTATE=off)")
+      mode -> mutate(args, mode)
+    end
+  end
+
+  defp mutate(args, mode) do
     {opts, paths, _} = OptionParser.parse(args, strict: @switches)
     plan = Mutate.plan(paths, Keyword.get_values(opts, :test), config())
     if plan == [], do: Mix.raise("nothing to mutate: give a path, or list sources in #{@config}")
-    plan = if paths == [], do: selected(plan), else: plan
+    plan = if paths == [], do: selected(plan, mode), else: plan
 
     Mix.Task.run("app.start")
     start_ex_unit(opts)
@@ -42,7 +50,9 @@ defmodule Mix.Tasks.Xeito.Mutate do
     if survived != [], do: Mix.raise("#{length(survived)} mutants survived")
   end
 
-  defp selected(plan) do
+  defp selected(plan, :all), do: plan
+
+  defp selected(plan, :changed) do
     base = System.get_env("XEITO_MUTATE_BASE", "HEAD")
     {run, skipped} = Mutate.select(plan, config(), changed(base))
     Enum.each(skipped, &Mix.shell().info("#{&1}: unchanged since #{base}, not mutated (only_when_changed)"))

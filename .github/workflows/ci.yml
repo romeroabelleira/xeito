@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Mutation testing of every source, nightly; pushes to main skip it (see the mix ci step).
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# A newer run of the same kind on the same branch replaces one still running. Grouped by event,
+# so a push never cancels the nightly run.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -37,8 +47,10 @@ jobs:
 
       - run: mix deps.get
       # Includes Dialyzer, so a commit gated on `mix ci` locally is checked the same way.
-      # Sources marked only_when_changed in test/mutate.exs are mutated when they changed since
-      # the commit before the push (or the pull request's base); unknown means all of them.
+      # Mutation testing: off for pushes to main (it runs before each commit locally, and nightly
+      # here), every source nightly, and for pull requests the sources that changed since their
+      # base (only_when_changed in test/mutate.exs); unknown means all of them.
       - run: mix ci
         env:
+          XEITO_MUTATE: ${{ github.event_name == 'push' && 'off' || github.event_name == 'schedule' && 'all' || '' }}
           XEITO_MUTATE_BASE: ${{ github.event.before || github.event.pull_request.base.sha }}

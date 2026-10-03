@@ -8,6 +8,14 @@ defmodule Xeito.MutateTest do
 
   defp code(mutant), do: Macro.to_string(mutant.ast)
 
+  test "mode/1: XEITO_MUTATE turns mutation off, mutates everything, or (unset) what changed" do
+    assert Mutate.mode(nil) == :changed
+    assert Mutate.mode("") == :changed
+    assert Mutate.mode("off") == :off
+    assert Mutate.mode("all") == :all
+    assert_raise ArgumentError, ~r/XEITO_MUTATE must be "off" or "all"/, fn -> Mutate.mode("sometimes") end
+  end
+
   describe "select/3: sources mutated only when they or their tests changed" do
     @config %{
       "a.ex" => ["a_test.exs"],
