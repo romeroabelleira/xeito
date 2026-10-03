@@ -372,6 +372,7 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
 2. Build the views in the order given in [06](architecture/06-observability.md#views-web-inspector): timeline → machine view → step debugger → decision table → mining dashboard.
 3. Relabelling a decision in the UI writes to the eval set, closing the labelling loop.
 4. Bind the inspector to `127.0.0.1` only. Remote access goes through an SSH tunnel or a private VPN.
+5. **Browser tests** (noted 2026-10-03). Test the views with the chosen framework's own tools (`Phoenix.LiveViewTest`, or Hologram's). Anthropic's `webapp-testing` skill (Playwright in Python, Apache-2.0) was considered; adopt it under the skill convention ([.agents/skills/README.md](../.agents/skills/README.md)) only if an end-to-end check in a real browser is needed that those tools cannot do.
 
 **Exit:** a run started in the TUI can be watched, paused, stepped and replayed from the browser. A decision can be relabelled and shows up in the next `mix xeito.eval`.
 
@@ -420,6 +421,7 @@ Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 2. **`pi-xeito`**, the original P4.7 ([07](architecture/07-harness-frontend.md#pi-bridge-optional)): a small pi extension that registers `/xeito <machine>` and an `xeito_decide` tool, talking to the daemon's JSON Lines socket. It would be the only TypeScript in the project.
 3. **Survey other agent harnesses** worth bridging, for example Odysseus AI and Jensen (to be researched; neither is evaluated yet). For each, note its extension or RPC surface, and whether its loop can call out to typed decisions or delegate to a machine.
 4. Build the bridges the survey justifies. Each is a thin client of `Xeito.Api`, not a new code path in the daemon.
+5. **A skill for building MCP tools** (noted 2026-10-03), before the MCP server: vendor Anthropic's `mcp-builder` skill (Apache-2.0) under the skill convention ([.agents/skills/README.md](../.agents/skills/README.md)). Keep its MCP design guide (tool naming, pagination, actionable errors) and its evaluation method (ten realistic questions answered through the tools); drop its Node and Python implementation guides and scripts, and point implementation at Elixir and `mix ci`. Test it with and without the skill, as `skill-authoring` describes.
 
 **Exit:** at least one bridge drives a Xeito machine end to end from the other harness, and the run is logged like any other. The MCP server passes the protocol's own conformance checks (its inspector tool), and a decision is requested from another agent through it.
 

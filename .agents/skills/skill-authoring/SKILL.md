@@ -37,8 +37,19 @@ Too narrow and the skill is never loaded; too broad and it crowds out better one
 5. Write `ATTRIBUTION.md`: source, path, upstream commit (full hash), date, and `## Changes` with each change and its reason. Add the one-line notice at the top of a changed `SKILL.md`.
 6. If most of it would have to change, write a skill of your own instead.
 
+## Test it against not having it
+
+A skill earns its place only if agents do better with it than without it, and only if it is loaded when it should be. Check both before adding one, and again after a large change:
+
+1. Write down 3–5 realistic requests the skill is for, and 1–2 near misses that a neighbouring skill or no skill should handle. For each request, write what a good result must contain *before* running anything, so the result cannot bend the expectation.
+2. Run every request twice, each in a fresh session: once with the skill, once without it (a scratch copy of the workspace without the skill's directory). Compare both results against the expectations.
+3. Check triggering with plain requests, not forced ones: the skill should be loaded for the requests it is for and not for the near misses. A miss in either direction is a description problem.
+4. If the session without the skill does as well, drop the skill, or cut it down to the part that made the difference.
+
+Keep the requests and expectations with the change that adds the skill (in the commit message or the plan), so the next change to the skill can rerun them. The method follows the evaluation loop of Anthropic's `skill-creator` skill (Apache-2.0), without its scripts.
+
 ## Before you finish
 
 - `mix test test/xeito/repo_skills_test.exs` checks loading, naming, the description, tool-specific commands and attribution. `mix ci` runs it too.
-- Try the skill on the requests it is for. In xeito, `/skill:<name> <request>` forces it. A plain request that should trigger it shows whether the description works: the transcript shows when the skill is loaded.
+- Rerun the requests from the test above. In xeito, `/skill:<name> <request>` forces a skill; the transcript shows when a plain request loaded it.
 - Add the skill to the table in `.agents/skills/README.md` and to the list in `AGENTS.md`.
