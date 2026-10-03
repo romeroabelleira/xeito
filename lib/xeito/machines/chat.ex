@@ -39,8 +39,9 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.8.0"
+  use Xeito.Machine, version: "0.9.0"
 
+  alias Xeito.Chat.Window
   alias Xeito.Effect
   alias Xeito.Tools
   alias Xeito.Tools.Shape
@@ -52,6 +53,10 @@ defmodule Xeito.Machines.Chat do
   # that runs out of steps with code that does not build gets to repair it (bench 4 §8).
   @fix_budget 4
   @output_tail 4_000
+  # The context window when the input names none (`:context`, the large tier's `num_ctx`), and
+  # the part of it kept free for the model's reply.
+  @default_context 32_768
+  @output_reserve 8_192
 
   initial :thinking
 
@@ -145,13 +150,24 @@ defmodule Xeito.Machines.Chat do
   def default_system, do: @default_system
 
   @doc false
-  def ask_model(ctx) do
-    [(messages(ctx) ++ steer_messages(ctx)) |> elide() |> Effect.chat(tools: Tools.names_for(ctx))]
-  end
+  def ask_model(ctx), do: [request(ctx, messages(ctx) ++ steer_messages(ctx), tools: Tools.names_for(ctx))]
 
   @doc false
-  def ask_wrap_up(ctx) do
-    [(messages(ctx) ++ steer_messages(ctx) ++ [wrap_up_request(ctx)]) |> elide() |> Effect.chat(tools: false)]
+  def ask_wrap_up(ctx), do: [request(ctx, messages(ctx) ++ steer_messages(ctx) ++ [wrap_up_request(ctx)], tools: false)]
+
+  # The request as sent: elided, then fitted into the context window (`Xeito.Chat.Window`). A
+  # request that cannot fit is not sent; the effect carries the reason and the turn fails with it.
+  defp request(ctx, messages, opts) do
+    window = [
+      budget: (ctx[:context] || @default_context) - @output_reserve,
+      keep_from: 1 + length(Map.get(ctx, :messages, [])),
+      chars_per_token: Map.get(ctx, :chars_per_token, Window.default_chars_per_token())
+    ]
+
+    case messages |> elide() |> Window.fit(window) do
+      {:ok, fitted, _report} -> Effect.chat(fitted, opts)
+      {:error, reason} -> Effect.chat(messages, Keyword.put(opts, :error, reason))
+    end
   end
 
   defp wrap_up_request(ctx) do
@@ -173,7 +189,6 @@ defmodule Xeito.Machines.Chat do
 
   @keep_whole 4
   @elide_batch 6
-  @elide_min 400
   @keep_reads 3
 
   @doc false
@@ -183,7 +198,7 @@ defmodule Xeito.Machines.Chat do
 
     candidates =
       for {%{role: "tool"} = m, i} <- Enum.with_index(messages),
-          elidable?(m) and i not in kept,
+          Window.elidable?(m) and i not in kept,
           do: i
 
     cut = div(max(length(candidates) - @keep_whole, 0), @elide_batch) * @elide_batch
@@ -191,7 +206,7 @@ defmodule Xeito.Machines.Chat do
 
     messages
     |> Enum.with_index()
-    |> Enum.map(fn {m, i} -> if i in elided, do: stub(m), else: m end)
+    |> Enum.map(fn {m, i} -> if i in elided, do: Window.stub(m), else: m end)
   end
 
   # Indices of the latest whole read of each of the last @keep_reads project files.
@@ -206,25 +221,6 @@ defmodule Xeito.Machines.Chat do
     |> Enum.sort(:desc)
     |> Enum.take(@keep_reads)
     |> MapSet.new()
-  end
-
-  defp elidable?(%{tool_name: "skill"}), do: false
-
-  defp elidable?(%{content: content} = m),
-    do: is_binary(content) and String.length(content) > @elide_min and Map.has_key?(m, :ref)
-
-  defp elidable?(_message), do: false
-
-  defp stub(%{content: content, ref: ref} = m) do
-    lines = length(String.split(content, "\n"))
-    about = Map.get(m, :about, m[:tool_name] || "tool call")
-
-    %{
-      m
-      | content:
-          "[elided to save context: #{about} (#{lines} lines). " <>
-            "If you still need it, read with result: \"#{ref}\".]"
-    }
   end
 
   # --- guards ------------------------------------------------------------------------------
@@ -357,6 +353,7 @@ defmodule Xeito.Machines.Chat do
     errors = for {call, reason} <- rejected, do: tool_message(call, reason)
 
     ctx
+    |> add_tokens(message)
     |> put_reply([assistant_message(message) | errors] ++ stuck_note(ctx, message))
     |> Map.update(
       :seen,
@@ -366,7 +363,6 @@ defmodule Xeito.Machines.Chat do
     |> Map.put(:invalid_streak, if(valid == [], do: Map.get(ctx, :invalid_streak, 0) + 1, else: 0))
     |> Map.update(:openings, [opening(message)], &[opening(message) | &1])
     |> Map.update(:steps, 1, &(&1 + 1))
-    |> add_tokens(message)
     |> advance(valid)
   end
 
@@ -402,9 +398,9 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def record_answer(ctx, message) do
     ctx
+    |> add_tokens(message)
     |> put_reply([assistant_message(message)])
     |> Map.update(:steps, 1, &(&1 + 1))
-    |> add_tokens(message)
     |> Map.put(:answer, answer_text(message))
   end
 
@@ -431,9 +427,9 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def record_calls_and_stop(ctx, message) do
     ctx
+    |> add_tokens(message)
     |> put_reply([assistant_message(message)])
     |> Map.update(:steps, 1, &(&1 + 1))
-    |> add_tokens(message)
     |> advance([])
     |> stop()
   end
@@ -565,17 +561,25 @@ defmodule Xeito.Machines.Chat do
   def undelivered(ctx), do: Map.get(ctx, :steers, []) ++ Map.get(ctx, :late_steers, [])
 
   defp add_tokens(ctx, message) do
+    tokens_in = Map.get(message, :tokens_in, 0)
+    tokens_out = Map.get(message, :tokens_out, 0)
+
     ctx
-    |> Map.update(
-      :tokens_in,
-      Map.get(message, :tokens_in, 0),
-      &(&1 + Map.get(message, :tokens_in, 0))
-    )
-    |> Map.update(
-      :tokens_out,
-      Map.get(message, :tokens_out, 0),
-      &(&1 + Map.get(message, :tokens_out, 0))
-    )
+    |> Map.update(:tokens_in, tokens_in, &(&1 + tokens_in))
+    |> Map.update(:tokens_out, tokens_out, &(&1 + tokens_out))
+    |> measure_window(tokens_in)
+  end
+
+  # The server's count of the request just answered (`ctx` is still as it was sent): it calibrates
+  # the next estimate, and shows whether the server cut the prompt.
+  defp measure_window(ctx, 0), do: ctx
+
+  defp measure_window(ctx, tokens_in) do
+    sent = (messages(ctx) ++ steer_messages(ctx)) |> elide() |> Window.characters()
+
+    ctx
+    |> Map.put(:chars_per_token, Window.calibrate(sent, tokens_in))
+    |> Map.put(:context_truncated, ctx[:context_truncated] == true or Window.truncated?(tokens_in, ctx[:context]))
   end
 
   defp assistant_message(message) do

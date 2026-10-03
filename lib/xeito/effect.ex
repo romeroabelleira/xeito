@@ -83,9 +83,16 @@ defmodule Xeito.Effect do
   def chat(messages, opts \\ []) do
     %__MODULE__{
       kind: :chat,
-      args: %{messages: messages, tools: Keyword.get(opts, :tools, true)},
+      args: chat_args(messages, opts),
       reply: Keyword.get(opts, :reply, :chatted)
     }
+  end
+
+  # `error:` marks a request the machine could not send (it does not fit the context window):
+  # the runner answers it with the error instead of calling the model.
+  defp chat_args(messages, opts) do
+    args = %{messages: messages, tools: Keyword.get(opts, :tools, true)}
+    if Keyword.has_key?(opts, :error), do: Map.put(args, :error, opts[:error]), else: args
   end
 
   @doc """

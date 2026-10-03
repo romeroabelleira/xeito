@@ -122,6 +122,24 @@ defmodule Xeito.TiersTest do
     assert_in_delta probs[:test_bug], 0.08 / 0.98, 1.0e-9
   end
 
+  describe "the large tier's context window" do
+    test "num_ctx is added to the options only when a context is configured" do
+      assert Xeito.Tiers.context_options([context: 65_536], %{temperature: 0}) == %{temperature: 0, num_ctx: 65_536}
+      assert Xeito.Tiers.context_options([], %{temperature: 0}) == %{temperature: 0}
+    end
+
+    test "a decision sends the configured context, so it shares the chat's loaded model" do
+      Req.Test.stub(:ollama_ctx, fn conn ->
+        {req, conn} = body(conn)
+        send(self(), {:options, req["options"]})
+        Req.Test.json(conn, %{"message" => %{"content" => ~s({"value": "code_bug"})}, "logprobs" => []})
+      end)
+
+      Large.decide(type(), @input, cfg(:ollama_ctx, model: "big", context: 65_536))
+      assert_received {:options, %{"num_ctx" => 65_536, "temperature" => 0}}
+    end
+  end
+
   test "Remote sends structured output with refusal fallback and prices usage" do
     Req.Test.stub(:anthropic, fn conn ->
       {req, conn} = body(conn)

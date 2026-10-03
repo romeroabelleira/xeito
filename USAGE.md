@@ -38,6 +38,7 @@ Tiers are configured through environment variables, read at startup by `config/r
 |---|---|---|
 | `XEITO_OLLAMA_URL`, `XEITO_LARGE_MODEL` | large (GPU, also the chat model) | `http://127.0.0.1:11434`, `qwen3.6:27b` |
 | `XEITO_KEEP_ALIVE` | how long Ollama keeps the model in VRAM after the last request | `5m` (default `10m`) |
+| `XEITO_LARGE_CONTEXT` | the large model's context window in tokens, sent as `num_ctx` with every large-tier request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
 | `XEITO_LLAMA_URL`, `XEITO_LLAMA_KEY_FILE`, `XEITO_SMALL_MODEL` | small (CPU, `llama-server`) | `http://127.0.0.1:8081` |
 | `XEITO_LAYA_URL`, `XEITO_LAYA_KEY_FILE` | System One (`laya-serve`) | `http://127.0.0.1:8082` |
 | `XEITO_OPENROUTER_KEY_FILE`, `XEITO_OPENROUTER_MODEL`, `XEITO_OPENROUTER_PROVIDERS`, `XEITO_OPENROUTER_ZDR` | OpenRouter (off-box) | `qwen/qwen3.6-35b-a3b` |

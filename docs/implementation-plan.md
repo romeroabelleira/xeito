@@ -23,6 +23,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P3b · OpenRouter tier (inserted) | hosted open models as an off-box tier | — | done 2026-09-27 | [bench 3b](../bench/3b-openrouter.md) |
 | P4 · TUI harness | daemon, TUI, chat and structured machines, step mode, skills, compact log, dogfood fixes | 2027-01-04 → 02-08 | built 2026-09-27 → 09-28; dogfooding until ≥ 2026-10-12 | [bench 4](../bench/4-harness.md) |
 | P4b · Context economy (inserted) | shape tool output before the model reads it, elide old tool output from the conversation; measured with the code-navigation benchmark | — | ≈ 2026-09-30 → 10-12, within P4's dogfooding | [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28) |
+| P4c · Summarising dropped turns (planned) | a summarising step replaces dropped turns with a logged summary | — | after P4b | [07](architecture/07-harness-frontend.md#context-and-configuration) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
@@ -275,9 +276,24 @@ Added 2026-09-30, from the code-navigation benchmark ([bench 4 §4](../bench/4-h
      - Both edited P4b runs stopped with code that does not compile. To make success measurable: the fix budget past the step limit, then dependency APIs in the map, or a larger step limit for the benchmark.
    - Status 2026-10-01: the fix budget is done (chat machine 0.5.0). A failing quick check gets up to two fixes, also at the step limit, with 4 model turns past `max_steps` shared between them.
 
+5. **Fit every request into the context window** (added 2026-10-03, chat machine 0.9.0). Ollama cuts an over-long prompt from the front, silently, and the system prompt goes first. The chat machine now fits each request into the large tier's `context` (`XEITO_LARGE_CONTEXT`, also sent as `num_ctx`): stubs, then dropping the oldest earlier turns with a note, then shortening; the system prompt is never touched (`Xeito.Chat.Window`, property-tested and under mutation testing). Summarising instead of dropping is P4c.
+
 Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28)): a fix budget beyond the step limit, and dependency APIs in the project map. Both address task success rather than tokens and are separate harness fixes.
 
 **Exit:** on the benchmark, input tokens per run are at least halved compared with variant C, with no fewer runs reaching an edit. Shaping and elision are covered by tests, including replay: a recovered run reproduces the shaped and elided messages exactly.
+
+## P4c · Summarising dropped turns (planned)
+
+Added 2026-10-03. Since chat machine 0.9.0, a chat request that does not fit the model's context window drops its oldest earlier turns, with a note ([07](architecture/07-harness-frontend.md#context-and-configuration)). That keeps the system prompt and the current turn intact, but a long session forgets what the dropped turns established. pi summarises instead: the dropped span becomes a structured summary that the model reads in its place.
+
+1. **A summarising step in the chat machine.** When fitting would drop turns, the machine first enters a `summarising` state. Its entry is a `chat` effect without tools that asks the large model to summarise the span (goal, decisions, files touched, open questions), building on the previous summary if there is one.
+   - The summary is a logged model call, so a replay reads it from the log instead of recomputing it: the request stays reproducible.
+   - The summary replaces the dropped span and the note; it is kept in the session history, so later turns reuse it instead of summarising again.
+   - It has its own budget: the span to summarise is itself fitted (stubs first), and the summary's length is capped.
+2. **When it does not pay.** Summarising costs a model call of the span's size; on a 24 GB GPU that is minutes for ~50k tokens (measured with pi). The step runs only when the dropped span is large enough to matter, and falls back to the note when the summary call fails.
+3. **Measure** on a long dogfood session: answers that need a dropped turn's facts, with the note against with the summary, and the time spent summarising.
+
+**Exit:** a session that has dropped turns still answers questions about them, and replays reproduce its requests exactly.
 
 ## P5 · OCEL export and process mining (≈4 weeks)
 

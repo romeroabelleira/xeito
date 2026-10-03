@@ -92,6 +92,17 @@ defmodule Xeito.Effects.LocalTest do
     assert %{value: :code_bug} = Local.run(effect, decide: fn _ -> :code_bug end)
   end
 
+  describe "chat" do
+    test "a request the machine could not fit is answered with its reason, without a model" do
+      effect = Effect.chat([%{role: "system", content: "s"}], error: {:over_budget, 9, 5})
+      assert %{error: {:context_window, {:over_budget, 9, 5}}} = Local.run(effect, [])
+    end
+
+    test "an ordinary request carries no error" do
+      refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
+    end
+  end
+
   describe "model tiers" do
     # Ollama: loading a model (/api/generate) and a structured decision (/api/chat).
     defp ollama(conn) do

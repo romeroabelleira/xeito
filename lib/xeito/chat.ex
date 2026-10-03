@@ -44,7 +44,7 @@ defmodule Xeito.Chat do
       tools: tools,
       stream: true,
       think: Keyword.get(cfg, :think, false),
-      options: %{temperature: Keyword.get(cfg, :temperature, 0.2)},
+      options: Tiers.context_options(cfg, %{temperature: Keyword.get(cfg, :temperature, 0.2)}),
       keep_alive: Keyword.get(cfg, :keep_alive, "10m")
     }
 

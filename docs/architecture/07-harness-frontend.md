@@ -121,7 +121,13 @@ Additional tools come from extensions. An extension is an Elixir module that imp
 
 ## Context and configuration
 
-- `AGENTS.md` in the project root, the same convention as pi. It is injected into prompts for the large and remote tiers only; small-tier prompts are generated from decision definitions.
+- `AGENTS.md` in the project root, the same convention as pi. It is injected into prompts for the large and remote tiers only; small-tier prompts are generated from decision definitions. Past 16 KiB it is cut, and the prompt says so.
+- **The context window.** Ollama does not refuse a prompt that is longer than the model's window: it cuts it from the front, which drops the system prompt (and `AGENTS.md` in it) first, and reports no error. So the chat machine fits every request itself (`Xeito.Chat.Window`), into the large tier's `context` minus a reserve for the reply:
+  1. old tool outputs become stubs, except the last four;
+  2. the oldest earlier turns are dropped whole, with a note saying how many messages were left out (a turn starts at a user message, so a tool result never loses its call);
+  3. the largest message of the current turn is shortened in the middle.
+
+  The system prompt is set aside before any of this: one that does not fit on its own fails the turn with the reason, it is never cut. Tokens are estimated from characters, at a conservative 3 per token until the server's count of a request calibrates the ratio. Every large-tier request (chat, decisions, a model load) sends the same `num_ctx`, so the budget is the server's window by construction and the two kinds of request share one loaded model. As a last check, a prompt the server cut anyway is recognised by its size (half the window plus 1–3 tokens) and the session warns. All of it is a pure function of the run's context, so a replay sends the same requests. Summarising dropped turns instead of leaving them out is planned ([implementation plan, P4c](../implementation-plan.md#p4c--summarising-dropped-turns-planned)).
 - `.xeito/` in the project holds the event log (`log.sqlite`), project machines (`machines/*.ex`), and decision examples (`decisions/*/examples.jsonl`).
 - `~/.config/xeito/config.exs` holds the tier endpoints, policies and budgets. For the reference values, see [09](09-reference-deployment.md).
 

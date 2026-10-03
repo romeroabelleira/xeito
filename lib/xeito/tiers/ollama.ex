@@ -32,6 +32,7 @@ defmodule Xeito.Tiers.Ollama do
     body = %{
       model: Keyword.fetch!(cfg, :model),
       prompt: "",
+      options: Tiers.context_options(cfg, %{}),
       keep_alive: Keyword.get(cfg, :keep_alive, "10m")
     }
 

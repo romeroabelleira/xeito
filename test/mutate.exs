@@ -3,6 +3,8 @@
 # Security and decision logic first: a surviving mutant there is a rule no test pins down.
 %{
   "lib/xeito/budget.ex" => ["test/xeito/budget_test.exs"],
+  # What the model gets to see: the system prompt must never be cut.
+  "lib/xeito/chat/window.ex" => ["test/xeito/chat_window_test.exs"],
   "lib/xeito/decisions/risk.ex" => ["test/xeito/decision_test.exs"],
   "lib/xeito/machines/chat.ex" => [tests: ["test/xeito/chat_machine_test.exs"], section: "guards"],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],

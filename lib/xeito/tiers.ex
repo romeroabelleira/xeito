@@ -71,6 +71,20 @@ defmodule Xeito.Tiers do
   end
 
   @doc """
+  Ollama `options` with the configured context window (`cfg[:context]`, `num_ctx`) added. Every
+  request to the large tier (chat, decisions, a model load) sends the same value, so they share
+  one loaded model instead of reloading it for each other, and the chat machine's budget is the
+  server's window by construction. Without `:context`, the server's own setting applies.
+  """
+  @spec context_options(keyword(), map()) :: map()
+  def context_options(cfg, options) do
+    case Keyword.get(cfg, :context) do
+      nil -> options
+      context -> Map.put(options, :num_ctx, context)
+    end
+  end
+
+  @doc """
   Runs one tier for a decision: resolves its configuration, waits for a capacity slot
   (`Xeito.Tiers.Queue`), calls the backend, and completes the cost with an energy estimate.
   """

@@ -26,7 +26,7 @@ defmodule Xeito.Tiers.Large do
       think: false,
       messages: Prompt.messages(type, input),
       format: Prompt.json_schema(type),
-      options: %{temperature: 0},
+      options: Tiers.context_options(cfg, %{temperature: 0}),
       logprobs: true,
       top_logprobs: Keyword.get(cfg, :top_logprobs, 10),
       keep_alive: Keyword.get(cfg, :keep_alive, "10m")

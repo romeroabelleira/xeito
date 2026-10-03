@@ -25,7 +25,15 @@ if config_env() != :test do
       url: System.get_env("XEITO_OLLAMA_URL"),
       model: System.get_env("XEITO_LARGE_MODEL", "qwen3.6:27b"),
       # How long Ollama keeps the model in VRAM after the last request (frees the GPU sooner).
-      keep_alive: System.get_env("XEITO_KEEP_ALIVE", "10m")
+      keep_alive: System.get_env("XEITO_KEEP_ALIVE", "10m"),
+      # The model's context window in tokens (`num_ctx`), sent with every large-tier request and
+      # used by the chat machine to fit its requests. Unset: the server's setting, and a 32768
+      # budget for the chat machine.
+      context:
+        case System.get_env("XEITO_LARGE_CONTEXT") do
+          nil -> nil
+          value -> String.to_integer(value)
+        end
     ],
     # OpenRouter tier (hosted open-weight models with logprobs). Off-box: gated by Xeito.Policy
     # like the remote tier. XEITO_OPENROUTER_PROVIDERS optionally pins providers (comma list).

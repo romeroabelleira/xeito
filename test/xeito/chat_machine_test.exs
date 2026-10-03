@@ -159,6 +159,56 @@ defmodule Xeito.ChatMachineTest do
     end
   end
 
+  describe "the context window" do
+    defp long_history(turns, chars) do
+      Enum.flat_map(1..turns, fn n ->
+        [%{role: "user", content: "request #{n}"}, %{role: "assistant", content: String.duplicate("a", chars)}]
+      end)
+    end
+
+    test "a request that fits is sent as it is" do
+      [effect] = Chat.ask_model(ctx(%{system: "S", messages: long_history(2, 10)}))
+      assert [%{role: "system", content: "S"}, %{content: "request 1"} | _] = effect.args.messages
+      refute Map.has_key?(effect.args, :error)
+    end
+
+    test "earlier turns are dropped to fit the context, the system prompt and the prompt stay" do
+      # A context of 12k tokens leaves 12_288 - 8_192 = 4_096 for the request: 20 turns of 1k don't fit.
+      [effect] = Chat.ask_model(ctx(%{system: "S", context: 12_288, messages: long_history(20, 1_000)}))
+      assert [%{role: "system", content: "S"}, %{content: "[" <> note} | _] = effect.args.messages
+      assert note =~ "earlier messages omitted"
+      assert List.last(effect.args.messages) == %{role: "user", content: "p"}
+    end
+
+    test "a system prompt that does not fit is not sent: the turn fails with the reason" do
+      [effect] = Chat.ask_model(ctx(%{system: String.duplicate("s", 30_000), context: 12_288}))
+      assert {:system_too_large, _tokens, 4_096} = effect.args.error
+    end
+
+    test "the wrap-up request is fitted too" do
+      [effect] = Chat.ask_wrap_up(ctx(%{system: "S", context: 12_288, messages: long_history(20, 1_000)}))
+      assert [%{role: "system"}, %{content: "[" <> _} | _] = effect.args.messages
+    end
+
+    test "the server's token count calibrates the next estimate" do
+      # The request answered was the system prompt (3_000 characters) and the prompt ("p").
+      sent = ctx(%{system: String.duplicate("s", 3_000)})
+      next = Chat.record_answer(sent, Map.put(message("ok"), :tokens_in, 1_000))
+      assert_in_delta next.chars_per_token, 3.001, 1.0e-9
+      assert next.tokens_in == 1_000
+
+      # The next request is estimated with it: no measurement, no change.
+      assert sent |> Chat.record_answer(message("ok")) |> Map.get(:chars_per_token) == nil
+    end
+
+    test "a prompt the server cut is noticed" do
+      cut = Chat.record_answer(ctx(%{context: 65_536}), Map.put(message("ok"), :tokens_in, 32_770))
+      assert cut.context_truncated
+      whole = Chat.record_answer(ctx(%{context: 65_536}), Map.put(message("ok"), :tokens_in, 30_000))
+      refute Map.get(whole, :context_truncated, false)
+    end
+  end
+
   describe "a review answered with text instead of y or n" do
     alias Xeito.Machine
     alias Xeito.Machine.Engine

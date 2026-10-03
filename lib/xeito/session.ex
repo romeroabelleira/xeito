@@ -51,6 +51,7 @@ defmodule Xeito.Session do
   alias Xeito.Session.Router
   alias Xeito.Skills
   alias Xeito.Source.RepoMap
+  alias Xeito.Tiers
   alias Xeito.Undo
 
   # The history window trims with slack: past 80 messages it drops back to 60, so its first
@@ -725,6 +726,7 @@ defmodule Xeito.Session do
         messages: s.history,
         verify: Router.quick_check_command(s.cwd),
         system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(skills),
+        context: large_context(),
         skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
       },
       &if(s.max_steps, do: Map.put(&1, :max_steps, s.max_steps), else: &1)
@@ -787,7 +789,7 @@ defmodule Xeito.Session do
     emit(s, "turn_finished", run_id, Map.put(event.attrs, "answer", answer))
 
     s = %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer), unfinished: stopped?(result)}
-    s |> requeue_steers(result) |> after_turn(result, answer)
+    s |> requeue_steers(result) |> warn_truncated(result) |> after_turn(result, answer)
   end
 
   defp track(run_id, event, s), do: track_run(run_id, event, s)
@@ -1005,6 +1007,21 @@ defmodule Xeito.Session do
   # Chat turns keep their full message list; other machines leave a short exchange.
   # A halted turn may end with tool calls still unanswered: they are dropped, so the next request
   # is well-formed, and a note says where the turn stopped.
+  # The model server cut a request of this turn from the front (`Xeito.Chat.Window.truncated?/2`):
+  # the system prompt was lost, so say so.
+  defp warn_truncated(s, %{ctx: %{context_truncated: true}}),
+    do:
+      notice(
+        s,
+        "the model server cut this turn's prompt from the front (the system prompt was lost): " <>
+          "set XEITO_LARGE_CONTEXT to the model's context window"
+      )
+
+  defp warn_truncated(s, _result), do: s
+
+  # The large tier's context window, for the chat machine's budget (its own default when unset).
+  defp large_context, do: (Tiers.config(:large) || [])[:context]
+
   defp remember(%{machine: Chat}, %{status: :halted, ctx: %{turn: [_system | messages]}}, answer),
     do: window(settled(messages) ++ [%{role: "assistant", content: "(#{answer})"}])
 
@@ -1150,13 +1167,20 @@ defmodule Xeito.Session do
   def system_prompt(cwd) do
     case File.read(Path.join(cwd, "AGENTS.md")) do
       {:ok, text} ->
-        text = binary_part(text, 0, min(byte_size(text), @agents_max_bytes))
-        Chat.default_system() <> "\nProject context (AGENTS.md):\n\n" <> text
+        Chat.default_system() <> "\nProject context (AGENTS.md):\n\n" <> agents_text(text)
 
       {:error, _} ->
         Chat.default_system()
     end
   end
+
+  # A longer AGENTS.md is cut, and the model is told so (it can read the rest).
+  defp agents_text(text) when byte_size(text) <= @agents_max_bytes, do: text
+
+  defp agents_text(text),
+    do:
+      binary_part(text, 0, @agents_max_bytes) <>
+        "\n\n[AGENTS.md continues: cut at #{@agents_max_bytes} bytes here. Read the file for the rest.]"
 
   defp new_id, do: "ses-" <> Base.encode32(:crypto.strong_rand_bytes(8), case: :lower, padding: false)
 end

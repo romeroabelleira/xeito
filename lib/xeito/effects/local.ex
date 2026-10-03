@@ -131,6 +131,8 @@ defmodule Xeito.Effects.Local do
     end
   end
 
+  defp chat(%Effect{args: %{error: reason}}, _opts), do: %{error: {:context_window, reason}}
+
   defp chat(%Effect{args: args} = effect, opts) do
     tools =
       case args.tools do
