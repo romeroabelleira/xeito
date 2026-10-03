@@ -303,13 +303,13 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
 
 **Decision.** A tier is named by kind and place. The API it speaks is a *backend*, a setting of the tier.
 
-| Tier | Kind | Was | Backend | Default model |
+| Tier | Kind | Was | Backend | Model |
 |---|---|---|---|---|
 | `local_decision` | System One decision model, local (Laya) | `system_one` | `system_one` | none, off until P7 |
 | `local` | language model on the local GPU: chat and decisions | `large` | `ollama` | `qwen3.8:27b` |
-| `remote_decision` | System One decision model, hosted (Jev) | — | `system_one` | none |
-| `remote` | hosted language model with logprobs, so its confidence is calibrated | `openrouter` | `openrouter` | from step 3; candidate `qwen/qwen3.8-27b` |
-| `remote_frontier` | the strongest hosted language model; no logprobs, so its answer is final | `remote` | `openrouter` | from step 3; candidate `anthropic/claude-sonnet-5.5` |
+| `remote_decision` | System One decision model, hosted (Jev) | — | `system_one` | unset |
+| `remote` | hosted language model with logprobs, so its confidence is calibrated | `openrouter` | `openrouter` | unset; candidate `qwen/qwen3.8-27b` |
+| `remote_frontier` | the strongest hosted language model; no logprobs, so its answer is final | `remote` | `openrouter` | unset; candidate `anthropic/claude-sonnet-5.5` |
 
 - **System One models keep their own tiers.** They differ from language models in structure, role and use:
   - **Structure.** An encoder classifier takes the input and the options and returns a probability for each option. It generates no text.
@@ -319,6 +319,7 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
   The kind also exists in both places, local (Laya) and hosted (Jev).
 - **The small language model tier (`small`, llama-server) goes.** No small model passed the P2 gate ([bench 2](../bench/2-decisions.md)), so every decision type runs on `deciders [:large]`. If the P7 fine-tuning produces one that passes, it comes back as a tier.
 - **Remote means OpenRouter.** Both hosted language model tiers use the OpenRouter backend, and one key serves both. The direct Anthropic backend (`Xeito.Tiers.Remote`) is removed. In P3b it was kept for Anthropic's server-side refusal fallback; going through OpenRouter loses that, and a refusal becomes an error that escalates to the human.
+- **Remote tiers are opt-in, and off for now.** A remote tier has no default model. It exists only once its model and key file are both set; unset, it is not in any ladder, makes no requests and shows as not configured in the monitor. This matches operation today: every decision type runs on `deciders [:large]`, and the default policy forbids off-box tiers. Since 2026-10-03 the operator does not want remote tiers in operation, and after the rename none is configured.
 - **Off-box is in the name.** Every `remote*` tier is off-box: under the policy's `remote:` gate, the locality rule (`:local_only` never leaves) and the spend budget. `Xeito.Policy` no longer keeps a separate list of off-box tiers.
 - **Ladder order:** `local_decision` → `remote_decision` → `local` → `remote` → `remote_frontier` → human. Policy and configuration drop tiers from it, as now.
 
@@ -329,14 +330,14 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
    - `Xeito.Policy`, `Xeito.Tiers.Queue`, the energy estimates, `Xeito.Monitor` and the status bar;
    - `mix xeito.eval`: the P7 gate compares candidates against `local`.
 
-   Settings become `XEITO_<TIER>_{BACKEND,URL,MODEL,KEY_FILE,CONTEXT}`, for example `XEITO_LOCAL_MODEL` and `XEITO_REMOTE_FRONTIER_MODEL`. A remote tier defaults to OpenRouter's URL and is configured once a key file is set. The `llama-server` example unit and the `XEITO_LLAMA_*`/`XEITO_SMALL_MODEL` settings go. Old runs keep their machine version; logged actors (`large`, `openrouter`, …) are mapped to the new names when read, so mining and P7's distillation data span the change.
-3. **Choose the remote models** with a P3b-style benchmark on the eval sets: accuracy, calibration, cost per decision and latency.
+   Settings become `XEITO_<TIER>_{BACKEND,URL,MODEL,KEY_FILE,CONTEXT}`, for example `XEITO_LOCAL_MODEL` and `XEITO_REMOTE_FRONTIER_MODEL`. A remote tier's backend and URL default to OpenRouter's; it is configured only when both its model and its key file are set, so one OpenRouter key does not switch both tiers on. The `llama-server` example unit and the `XEITO_LLAMA_*`/`XEITO_SMALL_MODEL` settings go. Old runs keep their machine version; logged actors (`large`, `openrouter`, …) are mapped to the new names when read, so mining and P7's distillation data span the change.
+3. **Choose the remote models (deferred until remote tiers are wanted).** A P3b-style benchmark on the eval sets measures accuracy, calibration, cost per decision and latency. It spends OpenRouter credit, so it runs only once remote tiers are to be used; until then the candidates below are notes, not defaults.
    - For `remote`: `qwen/qwen3.8-27b`, an off-box twin of `local` (12 of its 17 endpoints offered logprobs and JSON schema on 2026-10-03), against `z-ai/glm-5.3` and `moonshotai/kimi-k3`.
    - For `remote_frontier`: `anthropic/claude-sonnet-5.5` against `claude-opus-5.5`. The benchmark checks that structured output works under `zdr: true`, which routes Claude away from Anthropic's own endpoints.
-   - For `remote_decision`: whether OpenRouter's `typesafe/jev-router` speaks the System One contract.
+   - For `remote_decision`: Jev is not callable through OpenRouter (checked 2026-10-03). `~typesafe/jev-latest` is listed with the modality `text->decisions` but has no endpoints. `typesafe/jev-router` is a router that uses Jev to choose a language model, which then answers in text. It returns no decision with probabilities, so it cannot serve this tier. The tier stays unset until Jev has an OpenRouter endpoint or a TypeSafe account is chosen; it would be the one remote tier not on OpenRouter.
 4. **Later, a separate decision: chat on a remote tier.** Chat speaks Ollama's API only. A remote chat needs OpenAI-compatible tool calls, and a rule for which workspaces may leave the box at all.
 
-**Exit:** the tiers carry the new names everywhere: configuration, logs read back, monitor, status bar and documentation. `mix xeito.eval` and a live escalation reach `remote` and `remote_frontier` through OpenRouter, with costs logged. The remote defaults are set from the benchmark.
+**Exit:** the tiers carry the new names everywhere: configuration, logs read back, monitor, status bar and documentation. With no remote tier configured, nothing leaves the machine. In tests, a configured `remote` and `remote_frontier` are reached through OpenRouter, with costs logged. The live run and the benchmark of step 3 wait until remote tiers are wanted.
 
 ## P5 · OCEL export and process mining (≈4 weeks)
 
