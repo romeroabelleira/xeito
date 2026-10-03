@@ -258,6 +258,17 @@ defmodule Xeito.MachinesTest do
     assert {:ok, %{state: :failed}} = Run.result(log, id)
   end
 
+  test "fix_failing_test with nothing failing says so, and how to write a new test instead" do
+    passing = %{status: :done, state: :done, ctx: %{test_cmd: "mix test"}}
+
+    assert Xeito.Session.turn_answer(FixFailingTest, passing) ==
+             "The tests pass (mix test): there is no failing test to fix. To write a new test, " <>
+               "ask for it without saying it fails, or use /machine chat <request>."
+
+    fixed = %{status: :done, state: :done, ctx: %{last_failure: "1 failure", fix: %{answer: "Fixed the rounding."}}}
+    assert Xeito.Session.turn_answer(FixFailingTest, fixed) == "fix_failing_test ended in done: Fixed the rounding."
+  end
+
   test "routing rules pick the structured machines", %{ws: ws} do
     assert {FixFailingTest, _} = Router.route(:edit, "the login test is red")
     assert {Commit, _} = Router.route(:run, "commit my changes")
@@ -265,6 +276,12 @@ defmodule Xeito.MachinesTest do
     assert {Check, _} = Router.route(:run, "run the linter")
     assert {RunTests, _} = Router.route(:run, "run the tests")
     assert {Chat, _} = Router.route(:question, "what does commit abc123 change?")
+
+    # Writing a test, even one meant to fail first, is not fixing one.
+    assert {Chat, _} = Router.route(:edit, "Write the failing test in tui_test.exs for banner/1.")
+    assert {Chat, _} = Router.route(:edit, "add a red test for the parser, then make it pass")
+    assert {Chat, _} = Router.route(:edit, "Develop the broken-link detector test-first")
+    assert {FixFailingTest, _} = Router.route(:edit, "the checkout test fails, fix it")
 
     assert Router.check_command(ws) == "make test"
     assert Router.quick_check_command(ws) == nil

@@ -994,7 +994,7 @@ defmodule Xeito.Session do
   defp answer(_machine, %{status: :halted}), do: @halted
   defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || ctx |> Map.get(:error) |> to_text()
 
-  defp answer(FixFailingTest, %{state: state, ctx: ctx}), do: "fix_failing_test ended in #{state}" <> fix_answer(ctx)
+  defp answer(FixFailingTest, result), do: fix_failing_answer(result)
 
   defp answer(machine, %{state: state} = result) do
     ctx = Map.get(result, :ctx, %{})
@@ -1002,6 +1002,14 @@ defmodule Xeito.Session do
     Map.get(ctx, :answer) ||
       ctx |> Map.get(:error) |> to_text() |> default("#{inspect(machine)} ended in #{state}")
   end
+
+  # Nothing failed when it reproduced: say so, and how to ask for a new test instead.
+  defp fix_failing_answer(%{state: :done, ctx: ctx}) when not is_map_key(ctx, :last_failure),
+    do:
+      "The tests pass (#{Map.get(ctx, :test_cmd, "the test suite")}): there is no failing test to fix. " <>
+        "To write a new test, ask for it without saying it fails, or use /machine chat <request>."
+
+  defp fix_failing_answer(%{state: state, ctx: ctx}), do: "fix_failing_test ended in #{state}" <> fix_answer(ctx)
 
   defp fix_answer(ctx) do
     case get_in(ctx, [:fix, :answer]) do

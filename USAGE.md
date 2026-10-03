@@ -352,7 +352,7 @@ description: List every Python function with a one-line summary. Use when asked 
 machine           version  runs  done  failed  last run (UTC)
 fix_failing_test  0.5.0    3     3     0       2026-09-28 10:12
     reproduce a failing test, triage it, delegate the fix to chat, verify
-    routed from: intent edit + a failing, red or broken test · /machine fix_failing_test
+    routed from: intent edit + a failing, red or broken test to fix · /machine fix_failing_test
 …
 ```
 

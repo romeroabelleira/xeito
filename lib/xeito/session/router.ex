@@ -6,7 +6,7 @@ defmodule Xeito.Session.Router do
 
   | intent         | message mentions                    | machine                                      |
   |----------------|-------------------------------------|----------------------------------------------|
-  | `edit`         | a failing / red / broken test       | `Xeito.Machines.FixFailingTest` (delegating) |
+  | `edit`         | a failing / red / broken test (not one to write) | `Xeito.Machines.FixFailingTest` (delegating) |
   | `run` / `edit` | commit                              | `Xeito.Machines.Commit`                      |
   | `run` / `edit` | lint, format, warnings, CI, checks  | `Xeito.Machines.Check`                       |
   | `run`          | tests / specs                       | `Xeito.Machines.RunTests`                    |
@@ -24,7 +24,7 @@ defmodule Xeito.Session.Router do
   # The registry: name, module, what it does, and how requests reach it (besides /machine).
   @registry [
     {"fix_failing_test", FixFailingTest, "reproduce a failing test, triage it, delegate the fix to chat, verify",
-     "intent edit + a failing, red or broken test"},
+     "intent edit + a failing, red or broken test to fix"},
     {"check", Check, "run the project checks; delegate failures to chat until they pass",
      "intent run/edit + lint, format, warnings, CI or checks"},
     {"commit", Commit, "draft a commit message, ask for approval, commit", "intent run/edit + commit"},
@@ -100,7 +100,7 @@ defmodule Xeito.Session.Router do
   # First match wins: {intents, message test, machine, reason}.
   defp rules do
     [
-      {[:edit], &failing_test?/1, FixFailingTest, "failing test"},
+      {[:edit], &fix_failing_test?/1, FixFailingTest, "failing test"},
       {[:run, :edit], &Regex.match?(~r/\bcommit\b/i, &1), Commit, "commit"},
       {[:run, :edit], &checks?/1, Check, "checks"},
       {[:run], &tests?/1, RunTests, "mentions tests"}
@@ -111,6 +111,11 @@ defmodule Xeito.Session.Router do
     do: Regex.match?(~r/\b(lint\w*|format\w*|credo|dialyzer|warnings?|ci|checks?|pre-?commit)\b/i, message)
 
   defp tests?(message), do: Regex.match?(~r/\b(tests?|specs?|test suite)\b/i, message)
+
+  # A failing test to fix; not a request to write one ("write the failing test first", "test-first").
+  defp fix_failing_test?(message), do: failing_test?(message) and not writes_test?(message)
+
+  defp writes_test?(message), do: Regex.match?(~r/\b(write|add|create)\b.*\btests?\b|\btest[- ]first\b|\btdd\b/i, message)
 
   defp failing_test?(message) do
     Regex.match?(
