@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # The whole history, so mutation testing can tell what changed since the base below.
+          fetch-depth: 0
 
       - uses: erlef/setup-beam@v1
         with:
@@ -35,4 +37,8 @@ jobs:
 
       - run: mix deps.get
       # Includes Dialyzer, so a commit gated on `mix ci` locally is checked the same way.
+      # Sources marked only_when_changed in test/mutate.exs are mutated when they changed since
+      # the commit before the push (or the pull request's base); unknown means all of them.
       - run: mix ci
+        env:
+          XEITO_MUTATE_BASE: ${{ github.event.before || github.event.pull_request.base.sha }}

@@ -122,6 +122,23 @@ defmodule Xeito.Mutate do
     end
   end
 
+  @doc """
+  Splits a plan into what to mutate and the sources skipped: an entry with
+  `only_when_changed: true` is mutated only when it or one of its tests is among `changed`
+  (paths), or when what changed is unknown (`:all`).
+  """
+  @spec select(list(), map(), [Path.t()] | :all) :: {list(), [Path.t()]}
+  def select(plan, _config, :all), do: {plan, []}
+
+  def select(plan, config, changed) do
+    {run, skipped} =
+      Enum.split_with(plan, fn {path, _section, tests} ->
+        not Keyword.get(entry(config, path), :only_when_changed, false) or Enum.any?([path | tests], &(&1 in changed))
+      end)
+
+    {run, Enum.map(skipped, &elem(&1, 0))}
+  end
+
   defp entry(config, path) do
     case Map.get(config, path, []) do
       [{:tests, _} | _] = entry -> entry

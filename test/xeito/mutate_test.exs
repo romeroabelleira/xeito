@@ -8,6 +8,28 @@ defmodule Xeito.MutateTest do
 
   defp code(mutant), do: Macro.to_string(mutant.ast)
 
+  describe "select/3: sources mutated only when they or their tests changed" do
+    @config %{
+      "a.ex" => ["a_test.exs"],
+      "b.ex" => [tests: ["b_test.exs"], only_when_changed: true],
+      "c.ex" => [tests: ["c_test.exs"], section: "s", only_when_changed: true]
+    }
+
+    test "an only_when_changed source is skipped when neither it nor its tests changed" do
+      plan = Mutate.plan([], [], @config)
+      assert [{"b.ex", nil, ["b_test.exs"]}, {"c.ex", "s", ["c_test.exs"]}] = Enum.drop(plan, 1)
+
+      assert Mutate.select(plan, @config, ["a.ex", "other.ex"]) == {[{"a.ex", nil, ["a_test.exs"]}], ["b.ex", "c.ex"]}
+      assert {[{"a.ex", _, _}, {"b.ex", _, _}], ["c.ex"]} = Mutate.select(plan, @config, ["b.ex"])
+      assert {[{"a.ex", _, _}, {"c.ex", _, _}], ["b.ex"]} = Mutate.select(plan, @config, ["c_test.exs"])
+    end
+
+    test "when what changed is unknown, everything is mutated" do
+      plan = Mutate.plan([], [], @config)
+      assert Mutate.select(plan, @config, :all) == {plan, []}
+    end
+  end
+
   describe "mutants/2" do
     test "comparisons are negated, and ordering ones also moved across the boundary" do
       assert described("def f(a, b), do: a == b") == [{1, "== → !="}]

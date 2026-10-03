@@ -9,7 +9,10 @@ defmodule Mix.Tasks.Xeito.Mutate do
 
   Without paths, it mutates the sources in `test/mutate.exs`, the ones held to zero survivors
   (`mix ci` runs this), against the tests listed there; an entry may limit a source to one
-  section (`section: "guards"`, the lines under a `# --- guards ---` comment). A given path uses `--test`, else its
+  section (`section: "guards"`, the lines under a `# --- guards ---` comment), and one marked
+  `only_when_changed: true` is mutated only when it or its tests differ from
+  `$XEITO_MUTATE_BASE` (default `HEAD`, so uncommitted changes; CI sets the commit before the
+  push), or when that cannot be told. A given path uses `--test`, else its
   tests from that file, else the files under `test/` that use its modules. The tests must pass on
   the real code first. `--lines` mutates only those lines (repeatable); `--timeout` is the
   per-test timeout in ms (default 5000; a mutant that loops is killed by it).
@@ -29,6 +32,7 @@ defmodule Mix.Tasks.Xeito.Mutate do
     {opts, paths, _} = OptionParser.parse(args, strict: @switches)
     plan = Mutate.plan(paths, Keyword.get_values(opts, :test), config())
     if plan == [], do: Mix.raise("nothing to mutate: give a path, or list sources in #{@config}")
+    plan = if paths == [], do: selected(plan), else: plan
 
     Mix.Task.run("app.start")
     start_ex_unit(opts)
@@ -36,6 +40,23 @@ defmodule Mix.Tasks.Xeito.Mutate do
     survived = Enum.flat_map(plan, &check_source(&1, opts))
 
     if survived != [], do: Mix.raise("#{length(survived)} mutants survived")
+  end
+
+  defp selected(plan) do
+    base = System.get_env("XEITO_MUTATE_BASE", "HEAD")
+    {run, skipped} = Mutate.select(plan, config(), changed(base))
+    Enum.each(skipped, &Mix.shell().info("#{&1}: unchanged since #{base}, not mutated (only_when_changed)"))
+    run
+  end
+
+  # The paths that differ from `base`, new files included; `:all` if git cannot tell.
+  defp changed(base) do
+    with {diff, 0} <- System.cmd("git", ["diff", "--name-only", base, "--"]),
+         {new, 0} <- System.cmd("git", ~w(ls-files --others --exclude-standard)) do
+      String.split(diff <> new, "\n", trim: true)
+    else
+      _ -> :all
+    end
   end
 
   defp check_source({path, section, tests}, opts) do
@@ -76,7 +97,8 @@ defmodule Mix.Tasks.Xeito.Mutate do
   defp start_ex_unit(opts) do
     Application.put_env(:ex_unit, :autorun, false)
     Code.require_file("test/test_helper.exs")
-    ExUnit.configure(formatters: [], timeout: Keyword.get(opts, :timeout, 5_000))
+    # One failing test kills a mutant: the run stops there instead of running the rest.
+    ExUnit.configure(formatters: [], timeout: Keyword.get(opts, :timeout, 5_000), max_failures: 1)
   end
 
   # Each test file is loaded once, even when several sources share it.
