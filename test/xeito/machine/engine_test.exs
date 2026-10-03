@@ -34,6 +34,13 @@ defmodule Xeito.Machine.EngineTest do
     assert {:ok, %{to: :high}} = Engine.handle(m, :low, %{}, :up, %{force: true})
   end
 
+  test "an internal transition (no `to:`) updates the context and stays, without exit, entry or effects", %{m: m} do
+    assert {:ok, step} = Engine.handle(m, :low, %{}, :note, %{})
+
+    assert {step.from, step.to, step.exited, step.entered, step.effects, step.ctx} ==
+             {:low, :low, [], [], [], %{count: 1}}
+  end
+
   test "custom timeout events are ordinary transitions", %{m: m} do
     assert {:ok, %{to: :low, entered: [:low]}} = Engine.handle(m, :high, %{}, :cool_down, %{})
   end

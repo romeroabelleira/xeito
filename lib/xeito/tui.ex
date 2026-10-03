@@ -33,7 +33,9 @@ defmodule Xeito.Tui do
   newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`,
   and each further Tab shows the next match; a line sent while a turn runs is queued in the
   session and shown above the prompt, and when the turn ended in a way it was not written for
-  (halted, failed, stopped, a question) it is held: Enter on an empty line sends it, Esc drops it; PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
+  (halted, failed, stopped, a question) it is held: Enter on an empty line sends it, Esc drops it;
+  Ctrl-J sends the typed line into the running chat turn instead, for its next model call
+  (`/steer`); PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
   session keeps running in the daemon and can be reattached with `--session`).
 
   The TUI owns no run state: everything shown comes from daemon events, so it can crash, be
@@ -197,8 +199,8 @@ defmodule Xeito.Tui do
     page_down: {:scroll, -10}
   }
 
-  defp key_to_msg(%Event.Key{key: key, modifiers: mods}, _state) when key in [:c, "c", :d, "d", :t, "t"] and mods != [],
-    do: control_key(key, mods)
+  defp key_to_msg(%Event.Key{key: key, modifiers: mods}, _state)
+       when key in [:c, "c", :d, "d", :t, "t", :j, "j"] and mods != [], do: control_key(key, mods)
 
   defp key_to_msg(%Event.Key{key: :tab}, _state), do: {:msg, :complete}
 
@@ -209,11 +211,13 @@ defmodule Xeito.Tui do
     end
   end
 
-  # Ctrl-T toggles the status bar; Ctrl-C and Ctrl-D quit. Other modifiers do nothing.
+  # Ctrl-T toggles the status bar; Ctrl-J steers (a line feed, which every terminal sends; the
+  # terminal library does not report Alt-Enter); Ctrl-C and Ctrl-D quit. Other modifiers do nothing.
   defp control_key(key, mods) do
     cond do
       :ctrl not in mods -> :ignore
       key in [:t, "t"] -> {:msg, :toggle_bar}
+      key in [:j, "j"] -> {:msg, :steer}
       true -> {:msg, :quit}
     end
   end
@@ -300,17 +304,22 @@ defmodule Xeito.Tui do
   defp handle_update({:review, answer}, state), do: review(answer, state)
   defp handle_update({:recall, direction}, state), do: state |> recall(direction) |> recalled(state)
 
-  defp handle_update(msg, state) when msg in [:halt, :complete, :legend], do: line_key(msg, state)
+  defp handle_update(msg, state) when msg in [:halt, :complete, :legend, :steer], do: line_key(msg, state)
 
   defp handle_update(msg, state), do: screen_update(msg, state)
 
   defp line_key(:halt, state), do: halt(state)
   defp line_key(:complete, state), do: complete(state)
   defp line_key(:legend, state), do: {legend(state), []}
+  defp line_key(:steer, state), do: state.input |> TextInput.get_value() |> String.trim() |> steer(state)
 
   # Only Tab continues a completion; any other key ends it.
   defp keep_completion(state, :complete), do: state
   defp keep_completion(state, _msg), do: %{state | completion: nil}
+
+  # Ctrl-J: the typed line for the running chat turn, at its next model call (`/steer`).
+  defp steer("", state), do: {state, []}
+  defp steer(text, state), do: send_line("/steer " <> text, remember(state, text))
 
   # An empty line steps a paused run, and otherwise does nothing.
   defp submit("", %{paused: true} = state) do

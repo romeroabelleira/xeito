@@ -373,6 +373,26 @@ defmodule Xeito.TuiTest do
     end
   end
 
+  describe "steering with Ctrl-J: a line for the running chat turn" do
+    test "Ctrl-J is the steering key" do
+      assert Tui.event_to_msg(key("j", [:ctrl]), tui()) == {:msg, :steer}
+    end
+
+    test "Ctrl-J sends the typed line as /steer, clears the prompt and remembers the line" do
+      state = typing(%{tui() | leaf: "thinking"}, "use pytest")
+      {steered, []} = Tui.update(:steer, state)
+
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "/steer use pytest"}}
+      assert value(steered) == ""
+      assert hd(steered.prompt_history) == "use pytest"
+    end
+
+    test "on an empty line, Ctrl-J does nothing" do
+      {_, []} = Tui.update(:steer, tui())
+      refute_receive {:request, _}, 100
+    end
+  end
+
   describe "recalling earlier prompts with Up and Down" do
     # Submits a prompt and waits until it reaches the daemon.
     defp sent(state, text) do
@@ -776,8 +796,8 @@ defmodule Xeito.TuiTest do
     end
 
     test "several matches: each Tab shows the next, in order, and wraps around" do
-      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(6) |> Enum.map(&value/1)
-      assert tabbed == ["/s", "/send", "/skill:", "/statusbar", "/step", "/send"]
+      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(7) |> Enum.map(&value/1)
+      assert tabbed == ["/s", "/send", "/skill:", "/statusbar", "/steer", "/step", "/send"]
     end
 
     test "typing after a Tab completes from the new text" do

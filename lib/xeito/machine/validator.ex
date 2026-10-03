@@ -86,7 +86,7 @@ defmodule Xeito.Machine.Validator do
   defp check_targets(machine, _) do
     for name <- machine.order,
         t <- machine.states[name].transitions,
-        not Map.has_key?(machine.states, t.to) do
+        t.to != nil and not Map.has_key?(machine.states, t.to) do
       "#{inspect(name)}: transition on #{inspect(t.event)} targets undeclared state #{inspect(t.to)}"
     end
   end
@@ -163,6 +163,7 @@ defmodule Xeito.Machine.Validator do
     machine
     |> Machine.lineage(leaf)
     |> Enum.flat_map(&machine.states[&1].transitions)
+    |> Enum.reject(&is_nil(&1.to))
     |> Enum.map(&Machine.leaf(machine, &1.to))
     |> Enum.uniq()
   end

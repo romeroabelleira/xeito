@@ -104,6 +104,25 @@ defmodule Xeito.SessionQueueTest do
     assert Xeito.Log.query(log, "SELECT text, outcome FROM event_prompt_dequeued") == [["/run true", "dropped"]]
   end
 
+  test "/steer while another machine runs is queued, with a note; idle, it is a prompt", %{id: id, ws: ws} do
+    busy(id)
+    :ok = Session.prompt(id, "/steer use pytest")
+    assert %{"text" => "steering reaches a chat turn only; queued instead"} = event("notice")
+    assert %{"text" => "use pytest"} = event("queued")
+    :ok = Session.prompt(id, "/halt")
+    assert %{"status" => :halted} = event("turn_finished")
+    event("queue_held")
+    :ok = Session.prompt(id, "/drop")
+    event("dequeued")
+
+    :ok = Session.prompt(id, "/steer /run touch s.txt")
+    assert %{"status" => :done} = event("turn_finished")
+    assert File.exists?(Path.join(ws, "s.txt"))
+
+    :ok = Session.prompt(id, "/steer")
+    assert %{"text" => "/steer <text>: a line for the running chat turn, taken at its next model call"} = event("error")
+  end
+
   test "release?/2: only a turn that ended done, not stopped, and without a question sends the queue" do
     done = %{status: :done, ctx: %{}}
     assert Session.release?(done, "The tests pass.")

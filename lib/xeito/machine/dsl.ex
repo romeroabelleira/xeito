@@ -35,7 +35,10 @@ defmodule Xeito.Machine.DSL do
     end
   end
 
-  @doc "Declares a transition on `event`. Options: `:to` (required), `:guard`, `:action`."
+  @doc """
+  Declares a transition on `event`. Options: `:to`, `:guard`, `:action`. Without `:to`, the
+  transition is internal: the action runs and the state stays, not left or entered again.
+  """
   defmacro on(event, opts) do
     quote do: unquote(__MODULE__).__add_transition__(__MODULE__, unquote(event), unquote(opts))
   end
@@ -95,7 +98,7 @@ defmodule Xeito.Machine.DSL do
   def __add_transition__(module, event, opts) do
     transition = %Transition{
       event: event,
-      to: Keyword.fetch!(opts, :to),
+      to: Keyword.get(opts, :to),
       guard: opts[:guard],
       action: opts[:action]
     }

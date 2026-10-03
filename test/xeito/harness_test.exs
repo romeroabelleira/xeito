@@ -53,7 +53,13 @@ defmodule Xeito.HarnessTest do
 
   defp respond(conn, %{"tools" => _} = req, test_pid, script, _decisions) do
     send(test_pid, {:chat_request, req})
-    {content, calls} = Agent.get_and_update(script, fn [t | rest] -> {t, rest} end)
+    # A turn may be a function, called when the model is asked: a test can hold a reply back.
+    {content, calls} =
+      case Agent.get_and_update(script, fn [t | rest] -> {t, rest} end) do
+        reply when is_function(reply, 0) -> reply.()
+        reply -> reply
+      end
+
     chat_response(conn, content, calls)
   end
 
@@ -640,6 +646,59 @@ defmodule Xeito.HarnessTest do
 
     assert %{"role" => "tool", "content" => "not run: instead of approving, the user said: don't, just list the files"} =
              List.last(messages)
+  end
+
+  test "session: /steer reaches the running chat turn at its next model call", %{ws: ws} do
+    log = start_log!()
+
+    cfg =
+      ollama(self(), [{"", [{"bash", %{"command" => "sleep 0.1"}}]}, {"Using pytest.", []}], %{
+        "What does the user want" => "edit",
+        "Is this shell command safe" => "review"
+      })
+
+    id = session(ws, log, cfg)
+    :ok = Session.prompt(id, "wait a bit")
+    next_event("human_needed")
+
+    :ok = Session.prompt(id, "/steer use pytest")
+    assert %{attrs: %{"text" => "use pytest"}} = next_event("steered")
+    :ok = Session.prompt(id, "/approve")
+    assert %{attrs: %{"answer" => "Using pytest."}} = next_event("turn_finished")
+
+    assert_receive {:chat_request, _first}
+    assert_receive {:chat_request, %{"messages" => messages}}
+    assert Enum.any?(messages, &(&1["content"] == "(The user, while you were working:) use pytest"))
+  end
+
+  test "session: a steer the turn ended before delivering is queued, then sent as the next prompt", %{ws: ws} do
+    log = start_log!()
+    test = self()
+
+    held = fn ->
+      send(test, {:asking, self()})
+
+      # Held until the test lets it go; a failing test must not leave the model queue blocked.
+      receive do
+        :go -> {"All done.", []}
+      after
+        5_000 -> {"(timed out)", []}
+      end
+    end
+
+    cfg = ollama(self(), [held, {"Pytest it is.", []}], %{"What does the user want" => "question"})
+    id = session(ws, log, cfg)
+    :ok = Session.prompt(id, "summarise")
+    assert_receive {:asking, model}, 3_000
+
+    :ok = Session.prompt(id, "/steer use pytest")
+    next_event("steered")
+    send(model, :go)
+
+    assert %{attrs: %{"answer" => "All done."}} = next_event("turn_finished")
+    assert %{attrs: %{"text" => "use pytest"}} = next_event("queued")
+    assert %{attrs: %{"text" => "use pytest", "outcome" => "sent"}} = next_event("dequeued")
+    assert %{attrs: %{"answer" => "Pytest it is."}} = next_event("turn_finished")
   end
 
   test "session: /halt stops a turn mid-command; a go-ahead then continues it cleanly", %{ws: ws} do

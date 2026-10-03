@@ -90,7 +90,7 @@ defmodule Xeito.Session do
   def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}, restart: :temporary}
 
   # The slash commands, by what they act on (command/3). `skill:` takes the skill's name.
-  @start_commands ~w(machine run skill:)
+  @start_commands ~w(machine run skill: steer)
   @turn_commands ~w(approve deny halt send drop)
   @info_commands ~w(why budget help machines)
   @debug_commands ~w(step continue next decide break)
@@ -282,7 +282,7 @@ defmodule Xeito.Session do
   defp prompt(trimmed, text, s) do
     cond do
       Regex.match?(
-        ~r{^/(approve|deny|halt|send|drop|why|budget|help|machines|step|next|continue|break|decide)\b},
+        ~r{^/(approve|deny|halt|send|drop|steer|why|budget|help|machines|step|next|continue|break|decide)\b},
         trimmed
       ) ->
         "/" <> command = trimmed
@@ -464,6 +464,11 @@ defmodule Xeito.Session do
   defp start_command("machine", rest, _raw, s), do: machine_command(rest, s)
   defp start_command("skill:" <> name, rest, _raw, s), do: skill_command(name, rest, s)
   defp start_command("run", "", raw, s), do: unknown_command(raw, s)
+
+  defp start_command("steer", "", _raw, s),
+    do: error(s, "/steer <text>: a line for the running chat turn, taken at its next model call")
+
+  defp start_command("steer", text, _raw, s), do: steer(text, s)
   defp start_command("run", cmd, _raw, s), do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
 
   # Commands for the turn that is running.
@@ -781,16 +786,34 @@ defmodule Xeito.Session do
     emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
     emit(s, "turn_finished", run_id, Map.put(event.attrs, "answer", answer))
 
-    after_turn(
-      %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer), unfinished: stopped?(result)},
-      result,
-      answer
-    )
+    s = %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer), unfinished: stopped?(result)}
+    s |> requeue_steers(result) |> after_turn(result, answer)
   end
 
   defp track(run_id, event, s), do: track_run(run_id, event, s)
 
   # --- input while busy ---
+
+  # `/steer`: a line for the running chat turn, which the chat machine gives the model with its
+  # next request (`Xeito.Machines.Chat.steer/2`). Idle, it is a prompt; during another machine,
+  # it is queued like any other line.
+  defp steer(text, %{root: nil} = s), do: start_turn(text, String.trim(text), s)
+
+  defp steer(text, %{machine: Chat, root: run} = s) when is_binary(run) do
+    case Run.send_event(run, :steered, %{text: text}, :human) do
+      {:ok, _leaf} ->
+        emit(s, "steered", run, %{"text" => text})
+        s
+
+      _not_taken ->
+        enqueue(text, s)
+    end
+  end
+
+  defp steer(text, s), do: s |> notice("steering reaches a chat turn only; queued instead") |> then(&enqueue(text, &1))
+
+  # Steers the chat turn ended before giving to the model wait like lines typed meanwhile.
+  defp requeue_steers(s, result), do: result.ctx |> Chat.undelivered() |> Enum.reduce(s, &enqueue/2)
 
   # A line typed while a turn runs waits here, in order; it is never taken as a review's answer.
   defp enqueue(text, s) do
@@ -1095,6 +1118,8 @@ defmodule Xeito.Session do
     /run <command>            run a command once
     /approve · /deny          answer a command waiting for review (or type what to do instead)
     /undo [n] · /redo [n]     revert this session's last n file changes, or put them back
+    /steer <text>             a line for the running chat turn, taken at its next model call
+                              (Ctrl-J in the TUI); idle, a prompt
     /send · /drop             send the first line typed while a turn ran, or drop it (held when
                               the turn ended halted, failed, stopped, or with a question)
     /halt                     stop the turn where it is (Esc in the TUI); "go ahead" continues it

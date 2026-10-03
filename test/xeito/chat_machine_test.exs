@@ -188,4 +188,63 @@ defmodule Xeito.ChatMachineTest do
                Engine.handle(machine, :ask_human, reviewing(%{max_steps: 3, steps: 3}), :instructed, data)
     end
   end
+
+  describe "steering: a line from the user while the turn works" do
+    defp sent(ctx), do: ctx |> Chat.ask_model() |> hd() |> then(& &1.args.messages)
+    defp steer_message(text), do: %{role: "user", content: "(The user, while you were working:) " <> text}
+
+    defp asked(extra \\ %{}),
+      do: ctx(Map.merge(%{turn: [%{role: "system", content: "s"}, %{role: "user", content: "p"}]}, extra))
+
+    test "a steer between model calls goes with the next request, and before its reply in the turn" do
+      ctx = Chat.steer(asked(), %{text: "use pytest"})
+      assert List.last(sent(ctx)) == steer_message("use pytest")
+
+      answered = Chat.record_answer(ctx, message("Done with pytest."))
+
+      assert Enum.take(answered.turn, -2) == [
+               steer_message("use pytest"),
+               %{role: "assistant", content: "Done with pytest."}
+             ]
+
+      assert Chat.undelivered(answered) == []
+    end
+
+    test "a steer while the model is asked waits for its reply, then goes with the next request" do
+      ctx = Chat.steer_late(asked(), %{text: "skip the docs"})
+      refute steer_message("skip the docs") in sent(ctx)
+
+      queued = Chat.queue_calls(ctx, message("", [call("bash", %{"command" => "ls"})]))
+      refute steer_message("skip the docs") in queued.turn
+      assert Chat.undelivered(queued) == ["skip the docs"]
+
+      after_tool = Chat.record_result(queued, %{exit_status: 0, output: "a"})
+      assert List.last(sent(after_tool)) == steer_message("skip the docs")
+    end
+
+    test "steers the turn ends before delivering are handed back" do
+      ctx = asked() |> Chat.steer(%{text: "one"}) |> Chat.steer_late(%{text: "two"})
+      assert Chat.undelivered(ctx) == ["one", "two"]
+      assert Chat.undelivered(Chat.record_answer(ctx, message("ok"))) == ["two"]
+    end
+
+    test "the wrap-up request carries pending steers too" do
+      ctx = Chat.steer(asked(%{steps: 25}), %{text: "summarise briefly"})
+      [effect] = Chat.ask_wrap_up(ctx)
+      assert steer_message("summarise briefly") in effect.args.messages
+    end
+
+    test "every working state takes a steer without leaving; a finished turn ignores it" do
+      machine = Xeito.Machine.fetch!(Chat)
+
+      for state <- [:thinking, :risk_check, :executing, :ask_human, :verifying, :wrapping_up] do
+        assert {:ok, %{to: ^state, entered: [], effects: []} = step} =
+                 Xeito.Machine.Engine.handle(machine, state, asked(), :steered, %{text: "t"})
+
+        assert Chat.undelivered(step.ctx) == ["t"], "#{state}"
+      end
+
+      assert :ignored = Xeito.Machine.Engine.handle(machine, :answered, asked(), :steered, %{text: "t"})
+    end
+  end
 end

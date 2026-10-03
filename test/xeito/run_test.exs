@@ -3,6 +3,7 @@ defmodule Xeito.RunTest do
 
   alias Xeito.Decisions.Triage
   alias Xeito.Effects.Fake
+  alias Xeito.Effects.Local
   alias Xeito.Log
   alias Xeito.Log.Event
   alias Xeito.Machines.FixFailingTest
@@ -21,6 +22,27 @@ defmodule Xeito.RunTest do
   end
 
   defp wait_for_leaf(id, expected), do: eventually(fn -> Run.whereis(id) && Run.snapshot(id).leaf == expected end)
+
+  test "an internal transition is logged, and the run stays where it was" do
+    log = start_log!()
+    id = start(Xeito.TestMachines.Counter, :none, log, %{})
+
+    assert {:ok, :idle} = Run.send_event(id, :note)
+    assert {:ok, :idle} = Run.send_event(id, :note)
+    assert %{leaf: :idle, ctx: %{count: 2}} = Run.snapshot(id)
+
+    assert [["idle", "idle", "note"], ["idle", "idle", "note"]] =
+             Log.query(log, "SELECT from_state, to_state, event_name FROM event_transition WHERE event_name = 'note'")
+  end
+
+  test "an internal transition keeps the effect in flight: its result still arrives" do
+    log = start_log!()
+    id = start(Xeito.TestMachines.Patient, {Local, []}, log, %{cwd: System.tmp_dir!()})
+
+    assert {:ok, :working} = Run.send_event(id, :note)
+    await_exit(id)
+    assert {:ok, %{status: :done, state: :done, ctx: %{notes: 1}}} = Run.result(log, id)
+  end
 
   test "run_tests finishes :done when the command passes" do
     log = start_log!()
@@ -171,7 +193,7 @@ defmodule Xeito.RunTest do
 
     # The failure output matches Triage's missing-environment rule, so no model tier is needed.
     input = %{cwd: dir, test_cmd: "echo '** (Mix) The task x could not be found'; exit 1"}
-    id = start(FixFailingTest, {Xeito.Effects.Local, decider: [deciders: []]}, log, input)
+    id = start(FixFailingTest, {Local, decider: [deciders: []]}, log, input)
 
     wait_for_leaf(id, :ask_human)
 

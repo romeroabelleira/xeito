@@ -14,6 +14,7 @@ defmodule Xeito.Machines.Chat do
                             └─ failed, no fixes left → answered (with the failure noted)
       ask_human ──approved──→ executing · ──denied──→ thinking (told)
                 · ──instructed (a text answer)──→ thinking (told what to do instead)
+      any working state ──steered──→ itself (internal: the line waits for the next model call)
 
   One run is one user turn. The session (`Xeito.Session`) keeps the conversation and passes the
   earlier messages in; the run adds the prompt, the model's messages and the tool results, and
@@ -38,7 +39,7 @@ defmodule Xeito.Machines.Chat do
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.7.0"
+  use Xeito.Machine, version: "0.8.0"
 
   alias Xeito.Effect
   alias Xeito.Tools
@@ -65,6 +66,8 @@ defmodule Xeito.Machines.Chat do
     on :chatted, to: :thinking, guard: :only_invalid_calls?, action: :queue_calls
     on :chatted, to: :verifying, guard: :edited?, action: :record_answer
     on :chatted, to: :answered, action: :record_answer
+    # The model is being asked: a steer waits for its reply, then goes with the next request.
+    on :steered, action: :steer_late
   end
 
   state :risk_check do
@@ -74,6 +77,7 @@ defmodule Xeito.Machines.Chat do
     on {:decided, :abstain}, to: :ask_human
     on {:decided, :forbidden}, to: :wrapping_up, guard: :step_limit?, action: :forbid_and_stop
     on {:decided, :forbidden}, to: :thinking, action: :forbid
+    on :steered, action: :steer
   end
 
   state :executing, entry: :run_tool, timeout: 900_000 do
@@ -82,6 +86,7 @@ defmodule Xeito.Machines.Chat do
     on :tool_done, to: :verifying, guard: :step_limit_edited?, action: :record_result_and_stop
     on :tool_done, to: :wrapping_up, guard: :step_limit?, action: :record_result_and_stop
     on :tool_done, to: :thinking, action: :record_result
+    on :steered, action: :steer
   end
 
   state :verifying, entry: :run_checks, timeout: @verify_timeout do
@@ -90,6 +95,7 @@ defmodule Xeito.Machines.Chat do
     on :verified, to: :thinking, guard: :can_fix?, action: :report_failure
     on :verified, to: :wrapping_up, guard: :stopped?, action: :record_checks
     on :verified, to: :answered, action: :record_checks
+    on :steered, action: :steer
   end
 
   # A turn that stops (step limit, or calls that keep failing) gets one last model turn without
@@ -97,6 +103,7 @@ defmodule Xeito.Machines.Chat do
   # "Stopped after 25 model turns" (a dogfood session, 2026-10-01).
   state :wrapping_up, entry: :ask_wrap_up, timeout: 900_000 do
     on :chatted, to: :answered, action: :record_wrap_up
+    on :steered, action: :steer_late
   end
 
   state :ask_human, timeout: {@human_timeout, :denied} do
@@ -106,6 +113,7 @@ defmodule Xeito.Machines.Chat do
     # A text answer instead of y or n: the call is not run, and the model is told what to do.
     on :instructed, to: :wrapping_up, guard: :step_limit?, action: :instruct_and_stop
     on :instructed, to: :thinking, action: :instruct
+    on :steered, action: :steer
   end
 
   # --- entry functions ---------------------------------------------------------------------
@@ -138,12 +146,12 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def ask_model(ctx) do
-    [ctx |> messages() |> elide() |> Effect.chat(tools: Tools.names_for(ctx))]
+    [(messages(ctx) ++ steer_messages(ctx)) |> elide() |> Effect.chat(tools: Tools.names_for(ctx))]
   end
 
   @doc false
   def ask_wrap_up(ctx) do
-    [(messages(ctx) ++ [wrap_up_request(ctx)]) |> elide() |> Effect.chat(tools: false)]
+    [(messages(ctx) ++ steer_messages(ctx) ++ [wrap_up_request(ctx)]) |> elide() |> Effect.chat(tools: false)]
   end
 
   defp wrap_up_request(ctx) do
@@ -349,7 +357,7 @@ defmodule Xeito.Machines.Chat do
     errors = for {call, reason} <- rejected, do: tool_message(call, reason)
 
     ctx
-    |> put_turn([assistant_message(message) | errors] ++ stuck_note(ctx, message))
+    |> put_reply([assistant_message(message) | errors] ++ stuck_note(ctx, message))
     |> Map.update(
       :seen,
       Enum.map(valid, &{&1.name, &1.arguments}),
@@ -394,7 +402,7 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def record_answer(ctx, message) do
     ctx
-    |> put_turn([assistant_message(message)])
+    |> put_reply([assistant_message(message)])
     |> Map.update(:steps, 1, &(&1 + 1))
     |> add_tokens(message)
     |> Map.put(:answer, answer_text(message))
@@ -412,7 +420,7 @@ defmodule Xeito.Machines.Chat do
   def record_wrap_up(ctx, %{error: _}), do: ctx
 
   def record_wrap_up(ctx, message) do
-    ctx = ctx |> add_tokens(message) |> put_turn([wrap_up_request(ctx), assistant_message(message)])
+    ctx = ctx |> add_tokens(message) |> put_reply([wrap_up_request(ctx), assistant_message(message)])
 
     case message |> Map.get(:content, "") |> to_string() |> String.trim() do
       "" -> ctx
@@ -423,7 +431,7 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def record_calls_and_stop(ctx, message) do
     ctx
-    |> put_turn([assistant_message(message)])
+    |> put_reply([assistant_message(message)])
     |> Map.update(:steps, 1, &(&1 + 1))
     |> add_tokens(message)
     |> advance([])
@@ -530,6 +538,31 @@ defmodule Xeito.Machines.Chat do
   defp put_turn(ctx, new_messages) do
     Map.put(ctx, :turn, messages(ctx) ++ new_messages)
   end
+
+  # --- steering ---
+
+  # A model reply: the steers its request carried go in the turn just before it, and the ones
+  # that came while it was asked go with the next request.
+  defp put_reply(ctx, new_messages) do
+    ctx
+    |> put_turn(steer_messages(ctx) ++ new_messages)
+    |> Map.put(:steers, Map.get(ctx, :late_steers, []))
+    |> Map.put(:late_steers, [])
+  end
+
+  defp steer_messages(ctx),
+    do:
+      for(text <- Map.get(ctx, :steers, []), do: %{role: "user", content: "(The user, while you were working:) " <> text})
+
+  @doc "A line from the user while the turn works, for the next model request."
+  def steer(ctx, %{text: text}), do: Map.update(ctx, :steers, [text], &(&1 ++ [text]))
+
+  @doc "A line from the user while the model is asked: it waits for the reply."
+  def steer_late(ctx, %{text: text}), do: Map.update(ctx, :late_steers, [text], &(&1 ++ [text]))
+
+  @doc "The steers not yet given to the model, oldest first (the session queues them when the turn ends)."
+  @spec undelivered(map()) :: [String.t()]
+  def undelivered(ctx), do: Map.get(ctx, :steers, []) ++ Map.get(ctx, :late_steers, [])
 
   defp add_tokens(ctx, message) do
     ctx

@@ -13,6 +13,7 @@ Xeito uses the Harel statechart vocabulary, the same one SCXML and XState use:
 - **Hierarchical states.** `:working` contains `:planning`, `:editing` and `:verifying`. An event not handled in a child bubbles up to its parent.
 - **Guards.** These are pure functions of `(state_data, event)`.
 - **Entry/exit actions.** These are side effects, and they run only through *effects* (see below).
+- **Internal transitions.** `on :steered, action: :steer` without `to:` updates the state data and stays: the state is neither left nor entered again, so its entry effects do not run twice and the effects in flight are still awaited. SCXML writes these as targetless transitions; the Mermaid export draws no edge for them. The chat machine takes a user's steering line this way (P4).
 - **Timeouts.** These are the state, event and generic timeouts of `gen_statem`, and each one becomes a first-class `:timeout` event.
 - **Final states.** Every machine has at least `:done` and `:failed`.
 - **History and parallel regions.** Deferred until needed. Parallel regions are modelled as child runs instead (see "Composition").

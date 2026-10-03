@@ -27,6 +27,12 @@ defmodule Xeito.Machine.ExportTest do
     refute mermaid =~ "verifying --> done"
   end
 
+  test "an internal transition is a targetless SCXML transition and no Mermaid edge" do
+    machine = Machine.fetch!(Xeito.TestMachines.Counter)
+    assert Export.scxml(machine) =~ ~s(<transition event="note"/>)
+    refute Export.mermaid(machine) =~ "note"
+  end
+
   test "scxml nests compound states and names guards as conditions" do
     scxml = Export.scxml(Machine.fetch!(FixFailingTest))
 

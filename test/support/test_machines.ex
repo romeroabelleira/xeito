@@ -8,6 +8,8 @@ defmodule Xeito.TestMachines.Counter do
   state :idle, timeout: 60_000 do
     on :go, to: :active
     on :tick, to: :idle, action: :bump
+    # An internal transition: no `to:`, so the state is neither left nor entered again.
+    on :note, action: :bump
   end
 
   state :active, initial: :low do
@@ -17,6 +19,7 @@ defmodule Xeito.TestMachines.Counter do
     state :low, entry: :announce, timeout: 60_000 do
       on :up, to: :high, guard: :allowed?
       on :up, to: :low, action: :bump
+      on :note, action: :bump
     end
 
     state :high, timeout: {60_000, :cool_down} do
@@ -33,6 +36,27 @@ defmodule Xeito.TestMachines.Counter do
   def allowed?(ctx, data), do: Map.get(data, :force, false) or Map.get(ctx, :count, 0) >= 2
   @doc false
   def announce(ctx), do: [Xeito.Effect.bash("echo low", cwd: Map.get(ctx, :cwd, "."))]
+end
+
+defmodule Xeito.TestMachines.Patient do
+  @moduledoc "Runs a slow command; a `:note` (internal) may arrive while it runs."
+
+  use Xeito.Machine, version: "1.0.0"
+
+  initial :working
+
+  state :working, entry: :work, timeout: 5_000 do
+    on :ran, to: :done
+    on :note, action: :note
+  end
+
+  final :done
+  final :failed
+
+  @doc false
+  def work(ctx), do: [Xeito.Effect.bash("sleep 0.3", cwd: Map.get(ctx, :cwd, "/tmp"))]
+  @doc false
+  def note(ctx, _data), do: Map.update(ctx, :notes, 1, &(&1 + 1))
 end
 
 defmodule Xeito.TestMachines.Sleepy do

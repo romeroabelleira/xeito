@@ -487,7 +487,10 @@ defmodule Xeito.Run do
         {:keep_state, data, reply(from, :ignored)}
 
       {:ok, step} ->
-        {effects, data} = number_effects(step.effects, %{data | ctx: step.ctx, effects: %{}})
+        # Leaving a state makes the effects still in flight stale; an internal transition
+        # (nothing exited or entered) keeps waiting for them.
+        in_flight = if step.exited == [] and step.entered == [], do: data.effects, else: %{}
+        {effects, data} = number_effects(step.effects, %{data | ctx: step.ctx, effects: in_flight})
 
         transition =
           Event.new("transition", {:transition, step.from, step.to, name, actor}, %{

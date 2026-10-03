@@ -40,7 +40,8 @@ defmodule Xeito.Machine.Export do
   end
 
   defp all_edges(machine) do
-    for name <- machine.order, t <- Machine.state!(machine, name).transitions do
+    # An internal transition changes no state: it is no edge.
+    for name <- machine.order, t <- Machine.state!(machine, name).transitions, t.to != nil do
       {parent, from, to} = lift(machine, name, t.to)
       {parent, from, to, label(t)}
     end
@@ -109,7 +110,9 @@ defmodule Xeito.Machine.Export do
 
   defp scxml_transition(t, indent) do
     cond_attr = if t.guard, do: ~s( cond="#{esc(Atom.to_string(t.guard))}"), else: ""
-    ~s(#{indent}<transition event="#{esc(scxml_event(t.event))}"#{cond_attr} target="#{t.to}"/>)
+    # SCXML's targetless transition is an internal one, as in the DSL.
+    target_attr = if t.to, do: ~s( target="#{t.to}"), else: ""
+    ~s(#{indent}<transition event="#{esc(scxml_event(t.event))}"#{cond_attr}#{target_attr}/>)
   end
 
   defp scxml_event(event) when is_atom(event), do: Atom.to_string(event)

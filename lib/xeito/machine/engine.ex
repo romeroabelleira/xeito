@@ -91,6 +91,12 @@ defmodule Xeito.Machine.Engine do
 
   defp guard_passes?(machine, %Transition{guard: guard}, ctx, data), do: apply(machine.module, guard, [ctx, data]) == true
 
+  # An internal transition: the action, and nothing else.
+  defp take(machine, leaf, ctx, %Transition{to: nil} = transition, data, implicit?) do
+    ctx = if transition.action, do: apply(machine.module, transition.action, [ctx, data]), else: ctx
+    %{from: leaf, to: leaf, event: transition.event, exited: [], entered: [], ctx: ctx, effects: [], implicit: implicit?}
+  end
+
   defp take(machine, leaf, ctx, transition, data, implicit?) do
     ctx =
       if transition.action, do: apply(machine.module, transition.action, [ctx, data]), else: ctx
