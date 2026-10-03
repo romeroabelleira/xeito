@@ -9,9 +9,9 @@ A hands-on guide: set up the tiers, start the daemon, work in the TUI, and inspe
 ```
   you ──► xeito TUI / line client ──► xeitod (daemon) ──► machines (state machines, logged)
                  JSON Lines over a                        │
-                 private Unix socket                      ├─► small tier  llama-server (CPU)
-                                                          ├─► large tier  Ollama (GPU)
-                                                          └─► off-box     OpenRouter / Claude API (opt-in)
+                 private Unix socket                      ├─► local_decision  laya-serve (CPU)
+                                                          ├─► local           Ollama (GPU)
+                                                          └─► remote tiers    OpenRouter (opt-in, off-box)
 ```
 
 - **xeitod** holds everything: sessions, runs, and the event log. Clients are thin, so closing the TUI never stops a run.
@@ -32,18 +32,30 @@ mix test
 
 ### Model tiers
 
-Tiers are configured through environment variables, read at startup by `config/runtime.exs`. A tier without a URL counts as unavailable, and decisions skip it. A practical minimum is the large tier alone:
+Tiers are places on the escalation ladder, named by the kind of model and where it runs:
 
-| Variable | Tier | Example |
+| Tier | Kind | Default backend |
 |---|---|---|
-| `XEITO_OLLAMA_URL`, `XEITO_LARGE_MODEL` | large (GPU, also the chat model) | `http://127.0.0.1:11434`, `qwen3.6:27b` |
-| `XEITO_KEEP_ALIVE` | how long Ollama keeps the model in VRAM after the last request | `5m` (default `10m`) |
-| `XEITO_LARGE_CONTEXT` | the large model's context window in tokens, sent as `num_ctx` with every large-tier request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
-| `XEITO_LLAMA_URL`, `XEITO_LLAMA_KEY_FILE`, `XEITO_SMALL_MODEL` | small (CPU, `llama-server`) | `http://127.0.0.1:8081` |
-| `XEITO_LAYA_URL`, `XEITO_LAYA_KEY_FILE` | System One (`laya-serve`) | `http://127.0.0.1:8082` |
-| `XEITO_OPENROUTER_KEY_FILE`, `XEITO_OPENROUTER_MODEL`, `XEITO_OPENROUTER_PROVIDERS`, `XEITO_OPENROUTER_ZDR` | OpenRouter (off-box) | `qwen/qwen3.6-35b-a3b` |
-| `XEITO_ANTHROPIC_KEY_FILE`, `XEITO_REMOTE_MODEL` | remote Claude (off-box) | `claude-opus-5` |
+| `local_decision` | a System One decision model on this machine (`laya-serve`) | `system_one` |
+| `remote_decision` | a hosted System One decision model (Jev) | `system_one` |
+| `local` | the language model on the local GPU: the chat model, and the decider of every built-in decision type | `ollama` |
+| `remote` | a hosted language model with logprobs, so its confidence is calibrated | `openrouter` |
+| `remote_frontier` | the strongest hosted language model; it answers without a confidence, terminally | `openrouter` |
+
+Each tier reads the same variables under its own prefix, `XEITO_<TIER>_`, at startup (`Xeito.Tiers.Settings`). A tier that is not configured is not used. A practical minimum is the local tier alone:
+
+| Variable (for `XEITO_LOCAL_…`; the same for every tier) | Meaning | Example |
+|---|---|---|
+| `XEITO_LOCAL_URL` | the backend's address; a local tier is configured by it | `http://127.0.0.1:11434` |
+| `XEITO_LOCAL_MODEL` | the model | `qwen3.6:27b` |
+| `XEITO_LOCAL_KEY_FILE` | a file holding the backend's API key | `~/.config/xeito/laya_api_key` |
+| `XEITO_LOCAL_BACKEND` | the API the tier speaks: `ollama`, `openrouter` or `system_one` | (the tier's default) |
+| `XEITO_LOCAL_CONTEXT` | Ollama: the context window in tokens, sent as `num_ctx` with every request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
+| `XEITO_LOCAL_KEEP_ALIVE` | Ollama: how long the model stays in VRAM after the last request | `5m` (default `10m`) |
+| `XEITO_REMOTE_PROVIDERS`, `XEITO_REMOTE_ZDR` | OpenRouter: providers to pin (comma list); `false` to allow endpoints that retain prompts | `Parasail`; default on |
 | `XEITO_SOCKET` | the daemon socket | default `~/.xeito/run/xeito.sock` |
+
+**Remote tiers are opt-in.** A remote tier is configured only when its model and its key file are both set; an OpenRouter tier's URL defaults to OpenRouter's. One OpenRouter key file can serve both `remote` and `remote_frontier`, but each needs its own `…_MODEL` and `…_KEY_FILE`. Even configured, a remote tier is reached only where the decision's policy allows off-box tiers ([guards on escalation](docs/architecture/04-delegation.md#guards-on-escalation); [spend limits](#spend-limits)). `remote_decision` has no default URL, since no hosted System One model is reachable through OpenRouter.
 
 **Keys are never put in variables.** The `*_KEY_FILE` variables name a file that contains only the key, with mode 0600. For example, with the 1Password CLI:
 
@@ -55,14 +67,16 @@ Keep the variables in one file that both your shell and the service can source:
 
 ```bash
 # ~/.config/xeito/tiers.env
-export XEITO_OLLAMA_URL=http://127.0.0.1:11434
-export XEITO_LARGE_MODEL=qwen3.6:27b
-export XEITO_KEEP_ALIVE=5m
-export XEITO_LLAMA_URL=http://127.0.0.1:8081
-export XEITO_LLAMA_KEY_FILE="$HOME/.config/xeito/llama_api_key"
+export XEITO_LOCAL_URL=http://127.0.0.1:11434
+export XEITO_LOCAL_MODEL=qwen3.6:27b
+export XEITO_LOCAL_CONTEXT=65536
+export XEITO_LOCAL_KEEP_ALIVE=5m
+# Off-box, opt-in: uncomment to use a hosted model where policy allows it.
+# export XEITO_REMOTE_MODEL=qwen/qwen3.8-27b
+# export XEITO_REMOTE_KEY_FILE="$HOME/.config/xeito/openrouter.key"
 ```
 
-The [reference deployment](docs/architecture/09-reference-deployment.md) explains how to choose models and hardware. [`deploy/`](deploy/) has example systemd units for `llama-server` and for the daemon.
+The [reference deployment](docs/architecture/09-reference-deployment.md) explains how to choose models and hardware. [`deploy/`](deploy/) has an example systemd unit for the daemon.
 
 ## 3. Start the daemon
 
@@ -99,7 +113,7 @@ Type a request and press Enter:
 
 ```
 > what does lib/pricing.ex do?
-◆ intent: explain (large 1.00)
+◆ intent: explain (local 1.00)
   → Chat · no dedicated machine for intent explain
     read lib/pricing.ex
 The module computes gross prices …
@@ -130,16 +144,16 @@ Other `◆` lines are other typed decisions. It shows its value, the tier that d
 Above the status line, the TUI shows one more line, the status bar. Toggle it with **Ctrl-T** or `/statusbar`, or start without it using `--no-status-bar`. It is filled in priority order until it fills the terminal's width: the latest decision and reply, tokens, GPU, models and git come first; queues and CPU are the first to give way on a narrow terminal.
 
 ```
- large qwen3.6:27b unload 4:58 │ git main 2 changed ↑1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ risk rule 3 ms │ reply 1.1 s (first 291 ms)
+ local qwen3.6:27b unload 4:58 │ git main 2 changed ↑1 │ 3.4k→84 tok · ctx 1.6k/81.9k │ risk rule 3 ms │ reply 1.1 s (first 291 ms)
 ```
 
 | Part | Meaning |
 |---|---|
 | `GPU` | the discrete GPU: VRAM used/total, utilisation, power, hottest temperature (Linux, AMD via sysfs) |
-| `large …` | the model resident in Ollama, and how long until the keep-alive unloads it (`idle (not loaded)` after that) |
-| `small ✓ 0/4` | the CPU `llama-server` is up, with busy/total slots; `S1` is the System One service |
+| `local …` | the model resident in Ollama, and how long until the keep-alive unloads it (`idle (not loaded)` after that) |
+| `decision ✓` | the local System One service (`local_decision`) is up |
 | `CPU … RAM …` | processor utilisation and load, memory in use |
-| `chat 2 · large 1 · rule 1` | calls in this session: chat turns, and decisions by who made them |
+| `chat 2 · local 1 · rule 1` | calls in this session: chat turns, and decisions by who made them |
 | `tok`, `ctx` | tokens in → out, and the last chat prompt against the model's context window |
 | `risk rule 3 ms` | the latest decision: its type, who decided, and how long it took (including escalation) |
 | `reply` | the latest model reply: total time, and time to its first chunk (what you wait for before text appears) |
@@ -176,12 +190,12 @@ Prefer plain lines (logs, pipes, a minimal SSH session)? `mix xeito.chat` takes 
 
 ```
 > the checkout test is red again, fix it
-◆ intent: edit (large 1.00)
+◆ intent: edit (local 1.00)
   → FixFailingTest · intent edit, failing test
 · reproduce
   $ mix test
     exit 2 · 1 test, 1 failure
-◆ triage: code_bug (large 0.99)
+◆ triage: code_bug (local 0.99)
 · planning
   ↳ delegating to Chat
     read test/checkout_test.exs
@@ -249,7 +263,7 @@ Every shell command the model proposes first passes the **Risk** decision:
 - Anything **in between waits for you**:
 
 ```
-◆ risk: review (large 0.94)
+◆ risk: review (local 0.94)
 ? review: run `rm -rf _build` — y approves, n denies, or say what to do instead
 ```
 
@@ -268,7 +282,7 @@ Or type what to do instead, and the command is not run: the model gets your answ
 
 ```
 > run the checks and fix what fails
-◆ intent: run (large 0.95)
+◆ intent: run (local 0.95)
   → Check · intent run, checks
   $ mix ci
     exit 1 · … 3 files are not formatted
@@ -348,7 +362,7 @@ Every machine is listed with what it does and how requests reach it. The usage c
 
 | Command | Shows |
 |---|---|
-| `/why` | the last decisions of the session: type, value, who decided (rule, small, large, human), confidence, model, latency |
+| `/why` | the last decisions of the session: type, value, who decided (rule, a tier such as `local`, human), confidence, model, latency |
 | `/help` | every command |
 | `/machines` | the machines, their routing, and their use in this project |
 | `/quit` | close the client; the session keeps running in the daemon |
@@ -364,7 +378,7 @@ step mode on
 > the login test fails
 ‖ paused in reproduce before bash exit 1 — /next · /decide <value> · /continue
 > /next                        (or just Enter in the TUI)
-‖ paused in triage before Triage: flaky (large 0.83) — /next · /decide <value> · /continue
+‖ paused in triage before Triage: flaky (local 0.83) — /next · /decide <value> · /continue
 > /decide code_bug
 ```
 
@@ -525,13 +539,13 @@ Every decision type has labelled examples in `priv/decisions/<type>/examples.jso
 Compare tiers on them:
 
 ```bash
-mix xeito.eval triage risk --deciders baseline,rules,small,large
-mix xeito.eval intent --deciders small,large --epsilon 0.01          # cascade: how much can the small tier take?
-mix xeito.eval triage --deciders large --predictions large --out /tmp/eval   # save verdicts as distillation data
-mix xeito.eval intent --deciders large,openrouter --limit 20         # an off-box tier, on public data only
+mix xeito.eval triage risk --deciders baseline,rules,local_decision,local
+mix xeito.eval intent --deciders local_decision,local --epsilon 0.01   # cascade: how much can the decision model take?
+mix xeito.eval triage --deciders local --predictions local --out /tmp/eval   # save verdicts as distillation data
+mix xeito.eval intent --deciders local,remote --limit 20               # a remote tier, on public data only
 ```
 
-The report gives accuracy, coverage, macro-F1, calibration (ECE) and p50/p95 latency for each decider. It also includes the **gate test**, which checks whether a cheaper decider is good enough to replace the large one. With `--epsilon`, it adds the tuned cascade threshold. Off-box tiers are skipped for types that forbid them (Risk).
+The report gives accuracy, coverage, macro-F1, calibration (ECE) and p50/p95 latency for each decider. It also includes the **gate test**, which checks whether a decision model (`local_decision`, `remote_decision`) is good enough to replace the local language model. With `--epsilon`, it adds the tuned cascade threshold. Remote tiers are skipped for types that forbid them (Risk).
 
 ## 10. Extending
 
@@ -588,8 +602,8 @@ defmodule MyApp.Decisions.ReviewNeeded do
 
   rule :docs_only?, then: :no
 
-  deciders [:small, :large]
-  min_confidence %{small: 0.8, large: 0.75}
+  deciders [:local_decision, :local]
+  min_confidence %{local_decision: 0.8, local: 0.75}
 
   def docs_only?(%{diff: diff}), do: not String.contains?(diff, ".ex")
 end
@@ -620,7 +634,7 @@ Replies echo the request `id`. Events stream as `{"event": …, "session": …, 
 - **Wrap a routine in a skill first.** A 10-line `SKILL.md` for "prepare a release" or "update the changelog" is the cheapest way to make a workflow repeatable. If it proves itself, turn it into a machine.
 - **Turn repeated chats into machines.** If the log shows the same free-chat pattern again and again ("update the changelog", "bump the version and tag"), write it as a machine. It becomes faster, cheaper and auditable. This is how Xeito is meant to grow.
 - **Tighten Risk for your repo.** Add a rule for a command you always approve (or always deny) and you'll see fewer reviews.
-- **Compare tiers on your own data.** Export decisions with `--predictions`, relabel the wrong ones, and rerun the gate test with your small model.
+- **Compare tiers on your own data.** Export decisions with `--predictions`, relabel the wrong ones, and rerun the gate test with your decision model.
 - **Use step mode for teaching.** Walking through `fix_failing_test` with `/step` shows exactly how a statechart constrains a model.
 
 ## 12. Troubleshooting
@@ -628,8 +642,8 @@ Replies echo the request `id`. Events stream as `{"event": …, "session": …, 
 | Symptom | Check |
 |---|---|
 | `no daemon at …/xeito.sock` | Is the daemon running? `systemctl --user status xeitod`, or start `mix xeito.daemon`. |
-| every decision says `abstain` | No model tier is reachable. Check that the `XEITO_*` URLs are set *in the daemon's environment* and that the services answer. |
-| the first answer takes seconds | The large model was unloaded (`XEITO_KEEP_ALIVE`) and has to be loaded again, which takes ~2.5 s on a 24 GB GPU. |
+| every decision says `abstain` | No model tier is reachable. Check that the `XEITO_<TIER>_*` variables are set *in the daemon's environment* and that the services answer. |
+| the first answer takes seconds | The local model was unloaded (`XEITO_LOCAL_KEEP_ALIVE`) and has to be loaded again, which takes ~2.5 s on a 24 GB GPU. |
 | text appears in one burst | Expected with Ollama: when tools are offered, it withholds streamed text until it knows the reply isn't a tool call ([bench 4](bench/4-harness.md)). |
 | `busy` | A run is in progress. Wait, answer its review, or use `/continue` if it's paused. |
 | a session seems gone | It closed after being idle. `--session <id>` with the same `--cwd` rebuilds it from the log. |

@@ -21,25 +21,24 @@ Concrete host inventories and site configuration belong in each operator's priva
 flowchart TB
   subgraph cpu[CPU · AVX-512]
     R[rules<br/>in BEAM, µs]
-    S0[small-s1<br/>laya-serve · /v1/systemone<br/>laya-multilingual, pinned per request]
-    S1[small-gen<br/>llama-server<br/>~1–2B GGUF Q8, grammar + logprobs]
-    S2[small-cls<br/>Bumblebee/EXLA CPU in BEAM<br/>ModernBERT + logistic head]
+    S0[local_decision<br/>laya-serve · /v1/systemone<br/>laya-multilingual, pinned per request]
   end
   subgraph gpu[GPU · ~24 GB]
-    L1[large: qwen3.6:27b]
-    L2[large: gemma4:31b]
+    L1[local: qwen3.6:27b]
+    L2[local: gemma4:31b]
   end
-  X[remote: Claude API<br/>policy-gated]
+  X[remote, remote_frontier<br/>OpenRouter, opt-in, policy-gated]
   H[human: TUI prompt]
-  R --> S0 --> S1 --> L1
-  S2 --> L1
+  R --> S0 --> L1
   L1 -. swap .- L2
   L1 --> X --> H
 ```
 
-### Tier: small (CPU)
+Tier names are those of P4d ([04](04-delegation.md#the-escalation-machine)). The CPU candidates below were evaluated in P2 under the earlier names `small-s1` (now `local_decision`) and `small-gen` (a small language model on llama-server; that tier was removed in P4d).
 
-#### small-s1: a System One decision model
+### Tier: local_decision (CPU)
+
+#### A System One decision model
 
 - **What.** laya-multilingual (mmBERT-base, 322M, Apache-2.0), served by upstream **`laya-serve`**. It uses Laya's own CPU container (`compose.yaml` + `compose.http.yaml`, CPU PyTorch) and speaks the Jev-compatible `POST /v1/systemone` contract.
   - It is published on loopback only, with `LAYA_API_KEY_FILE` set, and runs as a non-root container user.
@@ -58,9 +57,9 @@ flowchart TB
   3. temperature calibration.
 - **Second candidate:** GLiNER2.5-multi-Decide (340M, Apache-2.0, CPU-native). It needs a small adapter to the `/v1/systemone` contract.
 - **Not recommended:** Kev-0.5B. It is a superseded prototype, English-trained, and only tested on Apple MPS.
-- **Hosted Jev** (TypeSafe) is optional, for benchmarking only, on synthetic or public data. It is a `remote` tier and falls under the data-locality policy ([10](10-security-and-sandboxing.md#data-protection)).
+- **Hosted Jev** (TypeSafe) is optional, for benchmarking only, on synthetic or public data. It is the `remote_decision` tier and falls under the data-locality policy ([10](10-security-and-sandboxing.md#data-protection)). It is not callable through OpenRouter (checked 2026-10-03).
 
-#### small-gen: grammar-constrained small LLM
+#### Grammar-constrained small LLM (P2; tier removed in P4d)
 
 **Serving.** llama.cpp `llama-server`, built for the CPU with AVX-512 (`-DGGML_NATIVE=ON`). It runs as a systemd user unit pinned to most of the physical cores (for example 6 of 8), which leaves headroom for the BEAM, the TUI and the OS.
 Its endpoints are `/completion` with `json_schema` or `grammar` plus `n_probs` for confidence ([03](03-typed-decisions.md#where-confidence-comes-from)). Where supported, `--parallel` with 2–4 slots handles concurrent decisions from parallel runs.
@@ -83,7 +82,7 @@ A typed decision is prompt-heavy and output-light. The **target is p50 below 400
 
 **The classifier variant.** Bumblebee 0.8 runs ModernBERT and other encoders with EXLA's precompiled CPU backend, inside the BEAM. A decision type that has *graduated* ([03](03-typed-decisions.md#three-families-of-small-decider)) costs single-digit milliseconds and is deterministic.
 
-### Tier: large (GPU)
+### Tier: local (GPU)
 
 - **Serving.** Ollama, with structured output via `format: <JSON Schema>`. The loaded model is read from `/api/ps`, which feeds the swap substate.
   - `qwen3.6:27b`: dense 27B, 256K native context, tuned for agentic coding. **Default large model** for planning and edit generation.
@@ -92,21 +91,16 @@ A typed decision is prompt-heavy and output-light. The **target is p50 below 400
 - **Swap cost.** With one model loaded at a time, a swap costs seconds. It is measured in P0 (cold load from NVMe into VRAM), and the scheduler batches large-tier requests per model ([04](04-delegation.md#the-cost-of-a-tier-change-is-a-state)).
 - **llama.cpp on the GPU (benchmark only).** Reports from 2026 show llama.cpp's **Vulkan** backend beating ROCm on token generation on RDNA3 GPUs, while ROCm leads on prompt processing. Benchmark both next to Ollama. The tier client can target whichever wins.
 
-### Tier: remote (optional)
+### Tiers: remote and remote_frontier (optional, off-box)
 
-- Anthropic Claude over the Messages API (raw `Req`), with JSON-schema structured output. The model ID is kept in config.
+- Both go through OpenRouter. `remote` is a hosted language model with logprobs, so its answers carry a calibrated confidence ([04](04-delegation.md#openrouter)): useful for models too large for the local GPU, and for trying a model before downloading it. `remote_frontier` is the strongest hosted model (Claude, for example); it returns no logprobs, so its answer is terminal.
+- Opt-in: each is configured only when its model and key file are set (`XEITO_REMOTE_MODEL`, `XEITO_REMOTE_KEY_FILE`, and the same for `XEITO_REMOTE_FRONTIER_*`; see [USAGE](../../USAGE.md#model-tiers)). The key's limits can be checked for free (`GET /api/v1/key`).
 - Governed by policy ([04](04-delegation.md#guards-on-escalation)): `Risk` never goes remote, `:local_only` inputs never go remote, and each run has a budget.
-
-### Tier: openrouter (optional)
-
-- Hosted open-weight models through OpenRouter, with logprobs, so answers carry a calibrated confidence ([04](04-delegation.md#openrouter)). Useful for models too large for the local GPU, and for trying a model before downloading it.
-- Configured by a key file and a model slug in the environment (`XEITO_OPENROUTER_*`, see `config/runtime.exs`). The key's limits can be checked for free (`GET /api/v1/key`).
-- Off-box: the same policy gate, locality rule and budget as `remote`.
 
 ### Thread budget
 
-The CPU placement of the small tiers costs the GPU-resident large model almost nothing: ≤ 4% of its tokens/s ([bench 1](../../bench/1-contention.md)). The host side of GPU generation still keeps ~5 hardware threads busy. Budget explicitly, and check with bench 1 after changing any tier:
-large-tier host threads + small-tier threads + BEAM ≤ physical cores.
+The CPU placement of the decision models costs the GPU-resident local model almost nothing: ≤ 4% of its tokens/s ([bench 1](../../bench/1-contention.md)). The host side of GPU generation still keeps ~5 hardware threads busy. Budget explicitly, and check with bench 1 after changing any tier:
+local-tier host threads + CPU-tier threads + BEAM ≤ physical cores.
 If the large model's context or size forces partial CPU offload, this budget no longer holds.
 
 ## Services
@@ -117,29 +111,25 @@ All services bind to **loopback only**. Remote access goes through an SSH tunnel
 |---|---|---|
 | `ollama` | `127.0.0.1:11434` | Make sure Ollama is not bound to all interfaces. |
 | `xeito-laya` (Docker, upstream `laya-serve`) | `127.0.0.1:8082` | Pinned upstream tag, API key file, `LAYA_PRELOAD=1`, model pinned per request |
-| `xeito-llama-small` | `127.0.0.1:8081` | `llama-server -m <small>.gguf --threads 6 --ctx-size 8192 --parallel 4 --cache-reuse 256` (flags to be confirmed against the build) |
 | `xeitod` | Unix socket under `$XDG_STATE_HOME/xeito/`, inspector on `127.0.0.1:4040` | `mix release`, `Restart=on-failure` |
 | `xeito-mine.timer` | — | Nightly PM4Py batch over the project logs ([05](05-event-log-and-process-mining.md)) |
 | `xeito-bench.timer` | — | Nightly benchmark, logged to `bench/` |
 
-### Configuration sketch
+### Configuration
 
-```elixir
-# $XDG_CONFIG_HOME/xeito/config.exs
-import Config
+Tiers are read from the environment at startup (`Xeito.Tiers.Settings`; [USAGE](../../USAGE.md#model-tiers)), from one file that both the shell and the service source:
 
-config :xeito, :tiers,
-  small_s1: [backend: :systemone, url: "http://127.0.0.1:8082",
-             api_key: {:env, "LAYA_ONNX_API_KEY"}, model: "multilingual"],
-  small: [backend: :llama_server, url: "http://127.0.0.1:8081", model: "qwen3.5-2b-q8_0"],
-  small_cls: [backend: :bumblebee, device: :cpu],
-  large: [backend: :ollama, url: "http://127.0.0.1:11434",
-          models: [default: "qwen3.6:27b", second_opinion: "gemma4:31b"],
-          swap_budget_per_run: 3],
-  remote: [backend: :req_llm, provider: :anthropic, api_key: {:env, "ANTHROPIC_API_KEY"},
-           default_budget_usd: 0.50, policy: :ask_first]
-
-config :xeito, :energy, cpu: :rapl, gpu: {:sysfs, :auto}
+```bash
+# ~/.config/xeito/tiers.env
+export XEITO_LOCAL_DECISION_URL=http://127.0.0.1:8082
+export XEITO_LOCAL_DECISION_KEY_FILE="$HOME/.config/xeito/laya_api_key"
+export XEITO_LOCAL_URL=http://127.0.0.1:11434
+export XEITO_LOCAL_MODEL=qwen3.6:27b
+export XEITO_LOCAL_CONTEXT=65536
+export XEITO_LOCAL_KEEP_ALIVE=5m
+# Off-box and opt-in:
+# export XEITO_REMOTE_MODEL=qwen/qwen3.8-27b
+# export XEITO_REMOTE_KEY_FILE="$HOME/.config/xeito/openrouter.key"
 ```
 
 ## Benchmark protocol

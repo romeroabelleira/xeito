@@ -120,11 +120,11 @@ defmodule Xeito.Effect do
     %__MODULE__{kind: :tier, args: %{tier: tier, decision: type, input: input}, reply: :tier_done}
   end
 
-  @doc "Ask whether a tier's model is resident (large tier)."
+  @doc "Ask whether a tier's model is resident (the local tier)."
   @spec probe(atom(), map()) :: t()
   def probe(tier, args), do: %__MODULE__{kind: :probe, args: Map.put(args, :tier, tier), reply: :probed}
 
-  @doc "Load a tier's model (large tier): a swap."
+  @doc "Load a tier's model (the local tier): a swap."
   @spec swap(atom(), map()) :: t()
   def swap(tier, args), do: %__MODULE__{kind: :swap, args: Map.put(args, :tier, tier), reply: :swapped}
 

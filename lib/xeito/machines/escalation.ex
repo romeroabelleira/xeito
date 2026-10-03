@@ -4,13 +4,13 @@ defmodule Xeito.Machines.Escalation do
   (`docs/architecture/04-delegation.md`).
 
       deciding ─┬─ rules
-                ├─ system_one
-                ├─ small
-                ├─ large ─┬─ check_loaded   (is the model resident?)
+                ├─ local_decision
+                ├─ remote_decision
+                ├─ local ─┬─ check_loaded   (is the model resident?)
                 │         ├─ swapping       (load it: seconds, budgeted per run)
                 │         └─ infer
-                ├─ openrouter
                 ├─ remote
+                ├─ remote_frontier
                 └─ human
       committed · abstained · failed
 
@@ -19,22 +19,25 @@ defmodule Xeito.Machines.Escalation do
   abstain. Because every tier visited is a state entered and every result an event, the
   escalation path of each decision is in the OCEL log, ready for mining.
 
-  Placement awareness (open question Q16): when the large model is **not** resident, an earlier
-  small-tier answer with confidence ≥ `policy.unloaded_accept` is committed instead of paying for
-  a swap.
+  Placement awareness (open question Q16): when the local model is **not** resident, an earlier
+  tier's answer with confidence ≥ `policy.unloaded_accept` is committed instead of paying for a
+  swap.
+
+  2.0.0 (P4d): the tier states are named by kind and place (`Xeito.Tiers`); 1.x had
+  `system_one`, `small`, `large`, `openrouter` and `remote`.
 
   Context (built by `Xeito.Escalation`): `type`, `input` (normalised), `plan` (remaining tiers),
   `policy`, `parent` (the requesting run), `base` (a `%Xeito.Decision{}` template), `attempts`.
   """
 
-  use Xeito.Machine, version: "1.1.0"
+  use Xeito.Machine, version: "2.0.0"
 
   alias Xeito.Decider
   alias Xeito.Decision
   alias Xeito.Decision.Type
   alias Xeito.Effect
 
-  @routable [:system_one, :small, :large, :openrouter, :remote, :human]
+  @routable [:local_decision, :remote_decision, :local, :remote, :remote_frontier, :human]
 
   initial :deciding
 
@@ -48,37 +51,37 @@ defmodule Xeito.Machines.Escalation do
     on :tier_done, to: :abstained, action: :abstain
 
     state :rules, entry: :run_rules, timeout: 5_000
-    state :system_one, entry: :run_system_one, timeout: 10_000
-    state :small, entry: :run_small, timeout: 30_000
+    state :local_decision, entry: :run_local_decision, timeout: 10_000
+    state :remote_decision, entry: :run_remote_decision, timeout: 30_000
 
-    state :large, initial: :check_loaded do
-      state :check_loaded, entry: :probe_large, timeout: 10_000 do
+    state :local, initial: :check_loaded do
+      state :check_loaded, entry: :probe_local, timeout: 10_000 do
         on :probed, to: :infer, guard: :loaded?
         on :probed, to: :committed, guard: :accept_previous?, action: :commit_previous
         on :probed, to: :swapping, guard: :swap_allowed?
 
-        for tier <- @routable -- [:large] do
+        for tier <- @routable -- [:local] do
           on :probed, to: tier, guard: :"skip_to_#{tier}?", action: :skip
         end
 
         on :probed, to: :abstained, action: :abstain_skipped
       end
 
-      state :swapping, entry: :swap_large, timeout: 300_000 do
+      state :swapping, entry: :swap_local, timeout: 300_000 do
         on :swapped, to: :infer, guard: :swap_ok?
 
-        for tier <- @routable -- [:large] do
+        for tier <- @routable -- [:local] do
           on :swapped, to: tier, guard: :"skip_to_#{tier}?", action: :skip
         end
 
         on :swapped, to: :abstained, action: :abstain_skipped
       end
 
-      state :infer, entry: :run_large, timeout: 120_000
+      state :infer, entry: :run_local, timeout: 120_000
     end
 
-    state :openrouter, entry: :run_openrouter, timeout: 90_000
-    state :remote, entry: :run_remote, timeout: 180_000
+    state :remote, entry: :run_remote, timeout: 90_000
+    state :remote_frontier, entry: :run_remote_frontier, timeout: 180_000
 
     # --- entry functions: one effect per tier ------------------------------------------------
 
@@ -96,19 +99,19 @@ defmodule Xeito.Machines.Escalation do
   def run_rules(ctx), do: [tier_effect(:rules, ctx)]
   @doc false
   # --- guards ------------------------------------------------------------------------------
-  def run_system_one(ctx), do: [tier_effect(:system_one, ctx)]
+  def run_local_decision(ctx), do: [tier_effect(:local_decision, ctx)]
   @doc false
-  def run_small(ctx), do: [tier_effect(:small, ctx)]
+  def run_remote_decision(ctx), do: [tier_effect(:remote_decision, ctx)]
   @doc false
-  def run_large(ctx), do: [tier_effect(:large, ctx)]
-  @doc false
-  def run_openrouter(ctx), do: [tier_effect(:openrouter, ctx)]
+  def run_local(ctx), do: [tier_effect(:local, ctx)]
   @doc false
   def run_remote(ctx), do: [tier_effect(:remote, ctx)]
   @doc false
-  def probe_large(ctx), do: [Effect.probe(:large, %{policy: ctx.policy, parent: ctx.parent})]
+  def run_remote_frontier(ctx), do: [tier_effect(:remote_frontier, ctx)]
   @doc false
-  def swap_large(ctx), do: [Effect.swap(:large, %{parent: ctx.parent})]
+  def probe_local(ctx), do: [Effect.probe(:local, %{policy: ctx.policy, parent: ctx.parent})]
+  @doc false
+  def swap_local(ctx), do: [Effect.swap(:local, %{parent: ctx.parent})]
 
   defp tier_effect(tier, ctx), do: Effect.tier(tier, ctx.type, ctx.input)
 
@@ -120,7 +123,7 @@ defmodule Xeito.Machines.Escalation do
     def unquote(:"next_#{tier}?")(ctx, result), do: not accept?(ctx, result) and next?(ctx, unquote(tier))
   end
 
-  for tier <- @routable -- [:large] do
+  for tier <- @routable -- [:local] do
     @doc false
     # --- actions -----------------------------------------------------------------------------
     def unquote(:"skip_to_#{tier}?")(ctx, _result), do: next?(ctx, unquote(tier))
@@ -162,7 +165,7 @@ defmodule Xeito.Machines.Escalation do
     winner = best_previous(ctx)
 
     finish_with(ctx, [
-      {:decided, Map.put(winner, :placement, :large_not_loaded)}
+      {:decided, Map.put(winner, :placement, :local_not_loaded)}
       | List.delete(ctx.attempts, winner)
     ])
   end
@@ -186,13 +189,13 @@ defmodule Xeito.Machines.Escalation do
 
   @doc false
   def skip(ctx, probe),
-    do: %{ctx | attempts: [%{tier: :large, error: {:skipped, probe}} | ctx.attempts], plan: tl(ctx.plan)}
+    do: %{ctx | attempts: [%{tier: :local, error: {:skipped, probe}} | ctx.attempts], plan: tl(ctx.plan)}
 
   @doc false
   def abstain(ctx, result), do: finish_with(ctx, [result | ctx.attempts])
 
   @doc false
-  def abstain_skipped(ctx, data), do: finish_with(ctx, [%{tier: :large, error: {:skipped, data}} | ctx.attempts])
+  def abstain_skipped(ctx, data), do: finish_with(ctx, [%{tier: :local, error: {:skipped, data}} | ctx.attempts])
 
   defp finish_with(ctx, attempts) do
     decision = Decider.finalize(Decision.type!(ctx.type), ctx.base, attempts)

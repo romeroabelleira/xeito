@@ -27,9 +27,9 @@ Every transition in a run is taken by exactly one kind of *actor*:
 |---|---|---|
 | `code` | "tests passed → `:done`" | yes |
 | `human` | "user approved the diff" | no, but explicit |
-| `small` | CPU model classifies the intent | stochastic, cheap |
-| `large` | GPU 27B model plans an edit | stochastic, costly |
-| `remote` | frontier API model | stochastic, costly, off-box |
+| `local_decision` | a CPU decision model classifies the intent | stochastic, cheap |
+| `local` | the GPU 27B model plans an edit | stochastic, costly |
+| `remote`, `remote_frontier` | a hosted model | stochastic, costly, off-box |
 
 The **determinism budget** is the share of transitions taken by `code`. It is reported per machine and per run.
 A healthy machine drifts towards a higher `code` share over time: process mining shows which model decisions were always the same, and those become guards. See [05](05-event-log-and-process-mining.md).
@@ -74,7 +74,7 @@ Complexity lives in *machines* (data), not in the harness (code).
 | **Transition** | A state change `from --event[guard]/action--> to`, taken by one actor. |
 | **Decision** | A typed choice made by a decider (code, model or human) inside a state. See [03](03-typed-decisions.md). |
 | **Decider** | Anything that can produce a decision of a given type: a rule, a model tier, a human prompt. |
-| **Tier** | A class of model decider: `small` (CPU), `large` (local GPU), `remote` (API). |
+| **Tier** | A place on the escalation ladder, named by the kind of model and where it runs: `local_decision`, `remote_decision`, `local`, `remote`, `remote_frontier` ([04](04-delegation.md)). |
 | **Escalation** | A transition that hands a decision to a higher tier. |
 | **Guard** | A pure predicate that must hold for a transition to fire. |
 | **Artefact** | Free-form output (code, text) produced in a state and checked by a guard. |

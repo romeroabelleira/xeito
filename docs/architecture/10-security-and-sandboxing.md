@@ -27,7 +27,7 @@ The `Risk` decision is **never** delegated to an off-box tier (`openrouter`, `re
 Writes *inside* the workspace are safe by rule when they can be proven from the command's text: redirects, `tee`, `touch`, `mkdir`, `rm`, `mv`, `cp` and `sed -i` with one plain substitution, where every path is a literal, relative word that stays inside the workspace once symlinks are resolved on disk. It cannot be the workspace root, `.git` anywhere, or a protected directory (dependencies, build output, the log). The premise is that the workspace is under version control, so such a write can be undone. A command whose writes cannot be seen in its text (`make`, a script, `npm install`) still goes to review; proving those would take the `contained` level.
 A small model's `Risk` verdict can only *raise* caution (`:safe` → `:review`), never lower it. Independent tests of small open decision models found prompt-injection and PII catch rates far below what a safety gate needs ([references §7](references.md#7-system-one-decision-models-jev-and-open-clones)).
 
-Local decision servers (`laya-serve`, `llama-server`) are published on `127.0.0.1` only, with an API key file. Inside its container `laya-serve` listens on all interfaces, so the host-side publish address and `LAYA_API_KEY_FILE` are what protect it.
+Local decision servers (`laya-serve`) are published on `127.0.0.1` only, with an API key file. Inside its container `laya-serve` listens on all interfaces, so the host-side publish address and `LAYA_API_KEY_FILE` are what protect it.
 
 ## Why typed control flow helps against prompt injection
 

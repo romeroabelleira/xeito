@@ -605,7 +605,7 @@ defmodule Xeito.Run do
   # determinism budget counts (docs/architecture/01-principles.md#2-the-determinism-budget).
   defp actor(_effect, %{decision: %{actor: actor}}) when actor not in [nil, :none], do: actor
   defp actor(%Effect{kind: :chat}, %{error: _}), do: :code
-  defp actor(%Effect{kind: :chat}, _result), do: :large
+  defp actor(%Effect{kind: :chat}, _result), do: :local
   defp actor(_effect, _result), do: :code
 
   defp entered_event(state), do: Event.new("state_entered", {:state_entered, state}, %{"state" => state})

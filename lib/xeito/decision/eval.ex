@@ -7,7 +7,7 @@ defmodule Xeito.Decision.Eval do
 
     * `:rules` — the type's rules only (abstains when no rule fires)
     * `:baseline` — the *static rule*: rules, else the most frequent label
-    * `:system_one`, `:small`, `:large` — one model tier, evaluated alone
+    * a model tier (`:local_decision`, `:local`, `:remote`, …) — evaluated alone
     * `:pipeline` — `Xeito.Decider.decide/3` as a run uses it (rules → tiers → floor)
 
   Metrics:
@@ -16,8 +16,9 @@ defmodule Xeito.Decision.Eval do
     * ECE (10 bins), raw and after temperature scaling (2-fold: fit T on one half, measure on the other)
     * latency p50/p95, accuracy per language, and the confusion pairs
 
-  Gate (`docs/architecture/03-typed-decisions.md#the-gate-test`): a small candidate passes if
-  its accuracy is within `margin` of the large tier and at least `margin` above the static rule.
+  Gate (`docs/architecture/03-typed-decisions.md#the-gate-test`): a decision-model candidate
+  passes if its accuracy is within `margin` of the local tier and at least `margin` above the
+  static rule.
   """
 
   alias Xeito.Decider
@@ -215,25 +216,26 @@ defmodule Xeito.Decision.Eval do
 
   @doc """
   The gate test. `metrics_by_decider` maps deciders to `metrics/2` output. Candidates are the
-  small tiers present. Returns one verdict per candidate.
+  decision-model tiers present (`:local_decision`, `:remote_decision`), measured against the
+  local tier. Returns one verdict per candidate.
   """
   @spec gate(%{atom() => map()}, float()) :: [map()]
   def gate(metrics_by_decider, margin \\ 0.02) do
-    large = get_in(metrics_by_decider, [:large, :accuracy])
+    local = get_in(metrics_by_decider, [:local, :accuracy])
     baseline = get_in(metrics_by_decider, [:baseline, :accuracy])
 
-    for candidate <- [:system_one, :small], m = metrics_by_decider[candidate], m != nil do
-      vs_large = if large, do: m.accuracy >= large - margin
+    for candidate <- [:local_decision, :remote_decision], m = metrics_by_decider[candidate], m != nil do
+      vs_local = if local, do: m.accuracy >= local - margin
       vs_baseline = if baseline, do: m.accuracy >= baseline + margin
 
       %{
         candidate: candidate,
         accuracy: m.accuracy,
-        large: large,
+        local: local,
         baseline: baseline,
         margin: margin,
-        passes: vs_large == true and vs_baseline == true,
-        vs_large: vs_large,
+        passes: vs_local == true and vs_baseline == true,
+        vs_local: vs_local,
         vs_baseline: vs_baseline
       }
     end

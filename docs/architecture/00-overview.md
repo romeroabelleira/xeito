@@ -23,7 +23,7 @@ flowchart TB
     REG[Machine registry<br/>name@version]
     RUNS[Run supervisor<br/>one gen_statem per run · 02]
     DEC[Decision runner<br/>typed decisions · 03]
-    DEL[Delegation machine<br/>rules→small→large→remote/human · 04]
+    DEL[Delegation machine<br/>rules→local_decision→local→remote/human · 04]
     EFF[Effect runner<br/>read · write · edit · bash · policy · 10]
     TEL[Telemetry + PubSub · 06]
     LOG[(OCEL 2.0 log<br/>SQLite · 05)]
@@ -31,9 +31,9 @@ flowchart TB
   end
 
   subgraph models[Model tiers · 09]
-    SMALL[small: llama-server CPU<br/>+ Bumblebee classifiers]
-    LARGE[large: Ollama GPU<br/>qwen3.6 · gemma4]
-    REMOTE[remote: Claude API]
+    SMALL[local_decision: laya-serve CPU<br/>System One decision model]
+    LARGE[local: Ollama GPU<br/>qwen3.6 · gemma4]
+    REMOTE[remote, remote_frontier:<br/>OpenRouter, opt-in]
   end
 
   MINE[PM4Py sidecar<br/>discovery · conformance]

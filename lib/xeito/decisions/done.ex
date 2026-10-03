@@ -20,7 +20,7 @@ defmodule Xeito.Decisions.Done do
   rule :blocked_by_access?, then: :blocked
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders [:large]
+  deciders [:local]
   min_confidence 0.8
 
   @doc false

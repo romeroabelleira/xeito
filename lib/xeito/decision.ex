@@ -18,7 +18,7 @@ defmodule Xeito.Decision do
 
         rule :missing_dependency?, then: :env_problem
 
-        deciders [:system_one, :small]
+        deciders [:local_decision, :local]
         min_confidence 0.8
 
         def missing_dependency?(input), do: input.output =~ "could not be found"
@@ -47,7 +47,8 @@ defmodule Xeito.Decision do
     evidence: []
   ]
 
-  @type actor :: :rule | :system_one | :small | :large | :openrouter | :remote | :human | :none
+  @type actor ::
+          :rule | :local_decision | :remote_decision | :local | :remote | :remote_frontier | :human | :none
   @type t :: %__MODULE__{
           type: module(),
           type_version: String.t() | nil,
@@ -83,7 +84,7 @@ defmodule Xeito.Decision do
       @xeito_decision_values []
       @xeito_decision_rules []
       @xeito_decision_instructions nil
-      @xeito_decision_deciders [:system_one, :small]
+      @xeito_decision_deciders [:local]
       @xeito_decision_min_confidence 0.8
       @xeito_decision_severity nil
       @xeito_decision_policy []

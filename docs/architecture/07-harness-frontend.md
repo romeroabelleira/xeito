@@ -121,7 +121,7 @@ Additional tools come from extensions. An extension is an Elixir module that imp
 
 ## Context and configuration
 
-- `AGENTS.md` in the project root, the same convention as pi. It is injected into prompts for the large and remote tiers only; small-tier prompts are generated from decision definitions. Past 16 KiB it is cut, and the prompt says so.
+- `AGENTS.md` in the project root, the same convention as pi. It is injected into the chat prompts only; decision prompts are generated from decision definitions. Past 16 KiB it is cut, and the prompt says so.
 - **The context window.** Ollama does not refuse a prompt that is longer than the model's window: it cuts it from the front, which drops the system prompt (and `AGENTS.md` in it) first, and reports no error. So the chat machine fits every request itself (`Xeito.Chat.Window`), into the large tier's `context` minus a reserve for the reply:
   1. old tool outputs become stubs, except the last four;
   2. the oldest earlier turns are dropped whole, with a note saying how many messages were left out (a turn starts at a user message, so a tool result never loses its call);

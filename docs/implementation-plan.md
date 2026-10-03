@@ -24,7 +24,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4 · TUI harness | daemon, TUI, chat and structured machines, step mode, skills, compact log, dogfood fixes | 2027-01-04 → 02-08 | built 2026-09-27 → 09-28; dogfooding until ≥ 2026-10-12 | [bench 4](../bench/4-harness.md) |
 | P4b · Context economy (inserted) | shape tool output before the model reads it, elide old tool output from the conversation; measured with the code-navigation benchmark | — | ≈ 2026-09-30 → 10-12, within P4's dogfooding | [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28) |
 | P4c · Summarising dropped turns (planned) | a summarising step replaces dropped turns with a logged summary | — | after P4b | [07](architecture/07-harness-frontend.md#context-and-configuration) |
-| P4d · Tier names (planned) | tiers named by kind and place (`local_decision`, `local`, `remote_decision`, `remote`, `remote_frontier`); backends separate; remote through OpenRouter | — | after P4b | [P4d](#p4d--tier-names-planned) |
+| P4d · Tier names | tiers named by kind and place (`local_decision`, `local`, `remote_decision`, `remote`, `remote_frontier`); backends separate; remote through OpenRouter | — | steps 1–2 done 2026-10-03; step 3 deferred | [P4d](#p4d--tier-names) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
@@ -297,7 +297,7 @@ Added 2026-10-03. Since chat machine 0.9.0, a chat request that does not fit the
 
 **Exit:** a session that has dropped turns still answers questions about them, and replays reproduce its requests exactly.
 
-## P4d · Tier names (planned)
+## P4d · Tier names
 
 Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`, `openrouter` and `remote`. The names mix three things: the kind of model, where it runs, and the API it speaks. `openrouter` and `remote` are separate only because one speaks OpenAI's API and the other Anthropic's.
 
@@ -324,20 +324,20 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
 - **Ladder order:** `local_decision` → `remote_decision` → `local` → `remote` → `remote_frontier` → human. Policy and configuration drop tiers from it, as now.
 
 1. **Separate backends from tiers** (done 2026-10-03). The API a tier speaks is a backend in `Xeito.Backends`: `SystemOne`, `LlamaServer`, `Ollama` (decisions and model residency, formerly `Tiers.Large` and `Tiers.Ollama`), `OpenRouter` and `Anthropic`; the last two of these go in step 2. A tier's configuration may name its backend (`backend:`); without one, each tier keeps its old default, so nothing changes in operation. `Xeito.Tiers.run/4` dispatches by backend, an unknown backend is an error, and the monitor probes a tier through its backend's API. Nothing is renamed in this step.
-2. **Rename.** The rename covers:
+2. **Rename** (done 2026-10-03). The rename covers:
    - the escalation machine (2.0.0, with states named after the tiers);
    - the `deciders` lists of the decision types;
    - `Xeito.Policy`, `Xeito.Tiers.Queue`, the energy estimates, `Xeito.Monitor` and the status bar;
    - `mix xeito.eval`: the P7 gate compares candidates against `local`.
 
-   Settings become `XEITO_<TIER>_{BACKEND,URL,MODEL,KEY_FILE,CONTEXT}`, for example `XEITO_LOCAL_MODEL` and `XEITO_REMOTE_FRONTIER_MODEL`. A remote tier's backend and URL default to OpenRouter's; it is configured only when both its model and its key file are set, so one OpenRouter key does not switch both tiers on. The `llama-server` example unit and the `XEITO_LLAMA_*`/`XEITO_SMALL_MODEL` settings go. Old runs keep their machine version; logged actors (`large`, `openrouter`, …) are mapped to the new names when read, so mining and P7's distillation data span the change.
+   Settings become `XEITO_<TIER>_{BACKEND,URL,MODEL,KEY_FILE,CONTEXT}`, for example `XEITO_LOCAL_MODEL` and `XEITO_REMOTE_FRONTIER_MODEL`. A remote tier's backend and URL default to OpenRouter's; it is configured only when both its model and its key file are set, so one OpenRouter key does not switch both tiers on. The `llama-server` example unit, the `XEITO_LLAMA_*`/`XEITO_SMALL_MODEL` settings, and the llama-server and Anthropic backends go. The frontier tier asks OpenRouter for no logprobs, so endpoints without them (Claude's) can serve it. Old runs keep their machine version and their names: nothing in Xeito reads tier names back from old logs yet, so the old-to-new table is documented in [04](architecture/04-delegation.md#the-escalation-machine) for P5's readers rather than coded now.
 3. **Choose the remote models (deferred until remote tiers are wanted).** A P3b-style benchmark on the eval sets measures accuracy, calibration, cost per decision and latency. It spends OpenRouter credit, so it runs only once remote tiers are to be used; until then the candidates below are notes, not defaults.
    - For `remote`: `qwen/qwen3.8-27b`, an off-box twin of `local` (12 of its 17 endpoints offered logprobs and JSON schema on 2026-10-03), against `z-ai/glm-5.3` and `moonshotai/kimi-k3`.
    - For `remote_frontier`: `anthropic/claude-sonnet-5.5` against `claude-opus-5.5`. The benchmark checks that structured output works under `zdr: true`, which routes Claude away from Anthropic's own endpoints.
    - For `remote_decision`: Jev is not callable through OpenRouter (checked 2026-10-03). `~typesafe/jev-latest` is listed with the modality `text->decisions` but has no endpoints. `typesafe/jev-router` is a router that uses Jev to choose a language model, which then answers in text. It returns no decision with probabilities, so it cannot serve this tier. The tier stays unset until Jev has an OpenRouter endpoint or a TypeSafe account is chosen; it would be the one remote tier not on OpenRouter.
 4. **Later, a separate decision: chat on a remote tier.** Chat speaks Ollama's API only. A remote chat needs OpenAI-compatible tool calls, and a rule for which workspaces may leave the box at all.
 
-**Exit:** the tiers carry the new names everywhere: configuration, logs read back, monitor, status bar and documentation. With no remote tier configured, nothing leaves the machine. In tests, a configured `remote` and `remote_frontier` are reached through OpenRouter, with costs logged. The live run and the benchmark of step 3 wait until remote tiers are wanted.
+**Exit:** the tiers carry the new names everywhere: configuration, logs, monitor, status bar and documentation. With no remote tier configured, nothing leaves the machine. In tests, a configured `remote` and `remote_frontier` are reached through OpenRouter, with costs logged. The live run and the benchmark of step 3 wait until remote tiers are wanted.
 
 ## P5 · OCEL export and process mining (≈4 weeks)
 

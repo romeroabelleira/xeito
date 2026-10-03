@@ -356,7 +356,7 @@ defmodule Xeito.HarnessTest do
         log: log,
         id: "ses-test-#{System.unique_integer([:positive])}",
         chat: cfg,
-        decider: [deciders: [:large], tiers: [large: cfg]],
+        decider: [deciders: [:local], tiers: [local: cfg]],
         max_steps: 2
       )
 
@@ -375,7 +375,7 @@ defmodule Xeito.HarnessTest do
 
     # The model's `other` keeps the tools; the small-talk rule drops them.
     :ok = Session.prompt(id, "interesting")
-    assert %{attrs: %{"value" => :other, "actor" => :large}} = next_event("intent")
+    assert %{attrs: %{"value" => :other, "actor" => :local}} = next_event("intent")
     next_event("turn_finished")
     assert_received {:chat_request, other}
     assert other["tools"] != []
@@ -542,7 +542,7 @@ defmodule Xeito.HarnessTest do
         log: log,
         id: "ses-test-#{System.unique_integer([:positive])}",
         chat: cfg,
-        decider: [deciders: [:large], tiers: [large: cfg]]
+        decider: [deciders: [:local], tiers: [local: cfg]]
       )
 
     Session.subscribe(id)
@@ -569,7 +569,7 @@ defmodule Xeito.HarnessTest do
     id = session(ws, log, cfg)
     assert :ok = Session.prompt(id, "What files are here?")
 
-    assert %{attrs: %{"value" => :question, "actor" => :large}} = next_event("intent")
+    assert %{attrs: %{"value" => :question, "actor" => :local}} = next_event("intent")
     assert %{attrs: %{"machine" => "Xeito.Machines.Chat"}, run: run} = next_event("run_selected")
     assert run == id <> "/t1"
     assert %{attrs: %{"answer" => "There are two files."}} = next_event("turn_finished")
@@ -595,7 +595,7 @@ defmodule Xeito.HarnessTest do
 
     Session.prompt(id, "/why")
     assert %{attrs: %{"text" => text}} = next_event("notice")
-    assert text =~ "Intent: question by large"
+    assert text =~ "Intent: question by local"
   end
 
   test "session: routes failing tests to fix_failing_test and relays approvals", %{ws: ws} do
@@ -738,7 +738,7 @@ defmodule Xeito.HarnessTest do
     held = fn ->
       send(test, {:deciding, self()})
 
-      # Held, but never for long: model calls share the large tier's queue with later tests.
+      # Held, but never for long: model calls share the local tier's queue with later tests.
       receive do
         :go -> "edit"
       after
@@ -781,7 +781,7 @@ defmodule Xeito.HarnessTest do
         log: log,
         id: id,
         chat: cfg,
-        decider: [deciders: [:large], tiers: [large: cfg]]
+        decider: [deciders: [:local], tiers: [local: cfg]]
       )
 
     assert Session.history(id) == history
@@ -814,7 +814,7 @@ defmodule Xeito.HarnessTest do
         chat: cfg,
         # Fails once (reproduce), passes afterwards (verify), so the run ends cleanly.
         test_cmd: "test -f .ok || (touch .ok; echo 'service unavailable'; exit 1)",
-        decider: [deciders: [:large], tiers: [large: cfg]]
+        decider: [deciders: [:local], tiers: [local: cfg]]
       )
 
     Session.subscribe(id)
@@ -838,7 +838,7 @@ defmodule Xeito.HarnessTest do
       {Xeito.Api,
        socket: path,
        name: :"api_#{System.unique_integer([:positive])}",
-       session: [log: log, chat: cfg, decider: [deciders: [:large], tiers: [large: cfg]]]}
+       session: [log: log, chat: cfg, decider: [deciders: [:local], tiers: [local: cfg]]]}
     )
 
     assert Bitwise.band(File.stat!(path).mode, 0o077) == 0
@@ -887,7 +887,7 @@ defmodule Xeito.HarnessTest do
     defaults = [
       log: log,
       chat: cfg,
-      decider: [deciders: [:large], tiers: [large: cfg]],
+      decider: [deciders: [:local], tiers: [local: cfg]],
       idle_timeout: 200
     ]
 

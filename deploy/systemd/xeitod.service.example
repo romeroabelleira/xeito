@@ -7,12 +7,12 @@
 # Without `loginctl enable-linger`, a user unit runs only while you are logged in.
 [Unit]
 Description=Xeito daemon (xeitod)
-After=network.target xeito-llama-small.service
+After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/path/to/xeito
-# tiers.env exports the XEITO_* variables read by config/runtime.exs.
+# tiers.env exports the XEITO_<TIER>_* variables read by config/runtime.exs (see USAGE.md).
 ExecStart=/bin/bash -c 'source %h/.config/xeito/tiers.env && exec /path/to/mise exec -- mix xeito.daemon'
 Restart=on-failure
 RestartSec=5

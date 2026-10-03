@@ -21,7 +21,7 @@ defmodule Xeito.Decider do
 
   @doc """
   Decides `type_module` for `input`. Options: `:deciders` (tier list), `:tiers` (config
-  overrides per tier, e.g. `[small: [url: ...]]`).
+  overrides per tier, e.g. `[local: [url: ...]]`).
   """
   @spec decide(module(), map(), keyword()) :: Decision.t()
   def decide(type_module, input, opts \\ []) do

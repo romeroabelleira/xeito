@@ -365,7 +365,14 @@ defmodule Xeito.RunTest do
 
          %Xeito.Effect{kind: :decide} ->
            # As the real runner reports it (`Xeito.Effects.Local`): the decision as a map.
-           decision = %Xeito.Decision{type: Triage, value: :flaky, confidence: confidence, actor: :small, model: "m"}
+           decision = %Xeito.Decision{
+             type: Triage,
+             value: :flaky,
+             confidence: confidence,
+             actor: :local_decision,
+             model: "m"
+           }
+
            %{value: :flaky, decision: Xeito.Decision.to_map(decision)}
        end}
     end

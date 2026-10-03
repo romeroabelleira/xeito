@@ -80,7 +80,7 @@ defmodule Xeito.TuiTest do
       "attrs" => %{
         "decision_type" => "Xeito.Decisions.Risk",
         "value" => "review",
-        "actor" => "large",
+        "actor" => "local",
         "confidence" => 0.94
       }
     }
@@ -571,12 +571,14 @@ defmodule Xeito.TuiTest do
         |> Tui.apply_event(event("run_selected", %{"machine" => "Elixir.Xeito.Machines.Chat"}))
         |> Tui.apply_event(event("state_entered", %{"state" => "thinking"}))
         |> Tui.apply_event(event("state_entered", %{"state" => "classify"}, "ses-t/t1/intent"))
-        |> Tui.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "large", "usd" => 0.25}))
-        |> Tui.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "small"}))
+        |> Tui.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "local", "usd" => 0.25}))
+        |> Tui.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "local_decision"}))
 
-      assert %{machine: "Chat", leaf: "thinking", decisions: 2, tier: "small", usd: 0.25} = state
+      assert %{machine: "Chat", leaf: "thinking", decisions: 2, tier: "local_decision", usd: 0.25} = state
       assert is_integer(state.started)
-      assert Tui.status_line(state, 80) =~ ~r/^ ⠋ state thinking · \d+\.\d s · tier small · 2 decisions · \$0\.25 +\/w $/
+
+      assert Tui.status_line(state, 80) =~
+               ~r/^ ⠋ state thinking · \d+\.\d s · tier local_decision · 2 decisions · \$0\.25 +\/w $/
     end
 
     test "intent, a review, a pause, the end of a turn and a lost daemon" do

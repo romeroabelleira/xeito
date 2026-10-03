@@ -6,10 +6,8 @@ defmodule Xeito.Backends do
   | backend         | module                       | API                                                     |
   |-----------------|------------------------------|---------------------------------------------------------|
   | `:system_one`   | `Xeito.Backends.SystemOne`   | Jev-compatible `/v1/systemone` (e.g. laya-serve)        |
-  | `:llama_server` | `Xeito.Backends.LlamaServer` | llama-server, prefilled value + one-token scoring       |
   | `:ollama`       | `Xeito.Backends.Ollama`      | Ollama `/api/chat`, JSON-schema format + logprobs       |
   | `:openrouter`   | `Xeito.Backends.OpenRouter`  | OpenAI-compatible chat completions, JSON schema + logprobs |
-  | `:anthropic`    | `Xeito.Backends.Anthropic`   | Anthropic Messages API, structured output               |
 
   Every backend implements `decide/3`: given a decision type, a normalised input and the tier's
   configuration, it returns the value, a probability for every option, provenance and cost.
@@ -31,12 +29,14 @@ defmodule Xeito.Backends do
   @callback decide(Type.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
 
   @modules %{
-    system_one: Xeito.Backends.SystemOne,
-    llama_server: Xeito.Backends.LlamaServer,
     ollama: Xeito.Backends.Ollama,
     openrouter: Xeito.Backends.OpenRouter,
-    anthropic: Xeito.Backends.Anthropic
+    system_one: Xeito.Backends.SystemOne
   }
+
+  @doc "The backends, by name."
+  @spec names() :: [atom()]
+  def names, do: @modules |> Map.keys() |> Enum.sort()
 
   @doc "The module implementing a backend."
   @spec module(atom()) :: {:ok, module()} | :error

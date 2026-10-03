@@ -726,7 +726,7 @@ defmodule Xeito.Session do
         messages: s.history,
         verify: Router.quick_check_command(s.cwd),
         system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(skills),
-        context: large_context(),
+        context: local_context(),
         skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
       },
       &if(s.max_steps, do: Map.put(&1, :max_steps, s.max_steps), else: &1)
@@ -1014,13 +1014,13 @@ defmodule Xeito.Session do
       notice(
         s,
         "the model server cut this turn's prompt from the front (the system prompt was lost): " <>
-          "set XEITO_LARGE_CONTEXT to the model's context window"
+          "set XEITO_LOCAL_CONTEXT to the model's context window"
       )
 
   defp warn_truncated(s, _result), do: s
 
-  # The large tier's context window, for the chat machine's budget (its own default when unset).
-  defp large_context, do: (Tiers.config(:large) || [])[:context]
+  # The local tier's context window, for the chat machine's budget (its own default when unset).
+  defp local_context, do: (Tiers.config(:local) || [])[:context]
 
   defp remember(%{machine: Chat}, %{status: :halted, ctx: %{turn: [_system | messages]}}, answer),
     do: window(settled(messages) ++ [%{role: "assistant", content: "(#{answer})"}])

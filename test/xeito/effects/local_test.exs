@@ -132,40 +132,40 @@ defmodule Xeito.Effects.LocalTest do
       end
     end
 
-    defp large(stub) do
+    defp local_tier(stub) do
       Req.Test.stub(stub, &ollama/1)
-      [tiers: [large: [url: "http://large.test", plug: {Req.Test, stub}, model: "big"]]]
+      [tiers: [local: [url: "http://large.test", plug: {Req.Test, stub}, model: "big"]]]
     end
 
-    test "swap loads the large model and counts the swap against the run that asked" do
+    test "swap loads the local model and counts the swap against the run that asked" do
       run = "local-swap-#{System.unique_integer([:positive])}"
-      effect = %Effect{kind: :swap, args: %{tier: :large, parent: run}, reply: :swapped}
-      assert %{ok: true, ms: ms} = Local.run(effect, large(:local_swap))
+      effect = %Effect{kind: :swap, args: %{tier: :local, parent: run}, reply: :swapped}
+      assert %{ok: true, ms: ms} = Local.run(effect, local_tier(:local_swap))
       assert is_integer(ms)
       assert Xeito.Budget.get(run, :swaps) == 1
 
-      assert %{ok: true} = Local.run(%{effect | args: %{tier: :large, parent: nil}}, large(:local_swap2))
+      assert %{ok: true} = Local.run(%{effect | args: %{tier: :local, parent: nil}}, local_tier(:local_swap2))
     end
 
     test "swap reports a tier that is not configured, or that fails" do
-      effect = %Effect{kind: :swap, args: %{tier: :large, parent: nil}, reply: :swapped}
+      effect = %Effect{kind: :swap, args: %{tier: :local, parent: nil}, reply: :swapped}
       assert Local.run(effect, []) == %{ok: false, error: :tier_unavailable}
 
       Req.Test.stub(:local_down, &Plug.Conn.send_resp(&1, 500, "down"))
-      down = [tiers: [large: [url: "http://down.test", plug: {Req.Test, :local_down}, model: "big", retry: false]]]
+      down = [tiers: [local: [url: "http://down.test", plug: {Req.Test, :local_down}, model: "big", retry: false]]]
       assert %{ok: false, error: _} = Local.run(effect, down)
     end
 
     test "a tier decides, whichever run it decides for" do
       effect = %Effect{
         kind: :tier,
-        args: %{tier: :large, decision: Xeito.Decisions.Intent, input: %{message: "fix it"}},
+        args: %{tier: :local, decision: Xeito.Decisions.Intent, input: %{message: "fix it"}},
         reply: :tier_done
       }
 
       for run_id <- [nil, "ses-x/t1", "ses-x/t1/e2/esc"] do
-        assert %{value: :edit, tier: :large} =
-                 Local.run(effect, [run_id: run_id] ++ large(:"local_tier_#{System.unique_integer([:positive])}"))
+        assert %{value: :edit, tier: :local} =
+                 Local.run(effect, [run_id: run_id] ++ local_tier(:"local_tier_#{System.unique_integer([:positive])}"))
       end
     end
   end

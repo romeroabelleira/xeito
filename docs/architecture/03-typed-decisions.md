@@ -37,8 +37,8 @@ defmodule Xeito.Decisions.Triage do
   rule "module not found",                  when: &missing_dep?/1,  then: :env_problem
 
   # Model policy, used only if no rule fires.
-  deciders [:small, :large]           # escalation ladder, see 04
-  min_confidence small: 0.80, large: 0.65
+  deciders [:local_decision, :local]  # escalation ladder, see 04
+  min_confidence local_decision: 0.80, local: 0.65
   examples "priv/decisions/triage/*.jsonl"   # few-shot and eval set
 end
 ```
@@ -52,7 +52,7 @@ The decision record every decider produces:
   value:       :code_bug,
   confidence:  0.87,
   rationale:   "AssertionError on computed total; diff touches pricing.ex",
-  actor:       :small,                 # :rule | :small | :large | :remote | :human
+  actor:       :local_decision,        # :rule | a tier (:local, :remote, …) | :human
   model:       "qwen3-1.7b-q8_0",
   input_hash:  "sha256:…",             # cache + replay key
   latency_ms:  212,

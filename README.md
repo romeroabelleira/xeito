@@ -13,7 +13,7 @@ The back end rests on three ideas:
 3. **Process mining as the meta state machine.** Every transition is written to an object-centric event log (OCEL 2.0).
    Mining those logs shows the process that *actually* happened. Conformance checking compares it with the declared machine, and the findings become reviewed changes to the machines.
 
-The reference deployment runs on a single workstation. A small CPU-bound model makes typed decisions, and delegation to larger models (a local GPU, then a remote API) is itself a state machine.
+The reference deployment runs on a single workstation. Rules and a local GPU model make typed decisions, and delegation between tiers (small decision models, the local model, opt-in hosted models) is itself a state machine.
 
 ## Documents
 

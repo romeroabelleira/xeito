@@ -1,21 +1,18 @@
 defmodule Xeito.Monitor.Models do
   @moduledoc """
-  Whether each tier's service answers, and what it holds. A tier is probed through its backend
-  (`Xeito.Tiers.backend/2`). Every probe is a short local HTTP GET (timeout `:timeout`, default
-  800 ms); a tier without a configured URL is `configured: false`.
+  Whether each local tier's service answers, and what it holds. A local tier is probed through
+  its backend (`Xeito.Tiers.backend/2`) with a short HTTP GET (timeout `:timeout`, default
+  800 ms). Remote tiers are not probed: they report only whether they are configured, and their
+  spend is in the usage line. A tier without a configured URL is `configured: false`.
 
-  | backend         | probe                            | reports                                           |
-  |-----------------|----------------------------------|---------------------------------------------------|
-  | `:ollama`       | `GET /api/ps`                    | resident models: VRAM, context, seconds to unload |
-  | `:llama_server` | `GET /health`, `/slots`          | up, busy and total slots                          |
-  | `:system_one`   | laya `GET /health`               | up, loaded models                                 |
-  | `:openrouter`, `:anthropic` | none (off-box)       | configured or not; spend is in the usage line     |
+  | backend       | probe              | reports                                           |
+  |---------------|--------------------|---------------------------------------------------|
+  | `:ollama`     | `GET /api/ps`      | resident models: VRAM, context, seconds to unload |
+  | `:system_one` | laya `GET /health` | up, loaded models                                 |
   """
 
   alias Xeito.Backends
   alias Xeito.Tiers
-
-  @tiers [:large, :small, :system_one, :openrouter, :remote]
 
   @doc "Probes every tier. Options: `:tiers` (config overrides per tier), `:timeout`."
   @spec read(keyword()) :: map()
@@ -24,7 +21,7 @@ defmodule Xeito.Monitor.Models do
     overrides = Keyword.get(opts, :tiers, [])
 
     # The probes run concurrently, so one stalled service costs one timeout, not three.
-    @tiers
+    Tiers.all()
     |> Task.async_stream(
       fn tier -> {tier, probe(tier, Tiers.config(tier, Keyword.get(overrides, tier, [])), timeout)} end,
       timeout: timeout * 3,
@@ -40,17 +37,16 @@ defmodule Xeito.Monitor.Models do
   defp probe(_tier, nil, _timeout), do: %{configured: false}
 
   defp probe(tier, cfg, timeout) do
-    case Tiers.backend(tier, cfg) do
-      :ollama -> configured(cfg, large(cfg, timeout))
-      :llama_server -> configured(cfg, small(cfg, timeout))
-      :system_one -> configured(cfg, system_one(cfg, timeout))
-      _off_box -> %{configured: true}
-    end
+    if tier in Tiers.off_box(), do: %{configured: true}, else: local(Tiers.backend(tier, cfg), cfg, timeout)
   end
+
+  defp local(:ollama, cfg, timeout), do: configured(cfg, ollama(cfg, timeout))
+  defp local(:system_one, cfg, timeout), do: configured(cfg, system_one(cfg, timeout))
+  defp local(_backend, _cfg, _timeout), do: %{configured: true}
 
   defp configured(cfg, probe), do: Map.merge(%{configured: true, model: cfg[:model]}, probe)
 
-  defp large(cfg, timeout) do
+  defp ollama(cfg, timeout) do
     case get(cfg, "/api/ps", timeout) do
       {:ok, %{"models" => models}} ->
         %{up: true, loaded: Enum.map(models, &resident/1)}
@@ -75,26 +71,6 @@ defmodule Xeito.Monitor.Models do
     case DateTime.from_iso8601(iso) do
       {:ok, at, _} -> max(DateTime.diff(at, DateTime.utc_now()), 0)
       _ -> nil
-    end
-  end
-
-  defp small(cfg, timeout) do
-    case get(cfg, "/health", timeout) do
-      {:ok, %{"status" => "ok"}} ->
-        Map.merge(%{up: true}, slots(cfg, timeout))
-
-      _ ->
-        %{up: false}
-    end
-  end
-
-  defp slots(cfg, timeout) do
-    case get(cfg, "/slots", timeout) do
-      {:ok, slots} when is_list(slots) ->
-        %{slots: length(slots), busy: Enum.count(slots, &(&1["is_processing"] == true))}
-
-      _ ->
-        %{}
     end
   end
 

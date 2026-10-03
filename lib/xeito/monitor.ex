@@ -23,8 +23,6 @@ defmodule Xeito.Monitor do
   alias Xeito.Monitor.Models
   alias Xeito.Tiers.Queue
 
-  @tiers [:system_one, :small, :large, :openrouter, :remote]
-
   @doc false
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
@@ -105,7 +103,7 @@ defmodule Xeito.Monitor do
   end
 
   defp queues do
-    for tier <- @tiers, into: %{} do
+    for tier <- Xeito.Tiers.all(), into: %{} do
       {in_use, waiting} = Queue.status(tier)
       {tier, %{in_use: in_use, waiting: waiting}}
     end

@@ -3,11 +3,9 @@ defmodule Xeito.Backends.OpenRouter do
   OpenRouter backend: hosted **open-weight** models through OpenRouter's OpenAI-compatible
   `POST /api/v1/chat/completions`, with token log-probabilities for a calibrated confidence.
 
-  It fills the gap between the local large tier and the remote Claude tier: models too large
-  for the local GPU, or the local large model's own family without a swap, answering with a
-  confidence the escalation can threshold. Claude stays on the direct Anthropic tier
-  (`Xeito.Backends.Anthropic`); through OpenRouter it would lose the server-side refusal fallback and
-  still return no logprobs (`docs/architecture/04-delegation.md#openrouter`).
+  It serves both hosted language model tiers (`:remote` and `:remote_frontier`): a model with
+  logprobs answers with a confidence the escalation can threshold; one without (Claude, for
+  example) answers terminally.
 
   Request:
     * `response_format` is the decision's JSON Schema (`strict: true`), at temperature 0 with
@@ -15,7 +13,9 @@ defmodule Xeito.Backends.OpenRouter do
     * `provider.require_parameters: true`, so only provider endpoints that honour the schema
       **and** return logprobs are used. `provider.data_collection: "deny"` and `provider.zdr`
       (default `true`) restrict routing to endpoints that neither train on nor retain prompts.
-      `cfg[:providers]` pins providers (`provider.only`).
+      `cfg[:providers]` pins providers (`provider.only`). With `logprobs: false` (the
+      `:remote_frontier` tier's default) no logprobs are asked for, so endpoints without them
+      qualify too.
 
   Result: the confidence comes from the `top_logprobs` at the value's first token, as for the
   local large tier (`Xeito.Backends.Ollama.probabilities/3`). An endpoint that returns no logprobs
@@ -23,7 +23,7 @@ defmodule Xeito.Backends.OpenRouter do
   OpenRouter's own `usage.cost` (USD), plus token counts; the model provenance names the
   provider endpoint that served the request (`openrouter:<model>@<provider>`).
 
-  Off-box: `Xeito.Policy` gates the `:openrouter` tier exactly like `:remote`.
+  Off-box: `Xeito.Policy` gates every tier that uses it, as it gates every `remote*` tier.
   """
 
   @behaviour Xeito.Backends
@@ -70,20 +70,29 @@ defmodule Xeito.Backends.OpenRouter do
         &if(cfg[:providers], do: Map.put(&1, :only, cfg[:providers]), else: &1)
       )
 
-    %{
-      model: Keyword.fetch!(cfg, :model),
-      messages: Prompt.messages(type, input),
-      response_format: %{
-        type: "json_schema",
-        json_schema: %{name: type.name, strict: true, schema: Prompt.json_schema(type)}
+    Map.merge(
+      %{
+        model: Keyword.fetch!(cfg, :model),
+        messages: Prompt.messages(type, input),
+        response_format: %{
+          type: "json_schema",
+          json_schema: %{name: type.name, strict: true, schema: Prompt.json_schema(type)}
+        },
+        temperature: 0,
+        max_tokens: Keyword.get(cfg, :max_tokens, 64),
+        reasoning: %{enabled: false},
+        provider: provider
       },
-      temperature: 0,
-      max_tokens: Keyword.get(cfg, :max_tokens, 64),
-      reasoning: %{enabled: false},
-      logprobs: true,
-      top_logprobs: min(Keyword.get(cfg, :top_logprobs, 20), 20),
-      provider: provider
-    }
+      logprobs(cfg)
+    )
+  end
+
+  # Without logprobs (`logprobs: false`), `require_parameters` no longer excludes the endpoints
+  # that cannot return them, such as Claude's; the answer is then terminal.
+  defp logprobs(cfg) do
+    if Keyword.get(cfg, :logprobs, true),
+      do: %{logprobs: true, top_logprobs: min(Keyword.get(cfg, :top_logprobs, 20), 20)},
+      else: %{}
   end
 
   defp headers, do: [{"x-openrouter-title", "Xeito"}]

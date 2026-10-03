@@ -2,8 +2,6 @@ defmodule Xeito.TiersTest do
   use ExUnit.Case, async: true
 
   alias Xeito.Backends
-  alias Xeito.Backends.Anthropic
-  alias Xeito.Backends.LlamaServer
   alias Xeito.Backends.Ollama
   alias Xeito.Backends.OpenRouter
   alias Xeito.Backends.SystemOne
@@ -49,43 +47,6 @@ defmodule Xeito.TiersTest do
 
     assert {:ok, %{value: :code_bug, confidence: 0.8, model: "laya-multilingual"}} =
              SystemOne.decide(type(), @input, cfg(:laya))
-  end
-
-  test "LlamaServer prefills the value, scores one token and resolves ambiguous prefixes" do
-    ambiguous = Decision.type!(Xeito.TestMachines.AmbiguousType)
-
-    Req.Test.stub(:llama, fn conn ->
-      {req, conn} = body(conn)
-
-      case conn.request_path do
-        "/apply-template" ->
-          assert req["chat_template_kwargs"] == %{"enable_thinking" => false}
-          Req.Test.json(conn, %{"prompt" => "<prompt>"})
-
-        "/completion" ->
-          assert req["n_predict"] == 1
-
-          tops =
-            if String.ends_with?(req["prompt"], ~s({"value": "test)),
-              do: [{"_bug", 0.75}, {"_flaky", 0.25}],
-              else: [{"test", 0.6}, {"env", 0.3}, {"The", 0.1}]
-
-          Req.Test.json(conn, %{
-            "completion_probabilities" => [
-              %{
-                "top_logprobs" => Enum.map(tops, fn {t, p} -> %{"token" => t, "logprob" => :math.log(p)} end)
-              }
-            ]
-          })
-      end
-    end)
-
-    assert {:ok, %{value: :test_bug, probabilities: probs}} =
-             LlamaServer.decide(ambiguous, %{output: "x"}, cfg(:llama))
-
-    assert_in_delta probs[:test_bug], 0.6 * 0.75 / 0.9, 1.0e-9
-    assert_in_delta probs[:test_flaky], 0.6 * 0.25 / 0.9, 1.0e-9
-    assert_in_delta probs[:env_problem], 0.3 / 0.9, 1.0e-9
   end
 
   test "Ollama reads logprobs at the value position" do
@@ -140,52 +101,6 @@ defmodule Xeito.TiersTest do
       Ollama.decide(type(), @input, cfg(:ollama_ctx, model: "big", context: 65_536))
       assert_received {:options, %{"num_ctx" => 65_536, "temperature" => 0}}
     end
-  end
-
-  test "Anthropic sends structured output with refusal fallback and prices usage" do
-    Req.Test.stub(:anthropic, fn conn ->
-      {req, conn} = body(conn)
-      assert conn.request_path == "/v1/messages"
-      assert Plug.Conn.get_req_header(conn, "x-api-key") == ["k"]
-      assert Plug.Conn.get_req_header(conn, "anthropic-version") == ["2023-06-01"]
-
-      assert Plug.Conn.get_req_header(conn, "anthropic-beta") == [
-               "server-side-fallback-2026-07-01"
-             ]
-
-      assert req["model"] == "claude-opus-5"
-      assert req["fallbacks"] == "default"
-      assert req["output_config"]["effort"] == "low"
-      assert req["output_config"]["format"]["type"] == "json_schema"
-
-      assert length(req["output_config"]["format"]["schema"]["properties"]["value"]["enum"]) ==
-               4
-
-      Req.Test.json(conn, %{
-        "model" => "claude-opus-5",
-        "stop_reason" => "end_turn",
-        "content" => [%{"type" => "text", "text" => ~s({"value": "code_bug"})}],
-        "usage" => %{"input_tokens" => 1_000, "output_tokens" => 100}
-      })
-    end)
-
-    assert {:ok, %{value: :code_bug, confidence: nil, terminal: true, cost: cost}} =
-             Anthropic.decide(type(), @input, cfg(:anthropic))
-
-    assert cost == %{tokens_in: 1_000, tokens_out: 100, usd: 0.0075}
-  end
-
-  test "Anthropic treats a refusal as an error, not a value" do
-    Req.Test.stub(:anthropic_refusal, fn conn ->
-      Req.Test.json(conn, %{
-        "stop_reason" => "refusal",
-        "stop_details" => %{"category" => "cyber"},
-        "content" => []
-      })
-    end)
-
-    assert {:error, {:refusal, %{"category" => "cyber"}}} =
-             Anthropic.decide(type(), @input, cfg(:anthropic_refusal))
   end
 
   defp openai_logprobs do
@@ -273,17 +188,22 @@ defmodule Xeito.TiersTest do
   end
 
   describe "a tier's backend" do
+    test "the tiers, in ladder order; the remote ones are off-box" do
+      assert Tiers.all() == [:local_decision, :remote_decision, :local, :remote, :remote_frontier]
+      assert Tiers.off_box() == [:remote_decision, :remote, :remote_frontier]
+    end
+
     test "each tier has a default backend, and its configuration may name another" do
-      assert Tiers.backend(:system_one, []) == :system_one
-      assert Tiers.backend(:small, []) == :llama_server
-      assert Tiers.backend(:large, []) == :ollama
-      assert Tiers.backend(:openrouter, []) == :openrouter
-      assert Tiers.backend(:remote, []) == :anthropic
-      assert Tiers.backend(:remote, backend: :openrouter) == :openrouter
+      assert Tiers.backend(:local_decision, []) == :system_one
+      assert Tiers.backend(:local, []) == :ollama
+      assert Tiers.backend(:remote_decision, []) == :system_one
+      assert Tiers.backend(:remote, []) == :openrouter
+      assert Tiers.backend(:remote_frontier, []) == :openrouter
+      assert Tiers.backend(:local, backend: :openrouter) == :openrouter
     end
 
     test "a tier speaks its backend's API" do
-      Req.Test.stub(:remote_via_openrouter, fn conn ->
+      Req.Test.stub(:local_via_openrouter, fn conn ->
         assert conn.request_path == "/v1/chat/completions"
 
         Req.Test.json(conn, %{
@@ -294,7 +214,24 @@ defmodule Xeito.TiersTest do
       end)
 
       assert {:ok, %{value: :flaky, model: "openrouter:m"}} =
-               Tiers.run(:remote, type(), @input, cfg(:remote_via_openrouter, backend: :openrouter, model: "m"))
+               Tiers.run(:local, type(), @input, cfg(:local_via_openrouter, backend: :openrouter, model: "m"))
+    end
+
+    test "the frontier tier asks for no logprobs, so models without them (Claude) can serve it" do
+      Req.Test.stub(:frontier_plain, fn conn ->
+        {req, conn} = body(conn)
+        refute Map.has_key?(req, "logprobs") or Map.has_key?(req, "top_logprobs")
+        assert req["provider"]["require_parameters"] == true
+
+        Req.Test.json(conn, %{
+          "model" => "anthropic/claude-sonnet-5.5",
+          "choices" => [%{"message" => %{"content" => ~s({"value": "flaky"})}}],
+          "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 3, "cost" => 0.0001}
+        })
+      end)
+
+      assert {:ok, %{value: :flaky, confidence: nil, terminal: true}} =
+               Tiers.run(:remote_frontier, type(), @input, cfg(:frontier_plain, model: "anthropic/claude-sonnet-5.5"))
     end
 
     test "an unknown backend is an error, not a crash" do
@@ -315,45 +252,32 @@ defmodule Xeito.TiersTest do
         })
       end)
 
-      Req.Test.stub(:llama_high, fn conn ->
-        case conn.request_path do
-          "/apply-template" ->
-            Req.Test.json(conn, %{"prompt" => "p"})
-
-          "/completion" ->
-            Req.Test.json(conn, %{
-              "completion_probabilities" => [
-                %{
-                  "top_logprobs" => [
-                    %{"token" => "code", "logprob" => :math.log(0.95)},
-                    %{"token" => "fl", "logprob" => :math.log(0.05)}
-                  ]
-                }
-              ]
-            })
-        end
+      Req.Test.stub(:laya_high, fn conn ->
+        Req.Test.json(conn, %{
+          "answers" => %{"triage" => %{"choice" => "code_bug", "probabilities" => %{"code_bug" => 0.95, "flaky" => 0.05}}}
+        })
       end)
 
       decision =
         Decider.decide(Triage, @input,
-          deciders: [:system_one, :small],
-          tiers: [system_one: cfg(:laya_low), small: cfg(:llama_high, model: "qwen-small")]
+          deciders: [:local_decision, :local],
+          tiers: [local_decision: cfg(:laya_low), local: cfg(:laya_high, backend: :system_one)]
         )
 
-      assert %Decision{value: :code_bug, actor: :small, model: "qwen-small"} = decision
+      assert %Decision{value: :code_bug, actor: :local, model: "laya-multilingual"} = decision
       assert_in_delta decision.confidence, 0.95, 1.0e-9
-      assert [%{tier: :system_one, confidence: 0.5}] = decision.evidence
+      assert [%{tier: :local_decision, confidence: 0.5}] = decision.evidence
     end
 
     test "rules decide before any tier" do
       decision =
-        Decider.decide(Triage, %{test: "t", output: "** (Mix) could not be found"}, deciders: [:system_one])
+        Decider.decide(Triage, %{test: "t", output: "** (Mix) could not be found"}, deciders: [:local_decision])
 
       assert %Decision{value: :env_problem, actor: :rule, confidence: 1.0} = decision
     end
 
     test "unavailable tiers are skipped and the decision abstains" do
-      decision = Decider.decide(Triage, @input, deciders: [:system_one, :small])
+      decision = Decider.decide(Triage, @input, deciders: [:local_decision, :local])
       assert %Decision{value: :abstain, actor: :none} = decision
       assert Enum.all?(decision.evidence, &(&1.error == :tier_unavailable))
       assert is_binary(decision.input_hash)

@@ -35,7 +35,7 @@ defmodule Xeito.Decisions.Risk do
   policy remote: :forbidden
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders [:large]
+  deciders [:local]
   min_confidence 0.7
 
   # Regexes cannot live in module attributes on OTP 28+, so they are built in a function.

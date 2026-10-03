@@ -66,7 +66,7 @@ defmodule Xeito.LogStoreTest do
         "effect_id" => "r/e1",
         "result" => result
       }),
-      Event.new("event_received", {:event, :chatted, result, :large}, %{
+      Event.new("event_received", {:event, :chatted, result, :local}, %{
         "name" => :chatted,
         "data" => result
       })
@@ -74,7 +74,7 @@ defmodule Xeito.LogStoreTest do
 
     Log.append(log, "r", events)
 
-    assert [{1, _, {:effect_completed, _, ^result}}, {2, _, {:event, :chatted, ^result, :large}}] =
+    assert [{1, _, {:effect_completed, _, ^result}}, {2, _, {:event, :chatted, ^result, :local}}] =
              Log.read_run(log, "r")
 
     assert [[~s({"same_as":"r:1"})]] = Log.query(log, "SELECT data FROM event_event_received")

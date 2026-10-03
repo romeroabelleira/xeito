@@ -23,8 +23,8 @@ defmodule Xeito.Client.RenderTest do
 
   describe "decisions" do
     test "intent and decisions show value, actor and confidence" do
-      assert line("intent", %{"value" => "edit", "actor" => "large", "confidence" => 0.9}) ==
-               "◆ intent: edit (large 0.90)\n"
+      assert line("intent", %{"value" => "edit", "actor" => "local", "confidence" => 0.9}) ==
+               "◆ intent: edit (local 0.90)\n"
 
       assert line("decision_made", %{
                "decision_type" => "Elixir.Xeito.Decisions.NextStep",
@@ -115,12 +115,12 @@ defmodule Xeito.Client.RenderTest do
       decision = %{
         "decision" => "Elixir.Xeito.Decisions.Risk",
         "value" => "safe",
-        "actor" => "small",
+        "actor" => "local_decision",
         "confidence" => 0.5
       }
 
       assert line("paused", %{"state" => "risk_check", "summary" => decision}) ==
-               "‖ paused in risk_check before Risk: safe (small 0.50) — /next · /decide <value> · /continue\n"
+               "‖ paused in risk_check before Risk: safe (local_decision 0.50) — /next · /decide <value> · /continue\n"
 
       assert line("paused", %{"state" => "verifying", "kind" => "bash", "summary" => %{"exit_status" => 0}}) =~
                "before bash exit 0 —"

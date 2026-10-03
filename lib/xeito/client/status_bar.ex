@@ -3,8 +3,8 @@ defmodule Xeito.Client.StatusBar do
   The TUI's toggleable status bar, as pure functions: usage is counted from the daemon events a
   client already receives, and hardware and model status come from `Xeito.Monitor` snapshots.
 
-      GPU 18.5/24.0 GiB 97% 290 W 61°C │ large qwen3.6:27b unload 4:12 │ small ✓ 1/4 │ S1 ✓ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB
-      large 12 · small 3 · rule 9 · human 1 │ 18.4k→1.2k tok · ctx 3.2k/81.9k │ triage large 512 ms │ reply 2.1 s (first 0.4 s) │ det 45% │ $0.0000 · ~2.1 kJ │ queue large 1+2
+      GPU 18.5/24.0 GiB 97% 290 W 61°C │ local qwen3.6:27b unload 4:12 │ decision ✓ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB
+      local 12 · local_decision 3 · rule 9 · human 1 │ 18.4k→1.2k tok · ctx 3.2k/81.9k │ triage local 512 ms │ reply 2.1 s (first 0.4 s) │ det 45% │ $0.0000 · ~2.1 kJ │ queue local 1+2
 
   * **Calls** per actor: decisions (`decision_made`, `intent`) and chat turns (`chat`).
   * **Tokens** in → out over the session, and **ctx**: the prompt size of the last chat turn
@@ -192,7 +192,7 @@ defmodule Xeito.Client.StatusBar do
   defp machine_segment(:gpu, m), do: gpu(m["system"]["gpus"])
 
   defp machine_segment(:models, %{"models" => models}),
-    do: join([large(models["large"]), small(models["small"]), s1(models["system_one"])])
+    do: join([local(models["local"]), decision(models["local_decision"])])
 
   defp machine_segment(:cpu, m), do: cpu(m["system"])
   defp machine_segment(:queue, m), do: queues(m)
@@ -275,22 +275,16 @@ defmodule Xeito.Client.StatusBar do
 
   defp gpu(_), do: ""
 
-  defp large(%{"configured" => true, "up" => true, "loaded" => [m | _]}),
-    do: "large #{m["name"]}" <> opt(m["unload_in_s"], &" unload #{mmss(&1)}")
+  defp local(%{"configured" => true, "up" => true, "loaded" => [m | _]}),
+    do: "local #{m["name"]}" <> opt(m["unload_in_s"], &" unload #{mmss(&1)}")
 
-  defp large(%{"configured" => true, "up" => true}), do: "large idle (not loaded)"
-  defp large(%{"configured" => true}), do: "large ✗ down"
-  defp large(_), do: ""
+  defp local(%{"configured" => true, "up" => true}), do: "local idle (not loaded)"
+  defp local(%{"configured" => true}), do: "local ✗ down"
+  defp local(_), do: ""
 
-  defp small(%{"configured" => true, "up" => true} = m),
-    do: "small ✓" <> if(m["slots"], do: " #{m["busy"]}/#{m["slots"]}", else: "")
-
-  defp small(%{"configured" => true}), do: "small ✗"
-  defp small(_), do: ""
-
-  defp s1(%{"configured" => true, "up" => true}), do: "S1 ✓"
-  defp s1(%{"configured" => true}), do: "S1 ✗"
-  defp s1(_), do: ""
+  defp decision(%{"configured" => true, "up" => true}), do: "decision ✓"
+  defp decision(%{"configured" => true}), do: "decision ✗"
+  defp decision(_), do: ""
 
   defp cpu(%{"cpu" => c, "mem" => m}) do
     "CPU" <>
@@ -304,7 +298,7 @@ defmodule Xeito.Client.StatusBar do
   # The last chat prompt against the resident model's context window, when the monitor knows it.
   defp ctx(nil, _monitor), do: ""
 
-  defp ctx(tokens, %{"models" => %{"large" => %{"loaded" => [%{"context" => window} | _]}}})
+  defp ctx(tokens, %{"models" => %{"local" => %{"loaded" => [%{"context" => window} | _]}}})
        when is_integer(window) and window > 0, do: " · ctx #{k(tokens)}/#{k(window)}"
 
   defp ctx(tokens, _monitor), do: " · ctx #{k(tokens)}"

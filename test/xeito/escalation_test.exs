@@ -18,31 +18,30 @@ defmodule Xeito.EscalationTest do
 
   @input %{test: "CheckoutTest", output: "left: 107.0 right: 108.0", diff_stat: "lib/pricing.ex"}
 
-  defp small(conf) do
-    Req.Test.stub(:esc_small, fn conn ->
-      case conn.request_path do
-        "/apply-template" ->
-          Req.Test.json(conn, %{"prompt" => "p"})
+  # A System One decision model: `conf` on code_bug, the rest spread over two others.
+  defp decision_model(stub, conf, test_pid \\ nil) do
+    Req.Test.stub(stub, fn conn ->
+      if test_pid, do: send(test_pid, {:called, stub})
+      rest = (1 - conf) / 2
 
-        "/completion" ->
-          tops = [{"code", conf}, {"test", (1 - conf) / 2}, {"fl", (1 - conf) / 2}]
-
-          Req.Test.json(conn, %{
-            "completion_probabilities" => [
-              %{
-                "top_logprobs" => Enum.map(tops, fn {t, p} -> %{"token" => t, "logprob" => :math.log(p)} end)
-              }
-            ]
-          })
-      end
+      Req.Test.json(conn, %{
+        "answers" => %{
+          "triage" => %{
+            "choice" => "code_bug",
+            "probabilities" => %{"code_bug" => conf, "test_bug" => rest, "flaky" => rest}
+          }
+        }
+      })
     end)
 
-    [url: "http://small.test", plug: {Req.Test, :esc_small}, model: "small-test"]
+    [url: "http://#{stub}.test", plug: {Req.Test, stub}, model: "multilingual"]
   end
 
-  defp large(loaded?, test_pid \\ nil) do
-    Req.Test.stub(:esc_large, &ollama(&1, loaded?, test_pid))
-    [url: "http://large.test", plug: {Req.Test, :esc_large}, model: "big"]
+  defp local_decision(conf), do: decision_model(:esc_local_decision, conf)
+
+  defp local(loaded?, test_pid \\ nil) do
+    Req.Test.stub(:esc_local, &ollama(&1, loaded?, test_pid))
+    [url: "http://local.test", plug: {Req.Test, :esc_local}, model: "big"]
   end
 
   defp ollama(%{request_path: "/api/ps"} = conn, loaded?, _test_pid) do
@@ -56,7 +55,7 @@ defmodule Xeito.EscalationTest do
   end
 
   defp ollama(%{request_path: "/api/chat"} = conn, _loaded?, test_pid) do
-    if test_pid, do: send(test_pid, :large_called)
+    if test_pid, do: send(test_pid, :local_called)
 
     Req.Test.json(conn, %{
       "message" => %{"content" => ~s({"value": "code_bug"})},
@@ -80,24 +79,25 @@ defmodule Xeito.EscalationTest do
     end
   end
 
-  defp remote(test_pid) do
-    Req.Test.stub(:esc_remote, fn conn ->
-      send(test_pid, :remote_called)
+  # The frontier model through OpenRouter: no logprobs, so its answer is terminal.
+  defp frontier(test_pid) do
+    Req.Test.stub(:esc_frontier, fn conn ->
+      send(test_pid, :frontier_called)
 
       Req.Test.json(conn, %{
-        "model" => "claude-opus-5",
-        "stop_reason" => "end_turn",
-        "content" => [%{"type" => "text", "text" => ~s({"value": "test_bug"})}],
-        "usage" => %{"input_tokens" => 400, "output_tokens" => 20}
+        "model" => "anthropic/claude-sonnet-5.5",
+        "provider" => "Amazon Bedrock",
+        "choices" => [%{"message" => %{"content" => ~s({"value": "test_bug"})}}],
+        "usage" => %{"prompt_tokens" => 400, "completion_tokens" => 20, "cost" => 0.0028}
       })
     end)
 
-    [url: "http://remote.test", api_key: "k", plug: {Req.Test, :esc_remote}]
+    [url: "http://frontier.test", api_key: "k", model: "anthropic/claude-sonnet-5.5", plug: {Req.Test, :esc_frontier}]
   end
 
-  defp openrouter(test_pid, conf) do
-    Req.Test.stub(:esc_openrouter, fn conn ->
-      send(test_pid, :openrouter_called)
+  defp remote(test_pid, conf) do
+    Req.Test.stub(:esc_remote, fn conn ->
+      send(test_pid, :remote_called)
 
       Req.Test.json(conn, %{
         "model" => "qwen/qwen3.6-35b-a3b",
@@ -112,8 +112,8 @@ defmodule Xeito.EscalationTest do
       })
     end)
 
-    [url: "http://openrouter.test", api_key: "k", model: "qwen/qwen3.6-35b-a3b"] ++
-      [plug: {Req.Test, :esc_openrouter}]
+    [url: "http://remote.test", api_key: "k", model: "qwen/qwen3.6-35b-a3b"] ++
+      [plug: {Req.Test, :esc_remote}]
   end
 
   defp openai_logprobs(conf) do
@@ -162,63 +162,63 @@ defmodule Xeito.EscalationTest do
     assert {:ok, %{status: :done, state: :committed}} = Run.result(log, id)
   end
 
-  test "a low-confidence small answer escalates to the loaded large model" do
-    tiers = [small: small(0.55), large: large(true)]
-    {d, log, parent} = decide(Triage, @input, deciders: [:small, :large], tiers: tiers)
+  test "a low-confidence decision-model answer escalates to the loaded local model" do
+    tiers = [local_decision: local_decision(0.55), local: local(true)]
+    {d, log, parent} = decide(Triage, @input, deciders: [:local_decision, :local], tiers: tiers)
 
-    assert %{value: :code_bug, actor: :large, model: "big"} = d
+    assert %{value: :code_bug, actor: :local, model: "big"} = d
     assert_in_delta d.confidence, 0.97, 1.0e-9
-    assert [%{tier: :rules, error: :no_rule}, %{tier: :small, value: :code_bug}] = d.evidence
-    # 120 prompt tokens on the large tier; the stubbed small prompt is ~0 tokens.
+    assert [%{tier: :rules, error: :no_rule}, %{tier: :local_decision, value: :code_bug}] = d.evidence
+    # 120 prompt tokens on the local tier; the stubbed decision model reports none.
     assert %{tokens_in: 120, tokens_out: 8, joules_est: _} = d.cost
 
     assert states(log, only_run(log, parent)) ==
-             [:deciding, :rules, :small, :large, :check_loaded, :infer, :committed]
+             [:deciding, :rules, :local_decision, :local, :check_loaded, :infer, :committed]
   end
 
-  test "with the large model not loaded, a good-enough small answer is kept instead of swapping" do
-    tiers = [small: small(0.7), large: large(false, self())]
-    {d, log, parent} = decide(Triage, @input, deciders: [:small, :large], tiers: tiers)
+  test "with the local model not loaded, a good-enough earlier answer is kept instead of swapping" do
+    tiers = [local_decision: local_decision(0.7), local: local(false, self())]
+    {d, log, parent} = decide(Triage, @input, deciders: [:local_decision, :local], tiers: tiers)
 
-    assert %{value: :code_bug, actor: :small} = d
+    assert %{value: :code_bug, actor: :local_decision} = d
     refute_received :swap_requested
-    refute_received :large_called
+    refute_received :local_called
 
     assert states(log, only_run(log, parent)) == [
              :deciding,
              :rules,
-             :small,
-             :large,
+             :local_decision,
+             :local,
              :check_loaded,
              :committed
            ]
   end
 
-  test "with no good small answer, the large model is swapped in and the swap is budgeted" do
+  test "with no good earlier answer, the local model is swapped in and the swap is budgeted" do
     parent = run_id()
-    tiers = [small: small(0.4), large: large(false, self())]
+    tiers = [local_decision: local_decision(0.4), local: local(false, self())]
 
     {d, log, ^parent} =
-      decide(Triage, @input, deciders: [:small, :large], tiers: tiers, parent: parent)
+      decide(Triage, @input, deciders: [:local_decision, :local], tiers: tiers, parent: parent)
 
-    assert %{value: :code_bug, actor: :large} = d
+    assert %{value: :code_bug, actor: :local} = d
     assert_received :swap_requested
     assert Budget.get(parent, :swaps) == 1
     assert :swapping in states(log, only_run(log, parent))
   end
 
-  test "when the swap budget is used up, the large tier is skipped and the decision abstains" do
+  test "when the swap budget is used up, the local tier is skipped and the decision abstains" do
     parent = run_id()
     Budget.add(parent, :swaps, 3)
-    tiers = [small: small(0.4), large: large(false, self())]
+    tiers = [local_decision: local_decision(0.4), local: local(false, self())]
 
     {d, log, ^parent} =
-      decide(Triage, @input, deciders: [:small, :large], tiers: tiers, parent: parent)
+      decide(Triage, @input, deciders: [:local_decision, :local], tiers: tiers, parent: parent)
 
     assert %{value: :abstain, actor: :none} = d
     refute_received :swap_requested
     assert List.last(states(log, only_run(log, parent))) == :abstained
-    assert Enum.any?(d.evidence, &match?(%{tier: :large, error: {:skipped, _}}, &1))
+    assert Enum.any?(d.evidence, &match?(%{tier: :local, error: {:skipped, _}}, &1))
   end
 
   test "budgets are deleted with their run, and swept when their owner is gone" do
@@ -244,104 +244,122 @@ defmodule Xeito.EscalationTest do
     assert %{value: :review, actor: :none} = unknown
   end
 
-  test "off-box tiers are never called for local-only inputs or for Risk" do
-    tiers = [small: small(0.4), openrouter: openrouter(self(), 0.99), remote: remote(self())]
+  test "remote tiers are never called for local-only inputs or for Risk" do
+    tiers = [
+      local_decision: local_decision(0.4),
+      remote_decision: decision_model(:esc_remote_decision, 0.99, self()),
+      remote: remote(self(), 0.99),
+      remote_frontier: frontier(self())
+    ]
+
+    ladder = [:local_decision, :remote_decision, :remote, :remote_frontier]
 
     # Default locality is :local_only.
-    {d1, _, _} =
-      decide(Triage, @input,
-        deciders: [:small, :openrouter, :remote],
-        tiers: tiers,
-        policy: [remote: :allowed]
-      )
+    {d1, _, _} = decide(Triage, @input, deciders: ladder, tiers: tiers, policy: [remote: :allowed])
 
-    # Risk forbids the remote tier at type level, whatever the request says.
+    # Risk forbids remote tiers at type level, whatever the request says.
     {d2, _, _} =
       decide(Risk, %{command: "some-unknown-tool --flag"},
-        deciders: [:openrouter, :remote],
+        deciders: ladder,
         tiers: tiers,
         policy: [remote: :allowed, locality: :public]
       )
 
+    refute_received {:called, :esc_remote_decision}
     refute_received :remote_called
-    refute_received :openrouter_called
+    refute_received :frontier_called
     assert d1.value == :abstain
     assert d2.value == :review
   end
 
-  test "a confident OpenRouter answer commits, with its state logged and its cost charged" do
+  test "a hosted decision model is a remote tier: called where policy allows it" do
+    tiers = [remote_decision: decision_model(:esc_remote_decision, 0.95, self())]
+
+    {d, log, parent} =
+      decide(Triage, @input,
+        deciders: [:remote_decision],
+        tiers: tiers,
+        policy: [remote: :allowed, locality: :public]
+      )
+
+    assert_received {:called, :esc_remote_decision}
+    assert %{value: :code_bug, actor: :remote_decision} = d
+    assert :remote_decision in states(log, only_run(log, parent))
+  end
+
+  test "a confident remote answer commits, with its state logged and its cost charged" do
     parent = run_id()
-    tiers = [small: small(0.4), openrouter: openrouter(self(), 0.95), remote: remote(self())]
+    tiers = [local_decision: local_decision(0.4), remote: remote(self(), 0.95), remote_frontier: frontier(self())]
 
     {d, log, ^parent} =
       decide(Triage, @input,
-        deciders: [:small, :openrouter, :remote],
+        deciders: [:local_decision, :remote, :remote_frontier],
         tiers: tiers,
         parent: parent,
         policy: [remote: :allowed, locality: :public]
       )
 
-    assert_received :openrouter_called
-    refute_received :remote_called
+    assert_received :remote_called
+    refute_received :frontier_called
 
     assert %{
              value: :code_bug,
-             actor: :openrouter,
+             actor: :remote,
              model: "openrouter:qwen/qwen3.6-35b-a3b@Parasail"
            } = d
 
     assert_in_delta d.confidence, 0.95, 1.0e-9
-    assert :openrouter in states(log, only_run(log, parent))
+    assert :remote in states(log, only_run(log, parent))
     assert_in_delta Budget.get(parent, :usd), 0.00006, 1.0e-12
   end
 
-  test "an unsure OpenRouter answer escalates to the remote tier" do
-    tiers = [openrouter: openrouter(self(), 0.55), remote: remote(self())]
+  test "an unsure remote answer escalates to the frontier tier" do
+    tiers = [remote: remote(self(), 0.55), remote_frontier: frontier(self())]
 
     {d, _, _} =
       decide(Triage, @input,
-        deciders: [:openrouter, :remote],
+        deciders: [:remote, :remote_frontier],
         tiers: tiers,
         policy: [remote: :allowed, locality: :public]
       )
 
-    assert_received :openrouter_called
     assert_received :remote_called
-    assert %{value: :test_bug, actor: :remote} = d
-    assert Enum.any?(d.evidence, &match?(%{tier: :openrouter, value: :code_bug}, &1))
+    assert_received :frontier_called
+    assert %{value: :test_bug, actor: :remote_frontier} = d
+    assert Enum.any?(d.evidence, &match?(%{tier: :remote, value: :code_bug}, &1))
   end
 
-  test "where policy allows it, the remote tier decides terminally and its spend is charged" do
+  test "where policy allows it, the frontier tier decides terminally and its spend is charged" do
     parent = run_id()
-    tiers = [small: small(0.4), remote: remote(self())]
+    tiers = [local_decision: local_decision(0.4), remote_frontier: frontier(self())]
 
     {d, _log, ^parent} =
       decide(Triage, @input,
-        deciders: [:small, :remote],
+        deciders: [:local_decision, :remote_frontier],
         tiers: tiers,
         parent: parent,
         policy: [remote: :allowed, locality: :public]
       )
 
-    assert_received :remote_called
-    assert %{value: :test_bug, actor: :remote, confidence: nil} = d
-    assert_in_delta Budget.get(parent, :usd), (400 * 5 + 20 * 25) / 1_000_000, 1.0e-12
+    assert_received :frontier_called
+    assert %{value: :test_bug, actor: :remote_frontier, confidence: nil} = d
+    assert_in_delta Budget.get(parent, :usd), 0.0028, 1.0e-12
   end
 
-  test "remote is skipped once the run's budget is spent" do
+  test "remote tiers are skipped once the run's budget is spent" do
     parent = run_id()
     Budget.add(parent, :usd, 0.5)
-    tiers = [remote: remote(self())]
+    tiers = [remote_frontier: frontier(self())]
 
     {d, _, _} =
       decide(Triage, @input,
-        deciders: [:remote],
+        deciders: [:remote_frontier],
         tiers: tiers,
         parent: parent,
         policy: [remote: :allowed, locality: :public]
       )
 
-    refute_received :remote_called
+    refute_received :frontier_called
     assert d.value == :abstain
   end
 
@@ -378,12 +396,12 @@ defmodule Xeito.EscalationTest do
 
   test "a run's decisions are escalated, logged with cost, and totalled per run" do
     log = start_log!()
-    tiers = [large: large(true)]
+    tiers = [local: local(true)]
     ws = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
     File.mkdir_p!(ws)
     on_exit(fn -> File.rm_rf(ws) end)
 
-    runner = {Xeito.Effects.Local, decider: [deciders: [:large], tiers: tiers]}
+    runner = {Xeito.Effects.Local, decider: [deciders: [:local], tiers: tiers]}
     input = %{cwd: ws, test_cmd: "echo 'left: 1 right: 2'; exit 1"}
 
     {:ok, id} =

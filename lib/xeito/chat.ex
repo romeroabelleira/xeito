@@ -3,9 +3,9 @@ defmodule Xeito.Chat do
   The chat model client used by the free chat machine and delegated sub-tasks: Ollama
   `/api/chat` with native tool calling, streamed.
 
-  The model is the large tier's (`config :xeito, :tiers, large: [...]`), or `cfg[:chat_model]`
-  when a different chat model is configured. Calls go through the large tier's capacity queue,
-  so a streaming answer and a large-tier decision never compete for the GPU.
+  The model is the local tier's (`config :xeito, :tiers, local: [...]`), or `cfg[:chat_model]`
+  when a different chat model is configured. Calls go through the local tier's capacity queue,
+  so a streaming answer and a local-tier decision never compete for the GPU.
 
   Each streamed chunk of content is passed to `on_delta` (the effect runner forwards it to
   `Xeito.Events`), and the call returns the complete assistant message:
@@ -28,9 +28,9 @@ defmodule Xeito.Chat do
   @spec complete([message()], [map()], keyword(), (String.t() -> any())) ::
           {:ok, map()} | {:error, term()}
   def complete(messages, tools, overrides \\ [], on_delta \\ fn _ -> :ok end) do
-    case Tiers.config(:large, overrides) do
+    case Tiers.config(:local, overrides) do
       nil -> {:error, :chat_model_unavailable}
-      cfg -> Queue.run(:large, fn -> request(messages, tools, cfg, on_delta) end)
+      cfg -> Queue.run(:local, fn -> request(messages, tools, cfg, on_delta) end)
     end
   end
 

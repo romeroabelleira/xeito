@@ -6,10 +6,10 @@ defmodule Xeito.Policy do
   Sources, merged in order (later wins):
     1. defaults below
     2. `config :xeito, :policy` (deployment-wide)
-    3. the decision type's `policy` declaration (e.g. `Risk` forbids the remote tier)
+    3. the decision type's `policy` declaration (e.g. `Risk` forbids the remote tiers)
     4. per-request options (`Xeito.Decider` / effect options)
 
-  Off-box tiers (`off_box_tiers/0`: `:openrouter`, `:remote`) send the input to a third party.
+  Off-box tiers (`off_box_tiers/0`: every `remote*` tier) send the input to a third party.
   They share one gate, the `:remote` key, one locality rule and one spend budget.
 
   Keys:
@@ -17,9 +17,9 @@ defmodule Xeito.Policy do
     * `:locality` — `:local_only` (default) or `:public`. `:local_only` inputs never leave the
       machine, whatever `:remote` says
     * `:max_usd_per_run` — off-box spend limit per parent run (default 0.50)
-    * `:max_swaps_per_run` — large-model loads per parent run (default 3)
-    * `:unloaded_accept` — when the large model is not loaded, accept an earlier small-tier
-      answer whose confidence is at least this, instead of swapping (default 0.6; `nil` disables)
+    * `:max_swaps_per_run` — local-model loads per parent run (default 3)
+    * `:unloaded_accept` — when the local model is not loaded, accept an earlier tier's answer
+      whose confidence is at least this, instead of swapping (default 0.6; `nil` disables)
     * `:human` — whether to end the ladder with a human prompt (default false; most machines
       handle `:abstain` themselves)
     * `:human_timeout` — how long a human prompt waits (default 10 minutes)
@@ -28,8 +28,6 @@ defmodule Xeito.Policy do
   alias Xeito.Budget
   alias Xeito.Decision.Type
   alias Xeito.Tiers
-
-  @off_box [:openrouter, :remote]
 
   @defaults %{
     remote: :forbidden,
@@ -78,14 +76,14 @@ defmodule Xeito.Policy do
     models =
       tiers
       |> Enum.uniq()
-      |> Enum.filter(&((&1 not in @off_box or remote_allowed?(policy, parent_run)) and available?.(&1)))
+      |> Enum.filter(&((&1 not in Tiers.off_box() or remote_allowed?(policy, parent_run)) and available?.(&1)))
 
     [:rules] ++ models ++ if(policy.human, do: [:human], else: [])
   end
 
   @doc "The tiers that send inputs off the machine."
   @spec off_box_tiers() :: [atom()]
-  def off_box_tiers, do: @off_box
+  def off_box_tiers, do: Tiers.off_box()
 
   @doc "Whether an off-box tier may be called now for this policy and run."
   @spec remote_allowed?(map(), String.t() | nil) :: boolean()
@@ -94,7 +92,7 @@ defmodule Xeito.Policy do
       (parent_run == nil or Budget.get(parent_run, :usd) < policy.max_usd_per_run)
   end
 
-  @doc "Whether another large-model swap is allowed for this run."
+  @doc "Whether another local-model swap is allowed for this run."
   @spec swap_allowed?(map(), String.t() | nil) :: boolean()
   def swap_allowed?(policy, parent_run),
     do: parent_run == nil or Budget.get(parent_run, :swaps) < policy.max_swaps_per_run

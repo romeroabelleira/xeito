@@ -81,10 +81,10 @@ defmodule Xeito.MonitorTest do
              Host.read(nil, proc: "/nonexistent", sys: "/nonexistent")
   end
 
-  test "model probes: resident models, busy slots, System One, and unconfigured tiers" do
+  test "model probes: resident models, System One, and unconfigured tiers" do
     Req.Test.stub(:mon, fn conn ->
       case {conn.host, conn.request_path} do
-        {"large.test", "/api/ps"} ->
+        {"local.test", "/api/ps"} ->
           at = DateTime.utc_now() |> DateTime.shift(second: 252) |> DateTime.to_iso8601()
 
           Req.Test.json(conn, %{
@@ -98,12 +98,6 @@ defmodule Xeito.MonitorTest do
             ]
           })
 
-        {"small.test", "/health"} ->
-          Req.Test.json(conn, %{"status" => "ok"})
-
-        {"small.test", "/slots"} ->
-          Req.Test.json(conn, [%{"is_processing" => true}, %{"is_processing" => false}])
-
         {"s1.test", "/health"} ->
           Plug.Conn.send_resp(conn, 503, "starting")
       end
@@ -114,34 +108,42 @@ defmodule Xeito.MonitorTest do
     models =
       Models.read(
         tiers: [
-          large: [url: "http://large.test", model: "big:27b", plug: plug],
-          small: [url: "http://small.test", model: "small", plug: plug],
-          system_one: [url: "http://s1.test", plug: plug]
+          local: [url: "http://local.test", model: "big:27b", plug: plug],
+          local_decision: [url: "http://s1.test", plug: plug]
         ]
       )
 
-    assert %{up: true, loaded: [%{name: "big:27b", unload_in_s: s}]} = models.large
+    assert %{up: true, loaded: [%{name: "big:27b", unload_in_s: s}]} = models.local
     assert s in 250..252
-    assert %{up: true, slots: 2, busy: 1} = models.small
-    assert %{configured: true, up: false} = models.system_one
-    assert %{configured: false} = models.remote
+    assert %{configured: true, up: false} = models.local_decision
+    assert models.remote_decision == %{configured: false}
+    assert models.remote == %{configured: false}
+    assert models.remote_frontier == %{configured: false}
   end
 
-  test "a tier is probed through its backend's API; off-box backends are not probed" do
+  test "a local tier is probed through its backend's API; remote tiers are not probed" do
     Req.Test.stub(:mon_backend, fn conn ->
-      "/api/ps" = conn.request_path
-      Req.Test.json(conn, %{"models" => []})
+      case conn.request_path do
+        "/api/ps" -> Req.Test.json(conn, %{"models" => []})
+        "/health" -> Req.Test.json(conn, %{"status" => "ok", "loaded" => ["multilingual"]})
+      end
     end)
+
+    plug = {Req.Test, :mon_backend}
 
     models =
       Models.read(
         tiers: [
-          small: [url: "http://x.test", model: "m", backend: :ollama, plug: {Req.Test, :mon_backend}],
-          remote: [url: "http://unreachable.test", model: "r", backend: :openrouter]
+          local_decision: [url: "http://x.test", model: "m", backend: :ollama, plug: plug],
+          local: [url: "http://y.test", model: "s1", backend: :system_one, plug: plug],
+          remote_decision: [url: "http://unreachable.test", model: "jev"],
+          remote: [url: "http://unreachable.test", model: "r"]
         ]
       )
 
-    assert %{configured: true, model: "m", up: true, loaded: []} = models.small
+    assert %{configured: true, model: "m", up: true, loaded: []} = models.local_decision
+    assert %{configured: true, model: "s1", up: true, loaded: ["multilingual"]} = models.local
+    assert models.remote_decision == %{configured: true}
     assert models.remote == %{configured: true}
   end
 
@@ -152,7 +154,7 @@ defmodule Xeito.MonitorTest do
     refute Monitor.polling?(mon)
     :ok = Monitor.subscribe(self(), mon)
 
-    assert_receive {:xeito_monitor, %{system: _, models: _, queues: %{large: %{in_use: 0}}}},
+    assert_receive {:xeito_monitor, %{system: _, models: _, queues: %{local: %{in_use: 0}}}},
                    2_000
 
     assert_receive {:xeito_monitor, _}, 2_000
@@ -176,7 +178,7 @@ defmodule Xeito.MonitorTest do
         "event" => "decision_made",
         "run" => "s/t1",
         "attrs" => %{
-          "actor" => "large",
+          "actor" => "local",
           "tokens_in" => 300,
           "tokens_out" => 5,
           "joules_est" => 150.0
@@ -185,7 +187,7 @@ defmodule Xeito.MonitorTest do
       %{
         "event" => "decision_made",
         "run" => "s/t1/e2/esc",
-        "attrs" => %{"actor" => "large", "tokens_in" => 999}
+        "attrs" => %{"actor" => "local", "tokens_in" => 999}
       },
       %{
         "event" => "effect_completed",
@@ -194,12 +196,12 @@ defmodule Xeito.MonitorTest do
       },
       %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "code"}},
       %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "rule"}},
-      %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "large"}},
+      %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "local"}},
       %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "human"}}
     ]
 
     usage = Enum.reduce(events, StatusBar.new(), &StatusBar.count(&2, &1))
-    assert usage.calls == %{"rule" => 1, "large" => 1, "chat" => 1}
+    assert usage.calls == %{"rule" => 1, "local" => 1, "chat" => 1}
     assert {usage.tokens_in, usage.tokens_out, usage.ctx} == {3500, 125, 3200}
 
     snapshot = %{
@@ -219,28 +221,27 @@ defmodule Xeito.MonitorTest do
         ]
       },
       "models" => %{
-        "large" => %{
+        "local" => %{
           "configured" => true,
           "up" => true,
           "loaded" => [%{"name" => "big:27b", "unload_in_s" => 252, "context" => 81_920}]
         },
-        "small" => %{"configured" => true, "up" => true, "slots" => 4, "busy" => 1},
-        "system_one" => %{"configured" => true, "up" => false},
+        "local_decision" => %{"configured" => true, "up" => false},
         "remote" => %{"configured" => false}
       },
       "queues" => %{
-        "large" => %{"in_use" => 1, "waiting" => 2},
-        "small" => %{"in_use" => 0, "waiting" => 0}
+        "local" => %{"in_use" => 1, "waiting" => 2},
+        "local_decision" => %{"in_use" => 0, "waiting" => 0}
       }
     }
 
     [system, use] = StatusBar.lines(usage, snapshot)
 
     assert system ==
-             "GPU 18.5/24.0 GiB 97% 291 W 75°C │ large big:27b unload 4:12 │ small ✓ 1/4 │ S1 ✗ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB"
+             "GPU 18.5/24.0 GiB 97% 291 W 75°C │ local big:27b unload 4:12 │ decision ✗ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB"
 
     assert use ==
-             "chat 1 · large 1 · rule 1 │ 3.5k→125 tok · ctx 3.2k/81.9k │ det 50% │ $0.0000 · ~150 J │ queue large 1+2"
+             "chat 1 · local 1 · rule 1 │ 3.5k→125 tok · ctx 3.2k/81.9k │ det 50% │ $0.0000 · ~150 J │ queue local 1+2"
 
     assert [_, _] = StatusBar.lines(StatusBar.new(), nil)
   end
@@ -370,7 +371,7 @@ defmodule Xeito.MonitorTest do
     usage =
       Enum.reduce(
         [
-          %{"event" => "intent", "attrs" => %{"actor" => "large", "latency_ms" => 833}},
+          %{"event" => "intent", "attrs" => %{"actor" => "local", "latency_ms" => 833}},
           %{
             "event" => "effect_completed",
             "run" => "s/t1",
@@ -395,9 +396,9 @@ defmodule Xeito.MonitorTest do
     only_intent =
       StatusBar.count(StatusBar.new(), %{
         "event" => "intent",
-        "attrs" => %{"actor" => "large", "latency_ms" => 1250}
+        "attrs" => %{"actor" => "local", "latency_ms" => 1250}
       })
 
-    assert StatusBar.lines(only_intent, nil, nil, hidden) == ["intent large 1.3 s"]
+    assert StatusBar.lines(only_intent, nil, nil, hidden) == ["intent local 1.3 s"]
   end
 end

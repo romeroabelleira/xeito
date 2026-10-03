@@ -33,8 +33,8 @@ defmodule Mix.Tasks.Xeito.EvalTest do
   end
 
   test "off-box tiers are skipped for a type whose policy forbids them, and only then" do
-    Eval.run(~w(risk --deciders rules,remote --limit 2))
-    assert output() =~ "risk: skipping remote (policy remote: :forbidden)"
+    Eval.run(~w(risk --deciders rules,remote,remote_frontier --limit 2))
+    assert output() =~ "risk: skipping remote, remote_frontier (policy remote: :forbidden)"
 
     Eval.run(~w(triage --deciders rules --limit 2))
     refute output() =~ "skipping"

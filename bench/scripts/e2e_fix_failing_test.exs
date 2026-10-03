@@ -35,7 +35,7 @@ input = %{
   diff_stat: "pricing.py | 2 +-"
 }
 
-deciders = System.get_env("XEITO_E2E_DECIDERS", "system_one,small") |> String.split(",") |> Enum.map(&String.to_existing_atom/1)
+deciders = System.get_env("XEITO_E2E_DECIDERS", "local") |> String.split(",") |> Enum.map(&String.to_existing_atom/1)
 runner = {Xeito.Effects.Local, decider: [deciders: deciders]}
 {:ok, id} = RunSupervisor.start_run(Xeito.Machines.FixFailingTest, input, runner: runner)
 

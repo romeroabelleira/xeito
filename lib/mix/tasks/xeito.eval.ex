@@ -3,10 +3,10 @@ defmodule Mix.Tasks.Xeito.Eval do
   @moduledoc """
   Evaluates deciders on labelled examples and applies the gate test.
 
-      mix xeito.eval triage risk --deciders baseline,rules,system_one,small,large,pipeline
+      mix xeito.eval triage risk --deciders baseline,rules,local_decision,local,pipeline
       mix xeito.eval intent --limit 20 --out bench/decisions
-      mix xeito.eval triage --deciders large --predictions large
-      mix xeito.eval done --deciders system_one,small,large --epsilon 0.01
+      mix xeito.eval triage --deciders local --predictions local
+      mix xeito.eval done --deciders local_decision,local --epsilon 0.01
 
 
   Decision types: intent, triage, risk, done.
@@ -15,11 +15,12 @@ defmodule Mix.Tasks.Xeito.Eval do
   per-example verdicts are written to `DIR/<type>.<tier>.jsonl` (input, label, value,
   probabilities): distillation data for fine-tuning smaller deciders (P7).
 
-  When a local first stage (`system_one`, `small`) is evaluated with `large` or `openrouter`, the
-  report includes the selective-prediction cascade for each pair (`"small→large"`, …;
+  When a decision model (`local_decision`, `remote_decision`) is evaluated with `local` or
+  `remote`, the report includes the selective-prediction cascade for each pair
+  (`"local_decision→local"`, …;
   `Xeito.Decision.Eval.cascade/3`, tolerance `--epsilon`, default 0.01).
 
-  Off-box tiers (`openrouter`, `remote`) are skipped for types whose policy forbids them (Risk).
+  Remote tiers are skipped for types whose policy forbids them (Risk).
   """
 
   use Mix.Task
@@ -46,7 +47,7 @@ defmodule Mix.Tasks.Xeito.Eval do
 
     deciders =
       opts
-      |> Keyword.get(:deciders, "baseline,rules,system_one,small,large,pipeline")
+      |> Keyword.get(:deciders, "baseline,rules,local_decision,local,pipeline")
       |> String.split(",", trim: true)
       |> Enum.map(&String.to_existing_atom/1)
 
@@ -118,10 +119,10 @@ defmodule Mix.Tasks.Xeito.Eval do
     Mix.shell().info("  wrote #{path}")
   end
 
-  # Cascades from each local first stage to each stronger tier evaluated alongside it.
+  # Cascades from each decision model to each language model tier evaluated alongside it.
   defp cascades(results, epsilon) do
-    for small <- [:system_one, :small],
-        target <- [:large, :openrouter],
+    for small <- [:local_decision, :remote_decision],
+        target <- [:local, :remote],
         Map.has_key?(results, small),
         Map.has_key?(results, target),
         into: %{} do
@@ -186,7 +187,7 @@ defmodule Mix.Tasks.Xeito.Eval do
 
     for g <- report.gate do
       Mix.shell().info(
-        "  gate #{g.candidate}: #{if g.passes, do: "PASS", else: "fail"} (#{g.accuracy} vs large #{inspect(g.large)}, baseline #{inspect(g.baseline)}, margin #{g.margin})"
+        "  gate #{g.candidate}: #{if g.passes, do: "PASS", else: "fail"} (#{g.accuracy} vs local #{inspect(g.local)}, baseline #{inspect(g.baseline)}, margin #{g.margin})"
       )
     end
   end

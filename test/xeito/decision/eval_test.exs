@@ -29,18 +29,18 @@ defmodule Xeito.Decision.EvalTest do
     assert Eval.ece([r(:a, :b, 0.95), r(:a, :a, 0.95)]) == 0.45
   end
 
-  test "the gate compares candidates with the large tier and the static rule" do
+  test "the gate compares the decision-model candidates with the local tier and the static rule" do
     metrics = %{
-      large: %{accuracy: 0.9},
+      local: %{accuracy: 0.9},
       baseline: %{accuracy: 0.5},
-      system_one: %{accuracy: 0.89},
-      small: %{accuracy: 0.6}
+      local_decision: %{accuracy: 0.89},
+      remote_decision: %{accuracy: 0.6}
     }
 
-    [s1, small] = Eval.gate(metrics, 0.02)
-    assert s1.passes
-    refute small.passes
-    assert small.vs_baseline and not small.vs_large
+    [laya, jev] = Eval.gate(metrics, 0.02)
+    assert %{candidate: :local_decision, local: 0.9, passes: true} = laya
+    assert %{candidate: :remote_decision, passes: false} = jev
+    assert jev.vs_baseline and not jev.vs_local
   end
 
   test "loads every built-in example set with valid labels" do
@@ -91,15 +91,15 @@ defmodule Xeito.Decision.EvalTest do
     end
 
     test "a tier alone: its answer and model, or an abstention with the error" do
-      Req.Test.stub(:eval_large, &decision_response(&1, "review"))
-      large = [url: "http://large.test", plug: {Req.Test, :eval_large}, model: "big"]
-      [_, other, _] = Eval.run(Risk, :large, @examples, tiers: [large: large])
+      Req.Test.stub(:eval_local, &decision_response(&1, "review"))
+      local = [url: "http://local.test", plug: {Req.Test, :eval_local}, model: "big"]
+      [_, other, _] = Eval.run(Risk, :local, @examples, tiers: [local: local])
       assert %{predicted: :review, model: "big"} = other
       assert other.confidence > 0.9
 
       Req.Test.stub(:eval_down, &Plug.Conn.send_resp(&1, 500, "down"))
       down = [url: "http://down.test", plug: {Req.Test, :eval_down}, model: "big", retry: false]
-      [_, failed, _] = Eval.run(Risk, :large, @examples, tiers: [large: down])
+      [_, failed, _] = Eval.run(Risk, :local, @examples, tiers: [local: down])
       assert %{predicted: :abstain, confidence: nil, error: _} = failed
     end
 

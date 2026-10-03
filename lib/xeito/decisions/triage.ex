@@ -22,7 +22,7 @@ defmodule Xeito.Decisions.Triage do
   rule :timeout_only?, then: :flaky
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders [:large]
+  deciders [:local]
   min_confidence 0.8
 
   defp env_pattern,

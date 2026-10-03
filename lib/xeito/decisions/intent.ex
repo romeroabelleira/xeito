@@ -23,7 +23,7 @@ defmodule Xeito.Decisions.Intent do
   rule :run_tests?, then: :run
 
   # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
-  deciders [:large]
+  deciders [:local]
   min_confidence 0.75
 
   @doc false

@@ -14,10 +14,10 @@ defmodule Xeito.PolicyTest do
     policy = Policy.for_type(Decision.type!(Triage))
     assert %{remote: :forbidden, locality: :local_only, human: false} = policy
 
-    assert Policy.plan(policy, [:small, :large, :remote], nil, &all_available/1) == [
+    assert Policy.plan(policy, [:local_decision, :local, :remote], nil, &all_available/1) == [
              :rules,
-             :small,
-             :large
+             :local_decision,
+             :local
            ]
   end
 
@@ -34,18 +34,18 @@ defmodule Xeito.PolicyTest do
     assert Policy.plan(open, [:remote], run, &all_available/1) == [:rules]
   end
 
-  test "OpenRouter is off-box: it shares the remote gate, locality rule and budget" do
+  test "every remote tier is off-box: one remote gate, locality rule and budget" do
     type = Decision.type!(Triage)
     open = Policy.for_type(type, policy: [remote: :allowed, locality: :public])
+    ladder = [:local_decision, :remote_decision, :local, :remote, :remote_frontier]
 
-    assert Policy.plan(open, [:small, :openrouter, :remote], nil, &all_available/1) ==
-             [:rules, :small, :openrouter, :remote]
+    assert Policy.plan(open, ladder, nil, &all_available/1) == [:rules | ladder]
 
     local = Policy.for_type(type, policy: [remote: :allowed])
-    assert Policy.plan(local, [:small, :openrouter], nil, &all_available/1) == [:rules, :small]
+    assert Policy.plan(local, ladder, nil, &all_available/1) == [:rules, :local_decision, :local]
 
     risk = Policy.for_type(Decision.type!(Risk), policy: [remote: :allowed, locality: :public])
-    assert Policy.plan(risk, [:openrouter], nil, &all_available/1) == [:rules]
+    assert Policy.plan(risk, ladder, nil, &all_available/1) == [:rules, :local_decision, :local]
   end
 
   test "a type-level remote: :forbidden cannot be overridden" do
@@ -56,7 +56,7 @@ defmodule Xeito.PolicyTest do
 
   test "unavailable tiers are dropped and a human can close the ladder" do
     policy = Policy.for_type(Decision.type!(Triage), policy: [human: true])
-    assert Policy.plan(policy, [:small, :large], nil, &(&1 == :large)) == [:rules, :large, :human]
+    assert Policy.plan(policy, [:local_decision, :local], nil, &(&1 == :local)) == [:rules, :local, :human]
   end
 
   test "the queue admits at most `capacity` concurrent calls per tier" do

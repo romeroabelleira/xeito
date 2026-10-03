@@ -4,13 +4,12 @@ defmodule Xeito.Tiers.Queue do
   callers wait in FIFO order.
 
   Bench 1 measured why this matters: `laya-serve` serialises requests (~16 decisions/s whatever
-  the concurrency), llama-server has a few parallel slots, and a GPU generation competes with
-  itself. Capacities come from `config :xeito, :tier_capacity` (defaults below).
+  the concurrency), and a GPU generation competes with itself. Capacities come from `config :xeito, :tier_capacity` (defaults below).
   """
 
   use GenServer
 
-  @defaults %{rules: :infinity, system_one: 1, small: 4, large: 1, openrouter: 4, remote: 4}
+  @defaults %{rules: :infinity, local_decision: 1, local: 1, remote_decision: 4, remote: 4, remote_frontier: 4}
 
   @doc false
   def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))

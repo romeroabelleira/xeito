@@ -27,11 +27,11 @@ defmodule Mix.Tasks.Xeito.CandidatesTest do
   defp turn(log, run, prompt, intent, effects, machine \\ Chat) do
     # As the log has it: an escalation run whose final context holds the committed decision.
     if intent do
-      decision = %Decision{type: Intent, value: intent, confidence: 1.0, actor: :large}
+      decision = %Decision{type: Intent, value: intent, confidence: 1.0, actor: :local}
 
       {:ok, _} =
         Log.append(log, run <> "/intent", [
-          Event.new("run_started", {:run_started, Xeito.Machines.Escalation, "1.1.0", %{}}),
+          Event.new("run_started", {:run_started, Xeito.Machines.Escalation, "2.0.0", %{}}),
           Event.new("run_finished", {:run_finished, :done, :committed, %{decision: decision}})
         ])
     end

@@ -10,21 +10,19 @@ defmodule Xeito.Client.StatusBarTest do
   defp models(models), do: only(~w(models), %{"models" => models})
 
   describe "the models segment" do
-    test "the large tier: loaded (with its unload countdown), idle, down, or not configured" do
+    test "the local tier: loaded (with its unload countdown), idle, down, or not configured" do
       loaded = %{"configured" => true, "up" => true, "loaded" => [%{"name" => "big", "unload_in_s" => 125}]}
-      assert models(%{"large" => loaded}) == "large big unload 2:05"
-      assert models(%{"large" => %{"configured" => true, "up" => true, "loaded" => [%{"name" => "big"}]}}) == "large big"
-      assert models(%{"large" => %{"configured" => true, "up" => true, "loaded" => []}}) == "large idle (not loaded)"
-      assert models(%{"large" => %{"configured" => true, "up" => false}}) == "large ✗ down"
-      assert models(%{"large" => %{"configured" => false}}) == ""
+      assert models(%{"local" => loaded}) == "local big unload 2:05"
+      assert models(%{"local" => %{"configured" => true, "up" => true, "loaded" => [%{"name" => "big"}]}}) == "local big"
+      assert models(%{"local" => %{"configured" => true, "up" => true, "loaded" => []}}) == "local idle (not loaded)"
+      assert models(%{"local" => %{"configured" => true, "up" => false}}) == "local ✗ down"
+      assert models(%{"local" => %{"configured" => false}}) == ""
     end
 
-    test "the small tier with its busy slots, and System One: up or down" do
-      assert models(%{"small" => %{"configured" => true, "up" => true, "slots" => 2, "busy" => 1}}) == "small ✓ 1/2"
-      assert models(%{"small" => %{"configured" => true, "up" => true}}) == "small ✓"
-      assert models(%{"small" => %{"configured" => true, "up" => false}}) == "small ✗"
-      assert models(%{"system_one" => %{"configured" => true, "up" => true}}) == "S1 ✓"
-      assert models(%{"system_one" => %{"configured" => true, "up" => false}}) == "S1 ✗"
+    test "the local decision model: up or down" do
+      assert models(%{"local_decision" => %{"configured" => true, "up" => true}}) == "decision ✓"
+      assert models(%{"local_decision" => %{"configured" => true, "up" => false}}) == "decision ✗"
+      assert models(%{"local_decision" => %{"configured" => false}}) == ""
     end
 
     test "nothing before the monitor's first snapshot" do

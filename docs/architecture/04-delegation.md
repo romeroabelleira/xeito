@@ -18,18 +18,18 @@ One instance runs per decision request, as a child of the run ([02](02-state-mac
 stateDiagram-v2
   [*] --> rules
   rules --> committed: rule fired
-  rules --> small: no rule
-  small --> verify: decided ∧ conf ≥ θs
-  small --> large: abstain ∨ conf < θs
-  large --> verify: decided ∧ conf ≥ θl
-  large --> remote: abstain ∨ conf < θl  [policy allows remote ∧ budget]
-  large --> human: abstain  [remote forbidden]
-  remote --> verify: decided
-  remote --> human: abstain ∨ error
+  rules --> local_decision: no rule
+  local_decision --> verify: decided ∧ conf ≥ θ
+  local_decision --> local: abstain ∨ conf < θ
+  local --> verify: decided ∧ conf ≥ θ
+  local --> remote: abstain ∨ conf < θ  [policy allows remote ∧ budget]
+  local --> human: abstain  [remote forbidden]
+  remote --> verify: decided ∧ conf ≥ θ
+  remote --> remote_frontier: abstain ∨ conf < θ
+  remote_frontier --> verify: decided
+  remote_frontier --> human: abstain ∨ error
   verify --> committed: guard ok
   verify --> escalate_next: guard failed
-  escalate_next --> large: from small
-  escalate_next --> remote: from large [allowed]
   escalate_next --> human: otherwise
   human --> committed: answered
   human --> abstained: timeout
@@ -37,35 +37,42 @@ stateDiagram-v2
   abstained --> [*]
 ```
 
-| State | Meaning | Default timeout |
-|---|---|---|
-| `rules` | deterministic decision-table rules ([03](03-typed-decisions.md)) | 5 ms |
-| `small` | CPU decider on the local box: a System One encoder (Laya via `laya-serve`) or a grammar-constrained small LLM ([03](03-typed-decisions.md#three-families-of-small-decider)) | 2 s |
-| `large` | local GPU model (may involve a *model swap*, see below) | 60 s |
-| `openrouter` | hosted open-weight model via OpenRouter, with logprobs ([below](#openrouter)) | 90 s |
-| `remote` | external API (e.g. Claude) | 120 s |
-| `human` | ask in the TUI; the run waits | configurable |
-| `verify` | the guard on the decision's output (file exists, command parses, …) | 1 s |
+The diagram leaves out `remote_decision`, which sits between `local_decision` and `local` and behaves like `remote`.
 
-A tier is a place on this ladder; the API it speaks is its *backend* (`Xeito.Backends`: System One, llama-server, Ollama, OpenRouter, Anthropic), named in the tier's configuration (P4d).
+A **tier** is a place on this ladder, named by the kind of model and where it runs (P4d). The API it speaks is its **backend** (`Xeito.Backends`: `system_one`, `ollama`, `openrouter`), named in the tier's configuration; each tier has a default.
 
-### As implemented (P3)
+| State | Kind | Default backend | Default timeout |
+|---|---|---|---|
+| `rules` | deterministic decision-table rules ([03](03-typed-decisions.md)) | — | 5 s |
+| `local_decision` | a System One decision model on this machine: an encoder that scores the options (Laya via `laya-serve`; [03](03-typed-decisions.md#three-families-of-small-decider)) | `system_one` | 10 s |
+| `remote_decision` | a hosted System One decision model (Jev); off-box | `system_one` | 30 s |
+| `local` | the local GPU language model, also the chat model (may involve a *model swap*, see below) | `ollama` | 120 s |
+| `remote` | a hosted language model with logprobs, so a calibrated confidence ([below](#openrouter)); off-box | `openrouter` | 90 s |
+| `remote_frontier` | the strongest hosted language model; no logprobs, so its answer is terminal; off-box | `openrouter` | 180 s |
+| `human` | ask in the TUI; the run waits | — | configurable |
+| `verify` | the guard on the decision's output (file exists, command parses, …) | — | 1 s |
+
+Each decision type lists the tiers it uses, in order (`deciders`); all built-in types use `[:local]`. Policy and configuration drop tiers from that list: an unconfigured tier is never reached, and remote tiers are opt-in.
+
+**Names before P4d.** Logs written before escalation machine 2.0.0 name the tiers as they were: `system_one` is now `local_decision`, `large` is `local`, `openrouter` is `remote`, and `remote` (then the direct Anthropic API) is `remote_frontier`. The small language model tier (`small`, llama-server) was removed: no small model passed the P2 gate. Readers of older logs, such as P5's mining, map the old names to the new ones.
+
+### As implemented (P3, renamed in P4d)
 
 `Xeito.Machines.Escalation` implements this as a regular machine: one child run per decision, logged in the same OCEL log with a `part_of` relation to the requesting run.
 - **Routing.** The transitions live on the parent `deciding` state. Every tier's result bubbles up to one set of guarded transitions: commit, move to the next tier in the plan, or abstain.
 - **The plan.** Rules first, then the permitted and configured tiers, then optionally a human. It is computed by `Xeito.Policy` before the run starts.
-- **The remote tier** has no calibrated confidence (the API exposes no logprobs). When policy admits it, its result is terminal.
-- **Measured** in [bench 3](../../bench/3-escalation.md).
+- **The frontier tier** asks for no logprobs, so models without them (Claude) can serve it; its result is terminal when policy admits it.
+- **Measured** in [bench 3](../../bench/3-escalation.md) (with the names before P4d).
 
 ### OpenRouter
 
-`Xeito.Backends.OpenRouter` (P3b) adds an **off-box tier with calibrated confidence**: hosted open-weight models through OpenRouter's OpenAI-compatible chat completions, with the decision's JSON Schema as `response_format` and `logprobs`/`top_logprobs`. Its confidence is computed exactly like the local large tier's, so it takes part in thresholds and cascades instead of being terminal.
-- **Routing restrictions in every request.** `provider.require_parameters: true` (only endpoints that honour both the schema and logprobs), `data_collection: "deny"`, and `zdr: true` (zero data retention) by default. Providers can be pinned. Both filters rest on OpenRouter's knowledge of provider policies; they narrow the exposure, they do not make the tier local.
-- **Same gate as `remote`.** `Xeito.Policy` treats `openrouter` and `remote` as *off-box tiers*: one `remote:` switch, the same locality rule (`:local_only` never leaves), the same per-run spend budget. `Risk` never reaches either, and `mix xeito.eval` skips them for types that forbid them.
-- **Why Claude stays on the direct tier.** OpenRouter does offer an Anthropic-compatible Messages endpoint and passes `output_config` (effort, JSON-schema format) through, but not Anthropic's server-side refusal fallback. Claude returns no logprobs either way, and under `zdr: true` Claude requests are routed away from Anthropic's own endpoints to cloud endpoints where structured output is not uniformly supported. The direct Anthropic tier keeps all of this simpler.
-- **Measured** in [bench 3b](../../bench/3b-openrouter.md).
+`Xeito.Backends.OpenRouter` (P3b) serves both hosted language model tiers through OpenRouter's OpenAI-compatible chat completions, with the decision's JSON Schema as `response_format`. For `remote` it asks for `logprobs`/`top_logprobs`, and the confidence is computed exactly like the local tier's, so it takes part in thresholds and cascades. For `remote_frontier` it does not, and the answer is terminal.
+- **Routing restrictions in every request.** `provider.require_parameters: true` (only endpoints that honour every requested parameter: the schema, and logprobs when asked), `data_collection: "deny"`, and `zdr: true` (zero data retention) by default. Providers can be pinned. Both filters rest on OpenRouter's knowledge of provider policies; they narrow the exposure, they do not make the tier local.
+- **One gate for every remote tier.** `Xeito.Policy` treats every `remote*` tier as *off-box*: one `remote:` switch, the same locality rule (`:local_only` never leaves), the same per-run spend budget. `Risk` never reaches them, and `mix xeito.eval` skips them for types that forbid them.
+- **No direct Anthropic tier (since P4d).** Claude is reached through OpenRouter as `remote_frontier`. That gives up Anthropic's server-side refusal fallback: a refusal is an error, and the decision moves on or abstains. Under `zdr: true`, Claude requests are routed away from Anthropic's own endpoints to cloud endpoints where structured output is not uniformly supported, which the choice of the frontier model has to check.
+- **Measured** in [bench 3b](../../bench/3b-openrouter.md) (with the names before P4d).
 
-**Placement awareness (Q16, decided).** In `check_loaded`, if the large model is not resident and an earlier small-tier answer has confidence ≥ `policy.unloaded_accept` (default 0.6), that answer is committed instead of paying for a swap. Measured: 0.55 s and ~36 J instead of 3.6 s and ~200 J. The price is accepting an answer the large model might not have endorsed.
+**Placement awareness (Q16, decided).** In `check_loaded`, if the local model is not resident and an earlier tier's answer has confidence ≥ `policy.unloaded_accept` (default 0.6), that answer is committed instead of paying for a swap. Measured: 0.55 s and ~36 J instead of 3.6 s and ~200 J. The price is accepting an answer the local model might not have endorsed.
 
 ## Guards on escalation
 
@@ -100,7 +107,7 @@ stateDiagram-v2
   }
 ```
 
-`swapping` is logged like any other state. The swap cost therefore shows up in process mining, and the scheduler can batch large-tier decisions by model ("decide all pending `PlanShape` before swapping").
+`swapping` is logged like any other state. The swap cost therefore shows up in process mining, and the scheduler can batch local-tier decisions by model ("decide all pending `PlanShape` before swapping").
 
 ## Delegation of *work*, not only of decisions
 
@@ -118,9 +125,9 @@ A persistent job queue (Oban on PostgreSQL or SQLite) would duplicate the log an
 Each escalation writes one event per state entered, including `from_tier`, `to_tier`, `reason` (`:low_confidence | :abstain | :guard_failed | :timeout | :policy`), the confidence that triggered it, and the cost incurred.
 That is exactly what [05](05-event-log-and-process-mining.md) needs to answer:
 
-- How often does `small` escalate for each decision type? → candidates for more examples or fine-tuning.
-- How often does `large` *agree* with the `small` answer it overrode? → the threshold θs is too strict.
-- How often does `verify` reject `remote`? → the remote prompt or context is poor.
+- How often does `local_decision` escalate for each decision type? → candidates for more examples or fine-tuning.
+- How often does `local` *agree* with the `local_decision` answer it overrode? → that threshold is too strict.
+- How often does `verify` reject a remote tier? → the remote prompt or context is poor.
 - What does each type cost end-to-end? → a per-decision-type **cost-of-certainty** curve.
 
 ## Tuning thresholds from the log
