@@ -208,6 +208,76 @@ defmodule Xeito.UndoTest do
     assert get(ws, "a.txt") == {:error, :enoent}
   end
 
+  describe "a step killed midway (Esc) does not break later steps" do
+    defp store_path(ws), do: Path.join(ws, ".xeito/undo.git")
+
+    test "a store left half-built (its directory made, git never ran) is rebuilt", %{ws: ws} do
+      File.mkdir_p!(store_path(ws))
+
+      write = fn ->
+        put(ws, "a.txt", "a\n")
+        :done
+      end
+
+      assert :done = step(ws, "ses-a/t1/e1", "write a.txt", write)
+      assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
+    end
+
+    test "an index lock left behind is cleared once older than 10 s; a fresh one only costs that step its undo",
+         %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "a\n") end)
+      lock = Path.join(store_path(ws), "index.lock")
+      File.write!(lock, "")
+      {:ok, %File.Stat{mtime: made}} = File.stat(lock, time: :posix)
+
+      write = fn ->
+        put(ws, "b.txt", "b\n")
+        :ran
+      end
+
+      assert :ran = step(ws, "ses-a/t1/e2", "write b.txt", write, now: made + 10)
+      assert get(ws, "b.txt") == {:ok, "b\n"}
+      assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
+
+      step(ws, "ses-a/t1/e3", "write c.txt", fn -> put(ws, "c.txt", "c\n") end, now: made + 11)
+      assert [%{id: "ses-a/t1/e3"} | _] = Undo.steps(ws, "ses-a")
+    end
+
+    test "a store that cannot be created only costs the step its undo", %{ws: ws} do
+      dot_xeito = Path.join(ws, ".xeito")
+      File.mkdir_p!(dot_xeito)
+      File.write!(Path.join(dot_xeito, ".gitignore"), "*\n")
+      File.chmod!(dot_xeito, 0o500)
+      on_exit(fn -> File.chmod(dot_xeito, 0o700) end)
+
+      write = fn ->
+        put(ws, "a.txt", "a\n")
+        :ran
+      end
+
+      assert :ran = step(ws, "ses-a/t1/e1", "write a.txt", write)
+      assert get(ws, "a.txt") == {:ok, "a\n"}
+      assert Undo.steps(ws, "ses-a") == []
+      assert File.ls!(dot_xeito) == [".gitignore"]
+    end
+
+    test "bookkeeping that fails never fails the step", %{ws: ws} do
+      step(ws, "ses-a/t1/e1", "write a.txt", fn -> put(ws, "a.txt", "a\n") end)
+      # The session's refs cannot be written: recording the step fails.
+      refs = Path.join(store_path(ws), "refs/xeito/undo")
+      File.chmod!(refs, 0o500)
+      on_exit(fn -> File.chmod(refs, 0o700) end)
+
+      write = fn ->
+        put(ws, "b.txt", "b\n")
+        :ran
+      end
+
+      assert :ran = step(ws, "ses-a/t2/e1", "write b.txt", write)
+      assert get(ws, "b.txt") == {:ok, "b\n"}
+    end
+  end
+
   describe "retention: the store does not grow without bound" do
     defp store(ws), do: Path.join(ws, ".xeito/undo.git")
 
@@ -514,11 +584,16 @@ defmodule Xeito.UndoTest do
         max_file_bytes: 10
       )
 
-      step(ws, "ses-a/t1/e2", "bash mkdir", fn -> File.mkdir_p!(Path.join(outside, "d/e")) end,
-        outside: [Path.join(outside, "d")]
-      )
-
       assert Undo.steps(ws, "ses-a") == []
+
+      # A directory named outside is left out; what the step did inside is still a step.
+      mkdir = fn ->
+        File.mkdir_p!(Path.join(outside, "d/e"))
+        put(ws, "inside.txt", "i\n")
+      end
+
+      step(ws, "ses-a/t1/e2", "bash mkdir", mkdir, outside: [Path.join(outside, "d")])
+      assert [%{id: "ses-a/t1/e2", outside: []}] = Undo.steps(ws, "ses-a")
 
       # Exactly at the limit is still backed up.
       File.write!(notes, String.duplicate("e", 10))

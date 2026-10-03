@@ -35,8 +35,12 @@ defmodule Xeito.Undo.Store do
     String.trim(tree)
   end
 
+  # The store's own variables, then git's own cleared; `env` overrides either.
   defp env(cwd, env) do
-    inherited = Enum.reject(@inherited, fn {name, nil} -> List.keymember?(env, name, 0) end)
-    [{"GIT_DIR", path(cwd)}, {"GIT_WORK_TREE", cwd} | @ident] ++ inherited ++ env
+    [{"GIT_DIR", path(cwd)}, {"GIT_WORK_TREE", cwd} | @ident]
+    |> Kernel.++(@inherited)
+    |> Map.new()
+    |> Map.merge(Map.new(env))
+    |> Map.to_list()
   end
 end

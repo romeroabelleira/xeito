@@ -33,6 +33,8 @@ defmodule Xeito.Undo do
 
   @max_files 20_000
   @max_steps 200
+  @stale_lock_s 10
+  @config [{"gc.auto", "0"}, {"core.autocrlf", "false"}, {"advice.addEmbeddedRepo", "false"}]
   @max_file_bytes 5_000_000
   @type step :: %{id: String.t(), label: String.t(), skipped: [Path.t()], git: Branch.change()}
 
@@ -40,7 +42,8 @@ defmodule Xeito.Undo do
   Runs `fun` (one agent step, effect `id`) and returns its result. If it changed the
   workspace, the change is recorded as a step of the effect's session, described by `label`.
   Options: `:max_files` (default 20,000), `:max_file_bytes` (default 5 MB), `:max_steps`
-  (default 200).
+  (default 200), `:outside` (paths outside the workspace to back up), `:now` (seconds, for
+  telling a stale lock).
   """
   @spec step(Path.t(), String.t(), String.t(), (-> result), keyword()) :: result when result: term()
   def step(cwd, id, label, fun, opts \\ []), do: locked(cwd, fn -> snapshotted(cwd, id, label, fun, opts) end)
@@ -91,7 +94,7 @@ defmodule Xeito.Undo do
   # The workspace's tree, and the files left out for their size (with their size and mtime,
   # to tell which ones a step changed).
   defp snapshot(cwd, opts) do
-    with true <- File.dir?(cwd), :ok <- init(cwd), {:ok, ignored} <- within_limit(cwd, opts) do
+    with true <- File.dir?(cwd), :ok <- init(cwd, opts), {:ok, ignored} <- within_limit(cwd, opts) do
       capture(cwd, big_files(cwd, opts), ignored)
     else
       _ -> :error
@@ -124,20 +127,52 @@ defmodule Xeito.Undo do
 
   defp uncapture(cwd, files), do: git(cwd, ["update-index", "--force-remove", "--" | files])
 
-  defp init(cwd), do: if(File.dir?(store(cwd)), do: :ok, else: create(cwd))
+  # A step killed midway (Esc) may leave git running on the store after its lock is released, or
+  # leave the store half-built: the store is created under a temporary name and renamed into
+  # place, one that git does not take as a repository is rebuilt, and an index lock older than
+  # @stale_lock_s seconds is a leftover.
+  # A missing store is not a repository either: both are (re)built.
+  defp init(cwd, opts) do
+    if match?({_, 0}, git(cwd, ~w(rev-parse))),
+      do: clear_stale_lock(cwd, Keyword.get(opts, :now) || System.os_time(:second)),
+      else: rebuild(cwd)
+  end
+
+  defp rebuild(cwd) do
+    File.rm_rf(store(cwd))
+    create(cwd)
+  end
 
   defp create(cwd) do
     # `.xeito` is the daemon's own; the project's git must not see it, even before a log exists.
     dot_xeito = Path.dirname(store(cwd))
     File.mkdir_p!(dot_xeito)
     if !File.exists?(Path.join(dot_xeito, ".gitignore")), do: File.write!(Path.join(dot_xeito, ".gitignore"), "*\n")
-    {_, 0} = git(cwd, ~w(init))
+    new = store(cwd) <> ".new-#{System.unique_integer([:positive])}"
 
-    for {key, value} <- [{"gc.auto", "0"}, {"core.autocrlf", "false"}, {"advice.addEmbeddedRepo", "false"}],
-        do: {_, 0} = git(cwd, ["config", key, value])
+    result = with :ok <- build(cwd, new), do: File.rename(new, store(cwd))
+    # Renamed, `new` is gone; after a failure, whatever was built of it goes.
+    File.rm_rf(new)
+    result
+  end
 
-    excluded = Enum.map_join(Xeito.Tools.protected_dirs(), &"/#{&1}/\n")
-    File.write!(Path.join([store(cwd), "info", "exclude"]), excluded)
+  # The store, built under the temporary name `new`.
+  defp build(cwd, new) do
+    env = [{"GIT_DIR", new}]
+
+    with {_, 0} <- git(cwd, ~w(init), env),
+         true <- Enum.all?(@config, fn {key, value} -> match?({_, 0}, git(cwd, ["config", key, value], env)) end),
+         do: File.write(Path.join([new, "info", "exclude"]), Enum.map_join(Xeito.Tools.protected_dirs(), &"/#{&1}/\n"))
+  end
+
+  defp clear_stale_lock(cwd, now) do
+    lock = Path.join(store(cwd), "index.lock")
+
+    with {:ok, %File.Stat{mtime: mtime}} <- File.stat(lock, time: :posix),
+         true <- now - mtime > @stale_lock_s,
+         do: File.rm(lock)
+
+    :ok
   end
 
   # The ignored files to capture, if the workspace is within the file limit.
@@ -163,17 +198,30 @@ defmodule Xeito.Undo do
         do: entry
   end
 
+  # Undo's bookkeeping never fails the step: when a snapshot or the record cannot be made, the
+  # step runs (or has run) without undo.
   defp snapshotted(cwd, id, label, fun, opts) do
-    case snapshot(cwd, opts) do
-      {:ok, before, big} ->
-        state = {before, big, Branch.head(cwd), Outside.capture(cwd, Keyword.get(opts, :outside, []), max_bytes(opts))}
+    case attempt(fn -> before_step(cwd, opts) end) do
+      {:ok, state} ->
         result = fun.()
-        recorded(cwd, {id, label}, state, opts)
+        attempt(fn -> recorded(cwd, {id, label}, state, opts) end)
         result
 
       :error ->
         fun.()
     end
+  end
+
+  defp before_step(cwd, opts) do
+    with {:ok, before, big} <- snapshot(cwd, opts),
+         do:
+           {:ok, {before, big, Branch.head(cwd), Outside.capture(cwd, Keyword.get(opts, :outside, []), max_bytes(opts))}}
+  end
+
+  defp attempt(fun) do
+    fun.()
+  rescue
+    _ -> :error
   end
 
   defp recorded(cwd, step, {before, big_before, head, outside_before}, opts) do
