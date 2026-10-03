@@ -82,6 +82,47 @@ defmodule Xeito.Undo do
     :ok
   end
 
+  @doc """
+  Whether a snapshot can be taken now and would hold everything under `paths` (relative to the
+  workspace; ones not there yet included): no directory the project ignores and no file over
+  the size limit lies under them. `Xeito.Decisions.Risk` treats a write it cannot prove safe
+  as safe when this holds (undo stage 3). Options as for `step/5`.
+  """
+  @spec covers?(Path.t(), [Path.t()], keyword()) :: boolean()
+  def covers?(cwd, paths, opts \\ []) do
+    with true <- File.dir?(cwd), :ok <- init(cwd, opts), {:ok, _ignored} <- within_limit(cwd, opts) do
+      paths == [] or uncaptured(cwd, paths, opts) == []
+    else
+      _ -> false
+    end
+  end
+
+  # What lies under `paths` that a snapshot would leave out: ignored directories, large files.
+  defp uncaptured(cwd, paths, opts) do
+    {ignored, 0} =
+      git(cwd, [
+        "--literal-pathspecs",
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--" | paths
+      ])
+
+    {files, 0} =
+      git(cwd, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--" | paths])
+
+    entries = String.split(ignored, <<0>>, trim: true)
+    dirs = Enum.filter(entries, &String.ends_with?(&1, "/"))
+    max = max_bytes(opts)
+    large = for file <- String.split(files, <<0>>, trim: true) ++ entries, large?(Path.join(cwd, file), max), do: file
+    dirs ++ large
+  end
+
+  defp large?(path, max), do: match?({:ok, %File.Stat{type: :regular, size: size}} when size > max, File.stat(path))
+
   defp max_bytes(opts), do: Keyword.get(opts, :max_file_bytes, @max_file_bytes)
 
   defp locked(cwd, fun), do: :global.trans({{__MODULE__, cwd}, self()}, fun)

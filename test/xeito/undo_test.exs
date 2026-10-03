@@ -208,6 +208,35 @@ defmodule Xeito.UndoTest do
     assert get(ws, "a.txt") == {:error, :enoent}
   end
 
+  describe "covers?/3: would a snapshot hold everything under these paths?" do
+    test "files and directories the store captures are covered; paths not there yet too", %{ws: ws} do
+      put(ws, "lib/a.ex", "a\n")
+      put(ws, ".gitignore", "*.log\n")
+      put(ws, "lib/run.log", "small ignored file\n")
+      assert Undo.covers?(ws, ["lib", "lib/a.ex", "new/file.txt"])
+      assert Undo.covers?(ws, [])
+    end
+
+    test "an ignored directory, or a file over the size limit, under a path is not covered", %{ws: ws} do
+      put(ws, ".gitignore", "build/\n")
+      put(ws, "build/out.bin", "x\n")
+      put(ws, "src/big.bin", String.duplicate("b", 20))
+      put(ws, "src/a.ex", "a\n")
+
+      refute Undo.covers?(ws, ["build"])
+      refute Undo.covers?(ws, ["build/out.bin"])
+      put(ws, "src/edge.bin", String.duplicate("e", 10))
+      assert Undo.covers?(ws, ["src/a.ex", "src/edge.bin"], max_file_bytes: 10)
+      refute Undo.covers?(ws, ["src"], max_file_bytes: 10)
+    end
+
+    test "without a snapshot (too many files, or no store possible), nothing is covered", %{ws: ws} do
+      for i <- 1..3, do: put(ws, "f#{i}.txt", "#{i}\n")
+      refute Undo.covers?(ws, ["f1.txt"], max_files: 2)
+      refute Undo.covers?(Path.join(ws, "missing"), ["x"])
+    end
+  end
+
   describe "a step killed midway (Esc) does not break later steps" do
     defp store_path(ws), do: Path.join(ws, ".xeito/undo.git")
 

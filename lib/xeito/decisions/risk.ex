@@ -28,6 +28,8 @@ defmodule Xeito.Decisions.Risk do
   )
 
   rule :classify
+  # Writes the rules cannot prove from the text, but undo can take back (undo stage 3).
+  rule :undoable
 
   severity [:safe, :review, :forbidden], floor: :review
   policy remote: :forbidden
@@ -170,19 +172,21 @@ defmodule Xeito.Decisions.Risk do
   otherwise. Undo backs up those outside the workspace (`Xeito.Undo`).
   """
   @spec written_paths(String.t()) :: {:ok, [String.t()]} | :error
-  def written_paths(command) do
+  def written_paths(command), do: paths(command, &segment_paths/1)
+
+  defp paths(command, segment_paths) do
     with {:ok, segments, redirects} <- parse(command),
          segments = Enum.reject(segments, &(&1 == "")),
          false <- Enum.any?(segments, &String.starts_with?(&1, "cd ")) do
-      written_paths(segments, redirects)
+      collect_paths(segments, redirects, segment_paths)
     else
       _ -> :error
     end
   end
 
-  defp written_paths(segments, redirects) do
+  defp collect_paths(segments, redirects, segment_paths) do
     Enum.reduce_while(segments, {:ok, redirects}, fn segment, {:ok, paths} ->
-      case segment_paths(segment) do
+      case segment_paths.(segment) do
         {:ok, more} -> {:cont, {:ok, paths ++ more}}
         :error -> {:halt, :error}
       end
@@ -227,15 +231,113 @@ defmodule Xeito.Decisions.Risk do
   defp one_substitution?(script),
     do: Regex.match?(~r/^s([^\w\s\\])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gIi0-9]*$/, script)
 
+  # --- writes undo can take back (undo stage 3) ---------------------------------------------
+  #
+  # Some writes stay inside the workspace though the rules above cannot prove it from the text:
+  # globs, options they do not know, `find … -delete`. Each pattern is expanded in the
+  # workspace, and when every path stays inside it (as above) and a snapshot would hold
+  # everything under it (`Xeito.Undo.covers?/3`), the step can be undone: it is safe, decided
+  # as `rule:undoable` so the log shows what undo made safe. Secrets, `-exec`, dot-globs (which
+  # match `.git` or `.env`) and anything but plain writers still go to review.
+
+  @not_undoable [".env", ".ssh", "credentials", ".netrc", "-exec", "-ok", "-fprint", "-fls"]
+
+  @doc false
+  # Without a workspace there is no snapshot to cover anything (`Xeito.Undo.covers?/3`).
+  def undoable(%{command: command} = input), do: undoable(command, Map.get(input, :cwd) || "")
+
+  defp undoable(command, cwd) do
+    with false <- String.contains?(command, @not_undoable),
+         {:ok, patterns} <- paths(command, &confined_segment/1),
+         true <- confined?(patterns, cwd) and covered?(patterns, cwd) do
+      :safe
+    else
+      _ -> nil
+    end
+  end
+
+  # No dot-globs, and every glob's leading directories inside the workspace.
+  defp confined?(patterns, cwd),
+    do: not Enum.any?(patterns, &dot_glob?/1) and Enum.all?(patterns, &glob_root_inside?(&1, cwd))
+
+  # Every path, expanded, is inside, names no secret, and lies in what a snapshot holds.
+  defp covered?(patterns, cwd) do
+    paths = Enum.flat_map(patterns, &expand(&1, cwd))
+
+    not Enum.any?(paths, &String.contains?(&1, @not_undoable)) and Enum.all?(paths, &inside?(&1, cwd)) and
+      Xeito.Undo.covers?(cwd, paths)
+  end
+
+  # A segment's paths with globs and any options allowed: read-only ones write nothing.
+  defp confined_segment(segment) do
+    if safe_segment?(segment),
+      do: {:ok, []},
+      else: with({:ok, [command | args]} <- glob_words(segment), do: confined_command(command, args))
+  end
+
+  defp confined_command(command, args) when command in @writers, do: writer_paths(args)
+  defp confined_command("sed", args), do: command_paths("sed", Enum.map(args, &sed_long_option/1))
+  defp confined_command("find", args), do: find_paths(args)
+  defp confined_command(_command, _args), do: :error
+
+  defp writer_paths(args) do
+    {_options, paths} = Enum.split_with(args, &String.starts_with?(&1, "-"))
+    if paths == [], do: :error, else: {:ok, paths}
+  end
+
+  # `find START… EXPRESSION -delete`: everything under the starting points may go.
+  defp find_paths(args) do
+    {starts, expression} = Enum.split_while(args, &(not String.starts_with?(&1, "-")))
+    if "-delete" in expression, do: {:ok, if(starts == [], do: ["."], else: starts)}, else: :error
+  end
+
+  defp sed_long_option("--in-place"), do: "-i"
+  defp sed_long_option("--in-place=" <> suffix), do: "-i" <> suffix
+  defp sed_long_option("--regexp-extended"), do: "-E"
+  defp sed_long_option(word), do: word
+
+  defp dot_glob?(pattern), do: pattern |> Path.split() |> Enum.any?(&(String.starts_with?(&1, ".") and glob?(&1)))
+
+  defp glob?(word), do: String.contains?(word, ["*", "?", "["])
+
+  # The directories before a glob's first wildcard: what it matches later stays inside only if
+  # they do (`out/*` through a symlink to elsewhere does not), whatever it matches now.
+  defp glob_root_inside?(pattern, cwd) do
+    case pattern |> Path.split() |> Enum.take_while(&(not glob?(&1))) do
+      [] -> true
+      root -> not glob?(pattern) or inside?(Path.join(root), cwd)
+    end
+  end
+
+  # A glob becomes the workspace's paths it matches now; a plain path stays as it is.
+  defp expand(pattern, cwd) do
+    if glob?(pattern),
+      do: cwd |> Path.join(pattern) |> Path.wildcard() |> Enum.map(&Path.relative_to(&1, cwd)),
+      else: [pattern]
+  end
+
   # Shell words: plain ones without anything the shell would expand or interpret, or single-quoted.
-  defp words(segment) do
+  defp words(segment), do: shell_words(segment, &literal/1)
+
+  # The same, globs (`*`, `?`, `[…]`) allowed.
+  defp glob_words(segment), do: shell_words(segment, &glob_literal/1)
+
+  defp shell_words(segment, literal) do
     ~r/(?:'[^']*'|[^\s'])+/
     |> Regex.scan(segment)
-    |> Enum.map(fn [word] -> literal(word) end)
+    |> Enum.map(fn [word] -> literal.(word) end)
     |> Enum.reduce_while({:ok, []}, fn
       {:ok, word}, {:ok, acc} -> {:cont, {:ok, acc ++ [word]}}
       :error, _ -> {:halt, :error}
     end)
+  end
+
+  defp glob_literal(word) do
+    cond do
+      Regex.match?(~r/^'[^']*'$/, word) -> {:ok, String.slice(word, 1..-2//1)}
+      Regex.match?(~r/[$`~{}\\"'()!#]/, word) -> :error
+      true -> {:ok, word}
+    end
   end
 
   defp literal(word) do

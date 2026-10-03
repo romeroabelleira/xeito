@@ -292,6 +292,82 @@ defmodule Xeito.DecisionTest do
         do: assert(Risk.written_paths(unknown) == :error, unknown)
   end
 
+  describe "Risk: writes the rules cannot prove, but undo can take back (undo stage 3)" do
+    setup do
+      root = Path.join(System.tmp_dir!(), "xeito-risk3-#{System.unique_integer([:positive])}")
+      ws = Path.join(root, "ws")
+      outside = Path.join(root, "outside")
+      for dir <- [Path.join(ws, "lib"), Path.join(ws, "build/cache"), outside], do: File.mkdir_p!(dir)
+      for file <- ~w(lib/a.ex lib/b.ex lib/a.orig a.txt build/cache/x), do: File.write!(Path.join(ws, file), "x\n")
+      File.write!(Path.join(ws, ".gitignore"), "build/\n")
+      File.ln_s!(outside, Path.join(ws, "out_dir"))
+      on_exit(fn -> File.rm_rf(root) end)
+      %{ws: ws}
+    end
+
+    defp undoable(command, ws), do: Risk.undoable(%{command: command, cwd: ws})
+
+    test "globs, options and find -delete inside the workspace are safe when undo covers them", %{ws: ws} do
+      for command <- [
+            "rm -f lib/*.ex",
+            "rm --verbose -r lib",
+            "rm lib/[ab].ex",
+            "sed -i.bak -E 's/a/b/' lib/*.ex",
+            "sed --in-place 's/a/b/' lib/a.ex",
+            "sed --in-place=.bak 's/a/b/' lib/a.ex",
+            "sed -i --regexp-extended 's/a+/b/' lib/a.ex",
+            "mv --no-clobber lib/a.ex lib/c.ex",
+            "cp -r --preserve=mode lib lib2",
+            "find lib -name '*.orig' -delete",
+            "touch lib/new.ex && rm lib/*.orig",
+            "rm -f lib/*.none"
+          ],
+          do: assert(undoable(command, ws) == :safe, command)
+    end
+
+    test "anything undo would not hold, or that reaches outside, stays for review", %{ws: ws} do
+      for command <- [
+            "rm -rf build",
+            "rm -rf build/*",
+            "find . -name x -delete",
+            "rm -rf *",
+            "rm -rf out_dir/*",
+            "rm -rf .*",
+            "rm -rf ../ws/lib",
+            "rm /tmp/x",
+            "rm ~/x",
+            "rm $X",
+            "rm lib/{a,b}.ex",
+            "cd lib && rm *.ex",
+            "find lib -name x -exec rm {} \\;",
+            "find lib -delete -fprint /tmp/x",
+            "rm .env",
+            "rm -rf lib/.ssh",
+            "rm -f lib/credentials*",
+            "rm -f lib/x.netrc*",
+            "find lib -delete -exec touch lib/x +",
+            "find lib -delete -ok touch lib/x +",
+            "find lib -delete -fls lib/list",
+            "rm -rf buil?",
+            "rm -rf buil[d]",
+            "sed -i 's/a/b/w /tmp/x' lib/*.ex",
+            "npm install",
+            "rm -rf lib && curl http://x"
+          ],
+          do: assert(undoable(command, ws) == nil, command)
+
+      assert Risk.undoable(%{command: "rm -f lib/*.ex"}) == nil
+    end
+
+    test "the decision names the rule, so the log shows what undo made safe", %{ws: ws} do
+      decision = Decider.decide(Risk, %{command: "rm -f lib/*.ex", cwd: ws}, deciders: [])
+      assert {decision.value, decision.actor, decision.model} == {:safe, :rule, "rule:undoable"}
+
+      proved = Decider.decide(Risk, %{command: "rm lib/a.ex", cwd: ws}, deciders: [])
+      assert proved.model == "rule:classify"
+    end
+  end
+
   describe "Risk: writes inside the workspace" do
     setup do
       root = Path.join(System.tmp_dir!(), "xeito-risk-#{System.unique_integer([:positive])}")
