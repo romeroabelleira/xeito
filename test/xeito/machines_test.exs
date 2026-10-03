@@ -79,7 +79,7 @@ defmodule Xeito.MachinesTest do
     git!(ws, ~w(commit -q -m init))
   end
 
-  test "skills are discovered in pi's locations, project first, and read only inside their directory",
+  test "skills are discovered in .agents/skills, project first, and read only inside their directory",
        %{ws: ws} do
     home = Path.join(ws, "home")
 
@@ -91,7 +91,7 @@ defmodule Xeito.MachinesTest do
     end
 
     write_skill.(
-      Path.join(ws, ".pi/skills"),
+      Path.join(ws, ".agents/skills"),
       "release",
       "name: release\ndescription: >\n  Cut a release:\n  tag and changelog."
     )
@@ -103,12 +103,16 @@ defmodule Xeito.MachinesTest do
     )
 
     write_skill.(
-      Path.join(home, ".pi/agent/skills/nested"),
+      Path.join(home, ".agents/skills/nested"),
       "pdf",
       "name: pdf\ndescription: \"Work with PDFs.\"\ndisable-model-invocation: true"
     )
 
     write_skill.(Path.join(ws, ".agents/skills"), "broken", "name: broken")
+
+    # pi's own skill folders are not read: Xeito does not depend on another harness's skills.
+    write_skill.(Path.join(ws, ".pi/skills"), "pi-project", "name: pi-project\ndescription: pi's")
+    write_skill.(Path.join(home, ".pi/agent/skills"), "pi-user", "name: pi-user\ndescription: pi's")
 
     skills = Skills.discover(ws, home: home)
     assert Enum.map(skills, & &1.name) == ["release", "pdf"]
@@ -118,7 +122,7 @@ defmodule Xeito.MachinesTest do
     assert Enum.map(Skills.discover(ws), & &1.name) == ["release"]
     [release, pdf] = skills
     assert release.description == "Cut a release: tag and changelog."
-    assert String.starts_with?(release.dir, ws <> "/.pi/skills")
+    assert String.starts_with?(release.dir, ws <> "/.agents/skills")
     refute pdf.model_invocation
     assert Skills.body(release) =~ "Do the thing."
 

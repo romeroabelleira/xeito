@@ -1,11 +1,16 @@
 defmodule Xeito.Skills do
   @moduledoc """
-  Agent Skills (`SKILL.md` directories), read in pi's format (https://agentskills.io/specification).
+  Agent Skills (`SKILL.md` directories, https://agentskills.io/specification), the format pi
+  uses too.
 
   Discovery, first match wins on a name collision (project before user):
 
-    * `<workspace>/.pi/skills/`, `<workspace>/.agents/skills/`
-    * `~/.pi/agent/skills/`, `~/.agents/skills/`
+    * `<workspace>/.agents/skills/`
+    * `~/.agents/skills/`
+
+  Only `.agents/skills`, the folder no single tool owns. Another harness's own folders (pi's
+  `.pi/skills`, `~/.pi/agent/skills`) are not read, so what Xeito sees does not depend on what
+  another tool has installed.
 
   Directories containing `SKILL.md` are found recursively. The frontmatter must have a `name` and
   a `description`; skills without a description are skipped, as in pi.
@@ -36,9 +41,7 @@ defmodule Xeito.Skills do
     home = Keyword.get_lazy(opts, :home, &user_home/0)
 
     roots = [
-      Path.join(cwd, ".pi/skills"),
       Path.join(cwd, ".agents/skills"),
-      Path.join(home, ".pi/agent/skills"),
       Path.join(home, ".agents/skills")
     ]
 
