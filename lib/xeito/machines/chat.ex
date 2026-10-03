@@ -33,13 +33,19 @@ defmodule Xeito.Machines.Chat do
   passes the `Risk` decision first, and invalid calls are answered with an error message rather
   than executed. `max_steps` (default 25) bounds the model turns per run.
 
+  **Repeats.** An exact repeat of a call already made in this turn is not run again: it is
+  answered with the earlier result (which may have been elided from the conversation since).
+  A second step in a row of only repeated or invalid calls ends the turn, except once in a turn
+  that has changed nothing yet: then the model is told to act on what it has, and keeps its
+  tools (0.10.0).
+
   Input: `%{cwd: path, prompt: text, messages: [earlier messages], system: text, max_steps: n}`,
   optionally `verify: command` (see above),
   optionally `skills: [skill]` (`Xeito.Skills`, adds the `skill` tool) and `tools: false` (a plain
   answer with no tools, which streams sooner).
   """
 
-  use Xeito.Machine, version: "0.9.0"
+  use Xeito.Machine, version: "0.10.0"
 
   alias Xeito.Chat.Window
   alias Xeito.Effect
@@ -67,6 +73,7 @@ defmodule Xeito.Machines.Chat do
     on :chatted, to: :risk_check, guard: :calls_next_risky?, action: :queue_calls
     on :chatted, to: :executing, guard: :calls_next_safe?, action: :queue_calls
     on :chatted, to: :verifying, guard: :invalid_again_edited?, action: :queue_calls_and_stop
+    on :chatted, to: :thinking, guard: :invalid_again_unchanged?, action: :queue_calls_and_nudge
     on :chatted, to: :wrapping_up, guard: :invalid_again?, action: :queue_calls_and_stop
     on :chatted, to: :thinking, guard: :only_invalid_calls?, action: :queue_calls
     on :chatted, to: :verifying, guard: :edited?, action: :record_answer
@@ -261,6 +268,11 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def invalid_again_edited?(ctx, message), do: invalid_again?(ctx, message) and edited?(ctx, message)
 
+  # The same, in a turn that has changed nothing and was not nudged yet: one more chance.
+  @doc false
+  def invalid_again_unchanged?(ctx, message),
+    do: invalid_again?(ctx, message) and not Map.get(ctx, :edited, false) and not Map.get(ctx, :nudged, false)
+
   @doc false
   def stopped?(ctx, _data), do: Map.get(ctx, :stopped, false)
 
@@ -336,16 +348,21 @@ defmodule Xeito.Machines.Chat do
 
     case {Tools.to_effect(call, ctx), key in seen} do
       {{:error, reason}, _} -> {ok, [{call, "error: " <> reason} | bad], seen}
-      {{:ok, _}, true} -> {ok, [{call, repeated()} | bad], seen}
+      {{:ok, _}, true} -> {ok, [{call, repeated(Map.get(Map.get(ctx, :results, %{}), key))} | bad], seen}
       {{:ok, _}, false} -> {[call | ok], bad, [key | seen]}
     end
   end
 
-  defp repeated,
+  defp repeated(nil),
     do:
       "not run: you already made this exact call in this turn, and its result is above (if it " <>
         "was elided, read it back with result). Use that result instead of repeating the call; " <>
         "if you are stuck, say what blocks you."
+
+  defp repeated(result),
+    do:
+      "not run again: you already made this exact call in this turn. Its result:\n\n" <>
+        result <> "\n\nUse it instead of repeating the call."
 
   @doc false
   def queue_calls(ctx, message) do
@@ -368,6 +385,21 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def queue_calls_and_stop(ctx, message), do: ctx |> queue_calls(message) |> stop(:invalid)
+
+  @doc false
+  def queue_calls_and_nudge(ctx, message) do
+    ctx
+    |> queue_calls(message)
+    |> put_turn([
+      %{
+        role: "user",
+        content:
+          "You already have the results you need, and repeating calls will end this turn. " <>
+            "Act on them now: make the change you planned, give your answer, or say what blocks you."
+      }
+    ])
+    |> Map.put(:nudged, true)
+  end
 
   # A step that opens with the same sentence as two earlier ones: the model is going in circles.
   defp stuck_note(ctx, message) do
@@ -442,9 +474,15 @@ defmodule Xeito.Machines.Chat do
     ctx
     |> Map.update(:edited, edit_done?(ctx, result), &(&1 or edit_done?(ctx, result)))
     # An edit may change what a repeated call would see: repeats are allowed again.
-    |> then(&if(edit_done?(ctx, result), do: Map.put(&1, :seen, []), else: &1))
+    |> then(&if(edit_done?(ctx, result), do: Map.merge(&1, %{seen: [], results: %{}}), else: remember_result(&1, result)))
     |> put_turn([tool_message(ctx.current, Tools.result_text(result), result)])
     |> advance(ctx.pending)
+  end
+
+  # What a call returned, to answer an exact repeat of it with.
+  defp remember_result(ctx, result) do
+    key = {ctx.current.name, ctx.current.arguments}
+    Map.update(ctx, :results, %{key => Tools.result_text(result)}, &Map.put(&1, key, Tools.result_text(result)))
   end
 
   @doc false

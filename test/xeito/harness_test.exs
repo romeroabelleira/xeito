@@ -307,6 +307,7 @@ defmodule Xeito.HarnessTest do
       ollama(self(), [
         {"", [{"read", %{"path" => "a.txt"}}]},
         {"", [{"read", %{"path" => "a.txt"}}]},
+        {"", [{"read", %{"path" => "a.txt"}}]},
         {"I cannot read files in this turn.", []}
       ])
 
@@ -317,8 +318,8 @@ defmodule Xeito.HarnessTest do
     assert ctx.answer ==
              "Stopped: the model kept making tool calls that could not run.\n\nI cannot read files in this turn."
 
-    [_first, second | _] =
-      for _ <- 1..3,
+    [_first, second, third | _] =
+      for _ <- 1..4,
           do:
             (
               assert_received({:chat_request, r})
@@ -326,6 +327,8 @@ defmodule Xeito.HarnessTest do
             )
 
     assert List.last(second["messages"])["content"] == "error: no tools are available in this turn; answer in text"
+    # Once, in a turn that changed nothing, failing again is answered with a nudge, not an end.
+    assert List.last(third["messages"])["content"] =~ "You already have the results you need"
 
     empty = run_chat(log, ws, ollama(self(), [{"  ", []}]), %{prompt: "hm"})
     await_exit(empty)

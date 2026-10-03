@@ -2,6 +2,8 @@ defmodule Xeito.ChatMachineTest do
   @moduledoc "Unit tests of the chat machine's guards and actions, on contexts, without a model."
   use ExUnit.Case, async: true
 
+  alias Xeito.Machine
+  alias Xeito.Machine.Engine
   alias Xeito.Machines.Chat
 
   defp call(name, args), do: %{name: name, arguments: args}
@@ -52,6 +54,49 @@ defmodule Xeito.ChatMachineTest do
         )
 
       refute Enum.any?(queued.turn, &(&1.role == "user" and &1.content =~ "going in circles"))
+    end
+  end
+
+  describe "a model that repeats itself before changing anything" do
+    defp ran_ls do
+      ctx()
+      |> Chat.queue_calls(message("Look.", [call("bash", %{"command" => "ls"})]))
+      |> Chat.record_result(%{exit_status: 0, output: "banner.ex\n"})
+    end
+
+    test "a repeat is answered with the earlier result, without running it again" do
+      repeated = Chat.queue_calls(ran_ls(), message("Again.", [call("bash", %{"command" => "ls"})]))
+
+      assert %{role: "tool", content: content} = List.last(repeated.turn)
+      assert content =~ "not run again: you already made this exact call in this turn. Its result:"
+      assert content =~ "banner.ex"
+      assert repeated.pending == [] and repeated.invalid_streak == 1
+    end
+
+    test "the second step of repeats in a turn that changed nothing gets one nudge, with tools" do
+      machine = Machine.fetch!(Chat)
+      repeat = message("", [call("bash", %{"command" => "ls"})])
+      once = Chat.queue_calls(ran_ls(), repeat)
+
+      assert {:ok, %{to: :thinking, ctx: nudged}} = Engine.handle(machine, :thinking, once, :chatted, repeat)
+      assert nudged.nudged
+      assert %{role: "user", content: nudge} = List.last(nudged.turn)
+      assert nudge =~ "You already have the results you need"
+
+      # Still repeating after the nudge: the turn ends.
+      assert {:ok, %{to: :wrapping_up, ctx: %{stopped: true}}} =
+               Engine.handle(machine, :thinking, nudged, :chatted, repeat)
+    end
+
+    test "a turn that already edited, or was already nudged, is not nudged" do
+      machine = Machine.fetch!(Chat)
+      bad = message("", [call("no_such_tool", %{})])
+
+      assert {:ok, %{to: :wrapping_up}} =
+               Engine.handle(machine, :thinking, ctx(%{invalid_streak: 1, nudged: true}), :chatted, bad)
+
+      assert {:ok, %{to: :wrapping_up}} =
+               Engine.handle(machine, :thinking, ctx(%{invalid_streak: 1, edited: true}), :chatted, bad)
     end
   end
 
@@ -210,9 +255,6 @@ defmodule Xeito.ChatMachineTest do
   end
 
   describe "a review answered with text instead of y or n" do
-    alias Xeito.Machine
-    alias Xeito.Machine.Engine
-
     defp reviewing(extra \\ %{}) do
       bash = call("bash", %{"command" => "mix test"})
       ctx(Map.merge(%{current: bash, pending: [call("read", %{"path" => "a"})], turn: []}, extra))
@@ -285,16 +327,16 @@ defmodule Xeito.ChatMachineTest do
     end
 
     test "every working state takes a steer without leaving; a finished turn ignores it" do
-      machine = Xeito.Machine.fetch!(Chat)
+      machine = Machine.fetch!(Chat)
 
       for state <- [:thinking, :risk_check, :executing, :ask_human, :verifying, :wrapping_up] do
         assert {:ok, %{to: ^state, entered: [], effects: []} = step} =
-                 Xeito.Machine.Engine.handle(machine, state, asked(), :steered, %{text: "t"})
+                 Engine.handle(machine, state, asked(), :steered, %{text: "t"})
 
         assert Chat.undelivered(step.ctx) == ["t"], "#{state}"
       end
 
-      assert :ignored = Xeito.Machine.Engine.handle(machine, :answered, asked(), :steered, %{text: "t"})
+      assert :ignored = Engine.handle(machine, :answered, asked(), :steered, %{text: "t"})
     end
   end
 end
