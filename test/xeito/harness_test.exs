@@ -657,7 +657,8 @@ defmodule Xeito.HarnessTest do
     next_event("human_needed")
     :ok = Session.prompt(id, "/approve")
     assert_receive {:xeito, _, %{type: "effect_requested", attrs: %{"kind" => :bash}}}, 3_000
-    assert {:error, :busy} = Session.prompt(id, "another")
+    # A line typed meanwhile is queued; the halted turn holds it, and a go-ahead does not send it.
+    assert :ok = Session.prompt(id, "another")
 
     assert :ok = Session.prompt(id, "/halt")
     assert %{attrs: %{"status" => :halted, "answer" => "Halted by the user."}} = next_event("turn_finished")

@@ -91,7 +91,7 @@ defmodule Xeito.Session do
 
   # The slash commands, by what they act on (command/3). `skill:` takes the skill's name.
   @start_commands ~w(machine run skill:)
-  @turn_commands ~w(approve deny halt)
+  @turn_commands ~w(approve deny halt send drop)
   @info_commands ~w(why budget help machines)
   @debug_commands ~w(step continue next decide break)
   @undo_commands ~w(undo redo)
@@ -104,7 +104,7 @@ defmodule Xeito.Session do
   @spec subscribe(String.t()) :: :ok
   def subscribe(id), do: Events.subscribe(topic(id))
 
-  @doc "Submits a prompt or slash command. Returns `:ok` or `{:error, :busy}`."
+  @doc "Submits a prompt or slash command; while a turn runs, a prompt is queued (see `/send`). Returns `:ok`."
   @spec prompt(String.t(), String.t()) :: :ok | {:error, term()}
   def prompt(id, text), do: GenServer.call(via(id), {:prompt, text})
 
@@ -162,6 +162,10 @@ defmodule Xeito.Session do
       history: [],
       # The last turn stopped before it was done (step limit): a short "go ahead" continues it.
       unfinished: false,
+      # Lines typed while a turn ran, oldest first, and whether they wait for the user (`held`)
+      # because a turn ended in a way they were not written for.
+      queue: [],
+      held: false,
       # Whether this session has said that the daemon's code changed on disk (`Xeito.Preload`).
       stale_warned: false,
       decisions: [],
@@ -277,7 +281,10 @@ defmodule Xeito.Session do
   # waits, text is the answer: what to do instead of the call.
   defp prompt(trimmed, text, s) do
     cond do
-      Regex.match?(~r{^/(approve|deny|halt|why|budget|help|machines|step|next|continue|break|decide)\b}, trimmed) ->
+      Regex.match?(
+        ~r{^/(approve|deny|halt|send|drop|why|budget|help|machines|step|next|continue|break|decide)\b},
+        trimmed
+      ) ->
         "/" <> command = trimmed
         {:ok, command(command, s)}
 
@@ -285,7 +292,7 @@ defmodule Xeito.Session do
         {:ok, instruct(trimmed, s)}
 
       s.root != nil ->
-        {{:error, :busy}, s}
+        {:ok, enqueue(text, s)}
 
       true ->
         {:ok, start_turn(text, trimmed, s)}
@@ -463,6 +470,16 @@ defmodule Xeito.Session do
   defp turn_command("approve", s), do: human_command(:approved, s)
   defp turn_command("deny", s), do: human_command(:denied, s)
   defp turn_command("halt", s), do: halt(s)
+  defp turn_command(send_or_drop, s), do: queue_command(send_or_drop, s)
+
+  # /send and /drop: the first line typed while a turn ran.
+  defp queue_command(_send_or_drop, %{queue: []} = s), do: error(s, "nothing is queued")
+
+  defp queue_command("send", %{root: root} = s) when root != nil,
+    do: error(s, "a turn is running; queued lines are sent when it ends")
+
+  defp queue_command("send", s), do: send_queued(s)
+  defp queue_command("drop", s), do: dequeue(s, "dropped")
 
   defp info_command("why", _arg, s), do: why(s)
   defp info_command("budget", usd, s), do: budget(usd, s)
@@ -645,7 +662,7 @@ defmodule Xeito.Session do
 
   defp halt(%{root: :deciding} = s) do
     emit(s, "turn_finished", nil, %{"status" => :halted, "final_state" => :intent, "answer" => @halted})
-    %{s | root: nil}
+    hold(%{s | root: nil}, "halted")
   end
 
   defp halt(s) do
@@ -764,17 +781,65 @@ defmodule Xeito.Session do
     emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
     emit(s, "turn_finished", run_id, Map.put(event.attrs, "answer", answer))
 
-    %{
-      s
-      | root: nil,
-        machine: nil,
-        waiting: nil,
-        history: remember(s, result, answer),
-        unfinished: stopped?(result)
-    }
+    after_turn(
+      %{s | root: nil, machine: nil, waiting: nil, history: remember(s, result, answer), unfinished: stopped?(result)},
+      result,
+      answer
+    )
   end
 
   defp track(run_id, event, s), do: track_run(run_id, event, s)
+
+  # --- input while busy ---
+
+  # A line typed while a turn runs waits here, in order; it is never taken as a review's answer.
+  defp enqueue(text, s) do
+    queue = s.queue ++ [text]
+    emit(s, "queued", nil, %{"text" => text, "queued" => length(queue)})
+    log_queue(s, "prompt_queued", %{"text" => text})
+    %{s | queue: queue}
+  end
+
+  # A turn that ended normally sends the first queued line as the next prompt. Otherwise the
+  # queue is held: its lines were written without seeing that ending.
+  defp after_turn(%{queue: []} = s, _result, _answer), do: s
+  defp after_turn(%{held: true} = s, _result, _answer), do: s
+
+  defp after_turn(s, result, answer),
+    do: if(release?(result, answer), do: send_queued(s), else: hold(s, hold_reason(result)))
+
+  @doc false
+  # Whether a turn ended normally: done, not stopped at its step limit, and not asking a question.
+  def release?(result, answer),
+    do:
+      result.status == :done and not stopped?(result) and
+        not (answer |> to_string() |> String.trim() |> String.ends_with?("?"))
+
+  defp hold_reason(%{status: status}) when status in [:halted, :failed], do: to_string(status)
+  defp hold_reason(%{ctx: %{stopped: true}}), do: "stopped"
+  defp hold_reason(_result), do: "question"
+
+  defp hold(%{queue: []} = s, _reason), do: s
+
+  defp hold(s, reason) do
+    emit(s, "queue_held", nil, %{"reason" => reason, "queued" => length(s.queue)})
+    %{s | held: true}
+  end
+
+  defp send_queued(s) do
+    text = hd(s.queue)
+    s = dequeue(s, "sent")
+    {_reply, s} = prompt(String.trim(text), text, s)
+    s
+  end
+
+  defp dequeue(%{queue: [text | rest]} = s, outcome) do
+    emit(s, "dequeued", nil, %{"text" => text, "outcome" => outcome})
+    log_queue(s, "prompt_dequeued", %{"text" => text, "outcome" => outcome})
+    %{s | queue: rest, held: s.held and rest != []}
+  end
+
+  defp log_queue(s, type, attrs), do: Log.append(s.log, s.id, [Log.Event.new(type, {String.to_atom(type), attrs}, attrs)])
 
   defp review_ended(run_id, s), do: if(s.waiting && s.waiting.run == run_id, do: %{s | waiting: nil}, else: s)
 
@@ -1030,6 +1095,8 @@ defmodule Xeito.Session do
     /run <command>            run a command once
     /approve · /deny          answer a command waiting for review (or type what to do instead)
     /undo [n] · /redo [n]     revert this session's last n file changes, or put them back
+    /send · /drop             send the first line typed while a turn ran, or drop it (held when
+                              the turn ended halted, failed, stopped, or with a question)
     /halt                     stop the turn where it is (Esc in the TUI); "go ahead" continues it
     /why                      the last decisions, with tier and confidence
     /budget <usd>             off-box spend limit per run

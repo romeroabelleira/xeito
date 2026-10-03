@@ -320,6 +320,59 @@ defmodule Xeito.TuiTest do
     end
   end
 
+  describe "lines typed while a turn runs: queued in the session" do
+    defp qevent(type, attrs), do: %{"event" => type, "attrs" => attrs}
+    defp queue_rows(state), do: state |> Tui.view() |> screen() |> Enum.filter(&(is_binary(&1) and &1 =~ "⏸"))
+
+    test "a queued line shows above the prompt until it is sent; the screen still fits" do
+      state =
+        [status_bar: false]
+        |> tui()
+        |> Tui.apply_event(qevent("queued", %{"text" => "/run mix test", "queued" => 1}))
+        |> Tui.apply_event(qevent("queued", %{"text" => "and commit", "queued" => 2}))
+
+      assert state.queue == ["/run mix test", "and commit"]
+
+      assert queue_rows(state) ==
+               Enum.map([" ⏸ queued: /run mix test", " ⏸ queued: and commit"], &String.pad_trailing(&1, 80))
+
+      assert length(screen(Tui.view(state))) == state.height
+
+      sent = Tui.apply_event(state, qevent("dequeued", %{"text" => "/run mix test", "outcome" => "sent"}))
+      assert sent.queue == ["and commit"]
+    end
+
+    test "a held queue says how to send or drop it, and the keys do that" do
+      state =
+        [status_bar: false]
+        |> tui()
+        |> Tui.apply_event(qevent("queued", %{"text" => "and commit", "queued" => 1}))
+        |> Tui.apply_event(qevent("queue_held", %{"reason" => "halted", "queued" => 1}))
+
+      assert [row] = queue_rows(state)
+      assert String.trim_trailing(row) == " ⏸ held (the turn halted): and commit · Enter sends · Esc drops"
+
+      {_, []} = Tui.update(:submit, state)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "/send"}}
+
+      {_, []} = Tui.update(:halt, state)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "/drop"}}
+
+      dropped = Tui.apply_event(state, qevent("dequeued", %{"text" => "and commit", "outcome" => "dropped"}))
+      assert {dropped.queue, dropped.held} == {[], false}
+      assert queue_rows(dropped) == []
+    end
+
+    test "Enter on an empty line does nothing, and Esc halts, when the queue is not held" do
+      state = Tui.apply_event(%{tui() | leaf: "executing"}, qevent("queued", %{"text" => "next", "queued" => 1}))
+      {_, []} = Tui.update(:submit, state)
+      refute_receive {:request, %{"text" => "/send"}}, 100
+
+      {_, []} = Tui.update(:halt, state)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "/halt"}}
+    end
+  end
+
   describe "recalling earlier prompts with Up and Down" do
     # Submits a prompt and waits until it reaches the daemon.
     defp sent(state, text) do
@@ -723,13 +776,13 @@ defmodule Xeito.TuiTest do
     end
 
     test "several matches: each Tab shows the next, in order, and wraps around" do
-      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(5) |> Enum.map(&value/1)
-      assert tabbed == ["/s", "/skill:", "/statusbar", "/step", "/skill:"]
+      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(6) |> Enum.map(&value/1)
+      assert tabbed == ["/s", "/send", "/skill:", "/statusbar", "/step", "/send"]
     end
 
     test "typing after a Tab completes from the new text" do
       # "/skill:x" names no skill, so the line stays; it does not cycle on to "/statusbar".
-      assert tui() |> typing("/s") |> tab() |> typing("x") |> tab() |> value() == "/skill:x"
+      assert tui() |> typing("/sk") |> tab() |> typing("x") |> tab() |> value() == "/skill:x"
     end
 
     test "no match, or a line that is not a command, stays as it is" do

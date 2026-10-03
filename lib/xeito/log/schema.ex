@@ -26,7 +26,10 @@ defmodule Xeito.Log.Schema do
     # `/undo` and `/redo` (`Xeito.Undo`), in the session's own stream (`within` the session):
     # a label against the effect whose change was reverted or put back.
     "step_undone" => ~w(effect_id label),
-    "step_redone" => ~w(effect_id label)
+    "step_redone" => ~w(effect_id label),
+    # Lines typed while a turn ran: queued, then sent or dropped (`Xeito.Session`).
+    "prompt_queued" => ~w(text),
+    "prompt_dequeued" => ~w(text outcome)
   }
 
   @object_types %{

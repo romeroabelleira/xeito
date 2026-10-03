@@ -31,7 +31,9 @@ defmodule Xeito.Tui do
   answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
   running turn; Up / Down recall earlier prompts (the line being typed comes back past the
   newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`,
-  and each further Tab shows the next match; PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
+  and each further Tab shows the next match; a line sent while a turn runs is queued in the
+  session and shown above the prompt, and when the turn ended in a way it was not written for
+  (halted, failed, stopped, a question) it is held: Enter on an empty line sends it, Esc drops it; PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
   session keeps running in the daemon and can be reattached with `--session`).
 
   The TUI owns no run state: everything shown comes from daemon events, so it can crash, be
@@ -131,6 +133,9 @@ defmodule Xeito.Tui do
       blink: 0,
       # The spinner's frame, the generation of its timer, and whether a timer is running.
       frame: 0,
+      # Lines typed while a turn ran, queued in the session, and whether the session holds them.
+      queue: [],
+      held: false,
       spin_gen: 0,
       spinning: false,
       blink_until: 0,
@@ -313,6 +318,11 @@ defmodule Xeito.Tui do
     {%{state | paused: false}, []}
   end
 
+  defp submit("", %{held: reason, queue: [_ | _]} = state) when is_binary(reason) do
+    request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/send"})
+    {state, []}
+  end
+
   defp submit("", state), do: {state, []}
   defp submit(text, state), do: run_line(text, remember(state, text))
 
@@ -326,6 +336,12 @@ defmodule Xeito.Tui do
   defp recalled(:none, state), do: {state, []}
 
   # Halts the running turn (the daemon's `/halt`); with nothing running, Esc does nothing.
+  # With nothing running, Esc drops the first line the session holds.
+  defp halt(%{leaf: "idle", held: reason, queue: [_ | _]} = state) when is_binary(reason) do
+    request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/drop"})
+    {state, []}
+  end
+
   defp halt(%{leaf: leaf} = state) when leaf in ["idle", "disconnected"], do: {state, []}
 
   defp halt(state) do
@@ -553,6 +569,7 @@ defmodule Xeito.Tui do
   @progress ["run_selected", "state_entered", "decision_made", "intent"]
 
   defp track(state, type, event) when type in @progress, do: progress(state, type, event)
+  defp track(state, type, event) when type in ["queued", "dequeued", "queue_held"], do: queued(state, type, event)
   defp track(state, type, _event), do: turn_status(state, type)
 
   # Where the run is, and what it has cost so far.
@@ -568,6 +585,15 @@ defmodule Xeito.Tui do
 
   defp progress(state, "intent", %{"attrs" => a}),
     do: %{state | decisions: state.decisions + 1, leaf: "intent", tier: a["actor"]}
+
+  # The session's queue of lines typed while a turn ran (`Xeito.Session`).
+  defp queued(state, "queued", %{"attrs" => %{"text" => text}}), do: %{state | queue: state.queue ++ [text]}
+  defp queued(state, "queue_held", %{"attrs" => %{"reason" => reason}}), do: %{state | held: reason}
+
+  defp queued(state, "dequeued", _event) do
+    queue = Enum.drop(state.queue, 1)
+    %{state | queue: queue, held: queue != [] and state.held}
+  end
 
   defp usd(usd) when is_number(usd), do: usd
   defp usd(_usd), do: 0.0
@@ -611,8 +637,9 @@ defmodule Xeito.Tui do
         _ -> []
       end
 
-    # The header, the prompt line between its two borders, the bar and the status line.
-    body_height = max(state.height - 5 - length(bar), 1)
+    queued = queue_rows(state)
+    # The header, the queue, the prompt line between its two borders, the bar and the status line.
+    body_height = max(state.height - 5 - length(bar) - length(queued), 1)
 
     stack(:vertical, [
       text(
@@ -620,6 +647,7 @@ defmodule Xeito.Tui do
         header_style()
       ),
       stack(:vertical, Enum.map(visible(state, body_height), &line_node/1)),
+      stack(:vertical, Enum.map(queued, &text(pad(&1, state.width), Style.new(attrs: [:dim])))),
       border(state.width),
       stack(:horizontal, [
         text("> "),
@@ -630,6 +658,17 @@ defmodule Xeito.Tui do
       text(status_line(state, state.width), status_style(state))
     ])
   end
+
+  # Lines typed while a turn ran, above the prompt: queued, or held (with how to send or drop).
+  defp queue_rows(%{queue: []}), do: []
+  defp queue_rows(%{held: false, queue: queue}), do: Enum.map(queue, &" ⏸ queued: #{&1}")
+
+  defp queue_rows(%{held: reason, queue: [first | rest]}),
+    do: [" ⏸ held (#{held_because(reason)}): #{first} · Enter sends · Esc drops" | Enum.map(rest, &" ⏸ held: #{&1}")]
+
+  defp held_because("question"), do: "the turn asked you something"
+  defp held_because("stopped"), do: "the turn stopped at its step limit"
+  defp held_because(status), do: "the turn #{status}"
 
   # The input line is drawn here; TermUI's TextInput keeps the text and handles editing. Its own
   # cursor (reverse video) was easy to miss, and its style cannot be changed, so the typing
