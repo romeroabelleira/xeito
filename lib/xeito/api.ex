@@ -18,6 +18,8 @@ defmodule Xeito.Api do
       {"id": 6, "cmd": "sessions"}                          (the daemon's live sessions; with "cwd": that
                                     directory's sessions from its log, last updated first)
       {"id": 6, "cmd": "prompts", "cwd": "/path"}           (the prompts typed there, newest first, for Up/Down)
+      {"id": 6, "cmd": "transcript", "session": "ses-…", "cwd": "/path"}
+                                    (its last turns from the log: each request and answer)
       {"id": 7, "cmd": "workspace", "session": "ses-…"}      (git and off-box budget; also an event)
       {"id": 7, "cmd": "machines", "cwd": "/path"}           (machines, routing, usage in that log)
       {"id": 8, "cmd": "monitor", "on": true}               (status snapshots every 2 s; "on": false stops)

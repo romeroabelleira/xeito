@@ -987,6 +987,10 @@ defmodule Xeito.Session do
     :exit, _ -> nil
   end
 
+  @doc false
+  # A finished turn's answer, as the session reported it (`Xeito.Session.Directory.turns/3`).
+  def turn_answer(machine, result), do: answer(machine, result)
+
   defp answer(_machine, %{status: :halted}), do: @halted
   defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || ctx |> Map.get(:error) |> to_text()
 

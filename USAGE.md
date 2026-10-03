@@ -176,7 +176,7 @@ The hardware and model line comes from the daemon, which only polls (every 2 s) 
 
 The choice is saved in `~/.config/xeito/tui.json` (or `$XDG_CONFIG_HOME/xeito/tui.json`; set `XEITO_TUI_CONFIG` to use another file), so the next TUI starts the same way. The segments are `gpu models cpu git calls tokens decision reply det cost budget queue`.
 
-**Quit** with `/quit` (or `/exit`, Ctrl-D, Ctrl-C). The session keeps running in the daemon, and the next TUI started in the same directory continues it: the last updated session of a directory is the default, with its earlier turns shown, even after the daemon restarted (it is rebuilt from the log). Up and Down recall the prompts typed in that directory before, from all of its sessions.
+**Quit** with `/quit` (or `/exit`, Ctrl-D, Ctrl-C). The session keeps running in the daemon, and the next TUI started in the same directory continues it: the last updated session of a directory is the default, with its earlier turns shown (each prompt, the first line of each answer, and the last answer in full), even after the daemon restarted (it is rebuilt from the log). Up and Down recall the prompts typed in that directory before, from all of its sessions.
 
 ```
 > /sessions                         this directory's sessions, last updated first

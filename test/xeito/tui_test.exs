@@ -747,8 +747,8 @@ defmodule Xeito.TuiTest do
     defp reply(%{"cmd" => "open"}, {_, true}), do: %{ok: true, session: "ses-last", status: %{cwd: "/w"}, continued: true}
     defp reply(%{"cmd" => "attach", "session" => "ses-gone"}, _), do: %{ok: false, error: "no such session"}
     defp reply(%{"cmd" => "attach", "session" => id}, _), do: %{ok: true, session: id, status: %{cwd: "/w"}}
-    defp reply(%{"cmd" => "history"}, {:broken, _}), do: %{ok: false, error: "no history"}
-    defp reply(%{"cmd" => "history"}, {history, _}), do: %{ok: true, history: history}
+    defp reply(%{"cmd" => "transcript"}, {:broken, _}), do: %{ok: false, error: "no transcript"}
+    defp reply(%{"cmd" => "transcript"}, {turns, _}), do: %{ok: true, turns: turns}
     defp reply(%{"cmd" => "prompts"}, _), do: %{ok: true, prompts: ["/why", "fix the test"]}
     defp reply(_req, _), do: %{ok: true}
 
@@ -769,8 +769,8 @@ defmodule Xeito.TuiTest do
     end
 
     test "a directory's last updated session is continued, with its earlier turns" do
-      history = [%{role: "user", content: "fix the test"}, %{role: "assistant", content: "Fixed."}]
-      state = init_with(socket: daemon(history, true), cwd: "/w")
+      turns = [%{prompt: "fix the test", answer: "Fixed."}]
+      state = init_with(socket: daemon(turns, true), cwd: "/w")
 
       assert %{session: "ses-last", lines: ["> fix the test", "Fixed.", "continuing session ses-last · /sessions" <> _]} =
                state
@@ -781,16 +781,26 @@ defmodule Xeito.TuiTest do
       assert state.prompt_history == ["/why", "fix the test"]
     end
 
-    test "attaching shows the earlier turns: prompts and the first line of each answer" do
-      history = [
-        %{role: "user", content: "fix the test"},
-        %{role: "assistant", content: "Fixed.\nDetails follow."},
-        %{role: "tool", content: "output"},
-        %{role: "assistant", content: ""}
+    test "attaching shows the earlier turns: each prompt, the first line of earlier answers, the last in full" do
+      turns = [
+        %{prompt: "fix the test\nwith care", answer: "Fixed.\nDetails follow."},
+        %{prompt: "/run mix test", answer: nil},
+        %{prompt: "and now?", answer: "All green.\n\n- 12 tests\n- 0 failures"}
       ]
 
-      state = init_with(socket: daemon(history), cwd: "/w", session: "ses-old")
-      assert ["> fix the test", "Fixed.", "session ses-old" <> _] = state.lines
+      state = init_with(socket: daemon(turns), cwd: "/w", session: "ses-old")
+
+      assert [
+               "> fix the test",
+               "Fixed.",
+               "> /run mix test",
+               "> and now?",
+               "All green.",
+               "",
+               "- 12 tests",
+               "- 0 failures",
+               "session ses-old" <> _
+             ] = state.lines
     end
 
     test "attaching without a history shows none; a session that cannot be opened is an error" do
@@ -838,11 +848,11 @@ defmodule Xeito.TuiTest do
       {state, []} = Tui.handle_info({:xeito_reply, :switched, %{"ok" => true, "session" => "ses-a"}}, state)
       assert %{session: "ses-a", leaf: "idle", queue: []} = state
       assert ["session ses-a · /help" <> _] = state.lines
-      assert_receive {:request, %{"cmd" => "history", "session" => "ses-a"}}
+      assert_receive {:request, %{"cmd" => "transcript", "session" => "ses-a", "cwd" => "/w"}}
 
-      history = %{"ok" => true, "history" => [%{"role" => "user", "content" => "earlier"}]}
-      {state, []} = Tui.handle_info({:xeito_reply, {:earlier, "ses-a"}, history}, state)
-      assert ["> earlier", "session ses-a · /help" <> _] = state.lines
+      transcript = %{"ok" => true, "turns" => [%{"prompt" => "earlier", "answer" => "Done."}]}
+      {state, []} = Tui.handle_info({:xeito_reply, {:earlier, "ses-a"}, transcript}, state)
+      assert ["> earlier", "Done.", "session ses-a · /help" <> _] = state.lines
     end
 
     test "/sessions new starts another session in this directory" do

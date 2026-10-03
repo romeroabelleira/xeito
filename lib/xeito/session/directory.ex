@@ -1,8 +1,9 @@
 defmodule Xeito.Session.Directory do
   @moduledoc """
   A directory's sessions, read from its log: the one a client continues by default
-  (`latest/2`), the list `/sessions` shows (`sessions/2`), and the prompts typed there, for
-  Up/Down (`prompts/3`). A session belongs to the directory it was started in (its `cwd` in the
+  (`latest/2`), the list `/sessions` shows (`sessions/2`), the prompts typed there, for
+  Up/Down (`prompts/3`), and a session's turns with their answers, for its transcript
+  (`turns/3`). A session belongs to the directory it was started in (its `cwd` in the
   log).
 
   A session's prompts are its `prompt_entered` events. Sessions logged before those existed
@@ -10,6 +11,7 @@ defmodule Xeito.Session.Directory do
   """
 
   alias Xeito.Log
+  alias Xeito.Session
 
   @type session :: %{
           id: String.t(),
@@ -83,6 +85,40 @@ defmodule Xeito.Session.Directory do
     |> Enum.uniq()
     |> Enum.take(limit)
   end
+
+  @doc """
+  A session's last `limit` turns, oldest first: each turn's request and its answer as the session
+  reported it (`nil` while the turn runs). Read from the turns' runs (`<session>/t<n>`), so the
+  harness's own messages to the model are not among them.
+  """
+  @spec turns(Log.server(), String.t(), pos_integer()) :: [%{prompt: String.t() | nil, answer: String.t() | nil}]
+  def turns(log, session, limit \\ 20) do
+    log
+    |> Log.query("SELECT DISTINCT run_id FROM xeito_term WHERE run_id LIKE ?1", [session <> "/t%"])
+    |> Enum.flat_map(fn [run] -> turn_number(run, session) end)
+    |> Enum.sort()
+    |> Enum.take(-limit)
+    |> Enum.map(fn {_n, run} -> turn(log, run) end)
+  end
+
+  defp turn_number(run, session) do
+    case Regex.run(~r/^t(\d+)$/, String.replace_prefix(run, session <> "/", "")) do
+      [_, n] -> [{String.to_integer(n), run}]
+      nil -> []
+    end
+  end
+
+  defp turn(log, run) do
+    entries = Log.read_run(log, run)
+    [{machine, input}] = for {_, "run_started", {:run_started, machine, _, input}} <- entries, do: {machine, input}
+    finished = for {_, "run_finished", {:run_finished, status, state, ctx}} <- entries, do: {status, state, ctx}
+    %{prompt: input[:request] || input[:prompt], answer: answer(machine, finished)}
+  end
+
+  defp answer(machine, [{status, state, ctx} | _]),
+    do: Session.turn_answer(machine, %{status: status, state: state, ctx: ctx})
+
+  defp answer(_machine, []), do: nil
 
   # `{time, session, text}`, newest first: logged prompts, and the turns' requests of sessions
   # without any.

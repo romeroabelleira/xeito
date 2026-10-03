@@ -77,7 +77,8 @@ defmodule Xeito.Api.Connection do
   end
 
   defp handle(cmd, req, s) when cmd in ~w(start attach resume open), do: open_session(cmd, req, s)
-  defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions prompts), do: daemon_request(cmd, req, s)
+  defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions), do: daemon_request(cmd, req, s)
+  defp handle(cmd, req, s) when cmd in ~w(prompts transcript), do: directory_request(cmd, req, s)
 
   # A followed session that closed while idle is resumed transparently from its workspace log.
   defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
@@ -151,15 +152,23 @@ defmodule Xeito.Api.Connection do
     {%{ok: true, sessions: sessions}, s}
   end
 
-  defp daemon_request("prompts", req, s) do
-    cwd = workspace(req)
-    {%{ok: true, prompts: Directory.prompts(log(cwd, s), cwd)}, s}
-  end
-
   defp daemon_request("sessions", _req, s) do
     ids = Registry.select(Xeito.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
     {%{ok: true, sessions: Enum.map(ids, &Session.status/1)}, s}
   end
+
+  # From a directory's log: its prompts, or a session's turns.
+  defp directory_request("prompts", req, s) do
+    cwd = workspace(req)
+    {%{ok: true, prompts: Directory.prompts(log(cwd, s), cwd)}, s}
+  end
+
+  defp directory_request("transcript", %{"session" => id} = req, s) do
+    cwd = workspace(req)
+    {%{ok: true, turns: Directory.turns(log(cwd, s), id)}, s}
+  end
+
+  defp directory_request(cmd, _req, s), do: unknown(cmd, s)
 
   defp machines_cwd(req, s), do: req["cwd"] || (req["session"] && s.sessions[req["session"]]) || File.cwd!()
 

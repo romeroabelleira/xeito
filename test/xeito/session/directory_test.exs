@@ -65,6 +65,32 @@ defmodule Xeito.Session.DirectoryTest do
     assert Directory.latest(log, ws) == fresh
   end
 
+  test "a session's turns from the log: each turn's request and answer, the last ones", %{log: log} do
+    id = "ses-t-#{System.unique_integer([:positive])}"
+    turn(log, id <> "/t1", %{prompt: "Use the skill …", request: "fix it"}, {:done, :answered, %{answer: "Fixed."}})
+    turn(log, id <> "/t2", %{prompt: "and now?"}, {:halted, :thinking, %{}})
+    turn(log, id <> "/t10", %{prompt: "still running"}, nil)
+    started(log, id <> "/t2/intent", %{input: %{message: "not a turn"}})
+
+    assert Directory.turns(log, id) == [
+             %{prompt: "fix it", answer: "Fixed."},
+             %{prompt: "and now?", answer: "Halted by the user."},
+             %{prompt: "still running", answer: nil}
+           ]
+
+    assert [%{prompt: "still running"}] = Directory.turns(log, id, 1)
+    assert Directory.turns(log, "ses-none") == []
+  end
+
+  defp turn(log, run, input, finished) do
+    started(log, run, input)
+
+    with {status, state, ctx} <- finished do
+      attrs = %{"status" => status, "final_state" => state}
+      {:ok, _} = Log.append(log, run, [Event.new("run_finished", {:run_finished, status, state, ctx}, attrs)])
+    end
+  end
+
   test "the prompts typed in a directory, newest first, each once", %{log: log, ws: ws, other: other} do
     old_session(log, ws, "fix the banner")
     a = session(log, ws)

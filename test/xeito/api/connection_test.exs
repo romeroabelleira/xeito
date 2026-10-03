@@ -81,6 +81,10 @@ defmodule Xeito.Api.ConnectionTest do
              req(client, "sessions", %{"cwd" => ws})
 
     assert %{"ok" => true, "prompts" => ["/help"]} = req(client, "prompts", %{"cwd" => ws})
+    assert %{"ok" => true, "turns" => []} = req(client, "transcript", %{"session" => id, "cwd" => ws})
+
+    assert %{"ok" => false, "error" => "unknown or incomplete command transcript"} =
+             req(client, "transcript", %{"cwd" => ws})
   end
 
   test "unknown or incomplete commands", %{client: client} do

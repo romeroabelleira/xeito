@@ -20,7 +20,8 @@ defmodule Xeito.Tui do
   `/quit` (or `/exit`, Ctrl-D, Ctrl-C) closes the TUI; the session keeps running in the daemon.
 
   Started in a directory, the TUI continues that directory's last updated session (live in the
-  daemon, or rebuilt from the log) with its earlier turns, or starts one if there is none;
+  daemon, or rebuilt from the log) with its earlier turns (each prompt, the first line of each
+  answer, the last answer in full), or starts one if there is none;
   `--session ID` opens a given one. `/sessions` lists the directory's sessions, last updated
   first; `/sessions N` switches to one, `/sessions new` starts another. Up / Down start out
   with the prompts typed in the directory before, from every session there.
@@ -89,7 +90,7 @@ defmodule Xeito.Tui do
       cwd: cwd,
       size: TermUI.Platform.terminal_size(),
       continued: continued,
-      earlier: if(opts[:session] || continued, do: earlier_turns(client, session), else: []),
+      earlier: if(opts[:session] || continued, do: earlier_turns(client, session, cwd), else: []),
       prompt_history: earlier_prompts(client, cwd),
       prefs: Config.load(),
       prefs_file: Config.path()
@@ -185,20 +186,29 @@ defmodule Xeito.Tui do
     end
   end
 
-  # On reattach, the conversation so far (the runs' details stay in the log).
-  defp earlier_turns(client, session) do
-    case Client.request(client, %{"cmd" => "history", "session" => session}) do
-      %{"ok" => true, "history" => history} -> history_lines(history)
+  # On reattach, the conversation so far, from the log (the runs' details stay there).
+  defp earlier_turns(client, session, cwd) do
+    case Client.request(client, %{"cmd" => "transcript", "session" => session, "cwd" => cwd}) do
+      %{"ok" => true, "turns" => turns} -> transcript_lines(turns)
       _ -> []
     end
   end
 
   @doc false
-  def history_lines(history) do
-    for %{"role" => role, "content" => content} <- history,
-        role in ["user", "assistant"] and content not in [nil, ""],
-        do: history_line(role, content)
+  # Each prompt's first line, the first line of each earlier answer, and the last answer in full.
+  def transcript_lines(turns) do
+    last = length(turns) - 1
+
+    turns
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {turn, i} ->
+      ["> " <> first_line(turn["prompt"] || "")] ++ answer_lines(turn["answer"], i == last)
+    end)
   end
+
+  defp answer_lines(answer, _last) when answer in [nil, ""], do: []
+  defp answer_lines(answer, true), do: String.split(answer, "\n")
+  defp answer_lines(answer, false), do: [first_line(answer)]
 
   defp earlier_prompts(client, cwd) do
     case Client.request(client, %{"cmd" => "prompts", "cwd" => cwd}) do
@@ -206,9 +216,6 @@ defmodule Xeito.Tui do
       _ -> []
     end
   end
-
-  defp history_line("user", content), do: "> " <> first_line(content)
-  defp history_line(_role, content), do: first_line(content)
 
   defp first_line(text), do: text |> String.split("\n") |> hd()
 

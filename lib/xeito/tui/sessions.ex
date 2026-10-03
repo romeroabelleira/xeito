@@ -37,8 +37,8 @@ defmodule Xeito.Tui.Sessions do
   def reply(:sessions, %{"ok" => true, "sessions" => sessions}, state), do: list(sessions, state)
   def reply(:switched, %{"ok" => true, "session" => id}, state), do: switch(id, state)
 
-  def reply({:earlier, id}, %{"ok" => true, "history" => history}, %{session: id} = state),
-    do: %{state | lines: Tui.history_lines(history) ++ state.lines}
+  def reply({:earlier, id}, %{"ok" => true, "turns" => turns}, %{session: id} = state),
+    do: %{state | lines: Tui.transcript_lines(turns) ++ state.lines}
 
   def reply(_tag, %{"ok" => false, "error" => error}, state), do: Tui.append(state, "✗ #{error}\n")
   def reply(_tag, _reply, state), do: state
@@ -102,7 +102,7 @@ defmodule Xeito.Tui.Sessions do
     }
 
     state
-    |> ask({:earlier, id}, %{"cmd" => "history", "session" => id})
+    |> ask({:earlier, id}, %{"cmd" => "transcript", "session" => id, "cwd" => state.cwd})
     |> ask(:workspace, %{"cmd" => "workspace", "session" => id})
   end
 
