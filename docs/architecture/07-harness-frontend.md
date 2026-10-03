@@ -48,7 +48,7 @@ flowchart LR
   INS --> CORE
 ```
 
-- **`xeitod`** holds all state: runs, the log and model clients. It is always on and survives when the TUI closes. Runs continue, and reattaching gives you the live run back.
+- **`xeitod`** holds all state: runs, the log and model clients. It is always on and survives when the TUI closes. Runs continue, and reattaching gives you the live run back. A TUI started in a directory continues that directory's last updated session (rebuilt from the log if the daemon restarted); `/sessions` lists the directory's sessions to switch to or start another, and Up/Down recall the prompts typed there (`Xeito.Session.Directory`).
 - **`xeito`** is a thin TUI client. It crashes independently of the daemon, and the TUI library can be swapped without touching the core ([08](08-tech-stack.md#the-tui-the-weakest-link)).
 - **JSONL client protocol.** One command or event per line. It is modelled after pi's RPC mode, so non-Elixir clients (the pi bridge, editor plugins, scripts) are trivial to write.
 

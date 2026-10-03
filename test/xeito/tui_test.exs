@@ -716,13 +716,14 @@ defmodule Xeito.TuiTest do
   end
 
   describe "init/1: a session from the daemon" do
-    # A daemon that answers start, attach and history; `history` is what it reports as earlier turns.
-    defp daemon(history) do
+    # A daemon that answers open, start, attach, history and prompts; `history` is what it reports
+    # as earlier turns, and `continued` whether `open` found a session to continue.
+    defp daemon(history, continued \\ false) do
       dir = Path.join(System.tmp_dir!(), "xeito-tuid-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)
       socket = Path.join(dir, "d.sock")
       {:ok, listen} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, socket}, packet: :line, active: false])
-      server = spawn(fn -> accept(listen, history) end)
+      server = spawn(fn -> accept(listen, {history, continued}) end)
       on_exit(fn -> Process.exit(server, :kill) && File.rm_rf(dir) end)
       socket
     end
@@ -740,11 +741,15 @@ defmodule Xeito.TuiTest do
       end
     end
 
-    defp reply(%{"cmd" => "start"}, _), do: %{ok: true, session: "ses-new", status: %{cwd: "/from/daemon"}}
+    defp reply(%{"cmd" => "open"}, {_, false}),
+      do: %{ok: true, session: "ses-new", status: %{cwd: "/from/daemon"}, continued: false}
+
+    defp reply(%{"cmd" => "open"}, {_, true}), do: %{ok: true, session: "ses-last", status: %{cwd: "/w"}, continued: true}
     defp reply(%{"cmd" => "attach", "session" => "ses-gone"}, _), do: %{ok: false, error: "no such session"}
     defp reply(%{"cmd" => "attach", "session" => id}, _), do: %{ok: true, session: id, status: %{cwd: "/w"}}
-    defp reply(%{"cmd" => "history"}, :broken), do: %{ok: false, error: "no history"}
-    defp reply(%{"cmd" => "history"}, history), do: %{ok: true, history: history}
+    defp reply(%{"cmd" => "history"}, {:broken, _}), do: %{ok: false, error: "no history"}
+    defp reply(%{"cmd" => "history"}, {history, _}), do: %{ok: true, history: history}
+    defp reply(%{"cmd" => "prompts"}, _), do: %{ok: true, prompts: ["/why", "fix the test"]}
     defp reply(_req, _), do: %{ok: true}
 
     defp init_with(env) do
@@ -761,6 +766,19 @@ defmodule Xeito.TuiTest do
     test "a new session: started in the daemon, in the workspace it reports" do
       state = init_with(socket: daemon([]), cwd: "/given")
       assert %{session: "ses-new", cwd: "/from/daemon", lines: ["session ses-new · /help" <> _]} = state
+    end
+
+    test "a directory's last updated session is continued, with its earlier turns" do
+      history = [%{role: "user", content: "fix the test"}, %{role: "assistant", content: "Fixed."}]
+      state = init_with(socket: daemon(history, true), cwd: "/w")
+
+      assert %{session: "ses-last", lines: ["> fix the test", "Fixed.", "continuing session ses-last · /sessions" <> _]} =
+               state
+    end
+
+    test "Up and Down start with the prompts typed in this directory before" do
+      state = init_with(socket: daemon([]), cwd: "/w")
+      assert state.prompt_history == ["/why", "fix the test"]
     end
 
     test "attaching shows the earlier turns: prompts and the first line of each answer" do
@@ -784,6 +802,77 @@ defmodule Xeito.TuiTest do
     end
   end
 
+  describe "/sessions: this directory's sessions, to switch to or start another" do
+    defp listed(state) do
+      sessions = [
+        %{
+          "id" => "ses-t",
+          "last" => "2026-10-03T20:16:26Z",
+          "prompts" => 5,
+          "last_prompt" => "WRITE! NOW!",
+          "live" => true
+        },
+        %{"id" => "ses-a", "last" => "2026-10-02T09:00:00Z", "prompts" => 1, "last_prompt" => nil, "live" => false}
+      ]
+
+      {state, []} = Tui.handle_info({:xeito_reply, :sessions, %{"ok" => true, "sessions" => sessions}}, state)
+      state
+    end
+
+    test "/sessions asks the daemon for this directory's sessions and lists them, numbered" do
+      {state, []} = submit(tui(), "/sessions")
+      assert_receive {:request, %{"cmd" => "sessions", "cwd" => "/w"}}
+      state = listed(state)
+
+      assert Enum.any?(state.lines, &(&1 =~ ~r/^  1  ses-t · .* · 5 prompts · > WRITE! NOW!  \(this one\)$/))
+      assert Enum.any?(state.lines, &(&1 =~ ~r/^  2  ses-a · .* · 1 prompt$/))
+      assert List.last(state.lines) =~ "/sessions N switches to one · /sessions new starts another"
+      assert state.listed == ["ses-t", "ses-a"]
+    end
+
+    test "/sessions N switches to a listed session and shows its earlier turns" do
+      state = listed(tui())
+      {state, []} = submit(state, "/sessions 2")
+      assert_receive {:request, %{"cmd" => "attach", "session" => "ses-a", "cwd" => "/w"}}
+
+      {state, []} = Tui.handle_info({:xeito_reply, :switched, %{"ok" => true, "session" => "ses-a"}}, state)
+      assert %{session: "ses-a", leaf: "idle", queue: []} = state
+      assert ["session ses-a · /help" <> _] = state.lines
+      assert_receive {:request, %{"cmd" => "history", "session" => "ses-a"}}
+
+      history = %{"ok" => true, "history" => [%{"role" => "user", "content" => "earlier"}]}
+      {state, []} = Tui.handle_info({:xeito_reply, {:earlier, "ses-a"}, history}, state)
+      assert ["> earlier", "session ses-a · /help" <> _] = state.lines
+    end
+
+    test "/sessions new starts another session in this directory" do
+      {state, []} = submit(tui(), "/sessions new")
+      assert_receive {:request, %{"cmd" => "start", "cwd" => "/w"}}
+      {state, []} = Tui.handle_info({:xeito_reply, :switched, %{"ok" => true, "session" => "ses-n"}}, state)
+      assert %{session: "ses-n", lines: ["session ses-n · /help" <> _]} = state
+    end
+
+    test "a number that was not listed, or a failed switch, says so and changes nothing" do
+      {state, []} = submit(listed(tui()), "/sessions 7")
+      assert List.last(state.lines) =~ "no session 7: /sessions lists them"
+      refute_received {:request, %{"cmd" => "attach"}}
+
+      {state, []} = Tui.handle_info({:xeito_reply, :switched, %{"ok" => false, "error" => "no such session"}}, state)
+      assert state.session == "ses-t"
+      assert List.last(state.lines) =~ "✗ no such session"
+    end
+
+    test "after a switch, events of the other session are not shown" do
+      state = tui()
+      other = %{"event" => "notice", "session" => "ses-other", "attrs" => %{"text" => "elsewhere"}}
+      assert {^state, []} = Tui.handle_info({:xeito_event, other}, state)
+
+      mine = %{"event" => "notice", "session" => "ses-t", "attrs" => %{"text" => "here"}}
+      {state, []} = Tui.handle_info({:xeito_event, mine}, state)
+      assert Enum.any?(state.lines, &(&1 =~ "here"))
+    end
+  end
+
   describe "Tab completes commands, machine names and skill names" do
     defp tab(state), do: :complete |> Tui.update(state) |> elem(0)
 
@@ -798,8 +887,8 @@ defmodule Xeito.TuiTest do
     end
 
     test "several matches: each Tab shows the next, in order, and wraps around" do
-      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(7) |> Enum.map(&value/1)
-      assert tabbed == ["/s", "/send", "/skill:", "/statusbar", "/steer", "/step", "/send"]
+      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(8) |> Enum.map(&value/1)
+      assert tabbed == ["/s", "/send", "/sessions", "/skill:", "/statusbar", "/steer", "/step", "/send"]
     end
 
     test "typing after a Tab completes from the new text" do
@@ -828,7 +917,7 @@ defmodule Xeito.TuiTest do
     end
 
     test "the commands are the daemon's and the TUI's own" do
-      assert Tui.commands() == Enum.sort(~w(quit exit statusbar legend) ++ Xeito.Session.commands())
+      assert Tui.commands() == Enum.sort(~w(quit exit statusbar legend sessions) ++ Xeito.Session.commands())
     end
   end
 end

@@ -176,7 +176,17 @@ The hardware and model line comes from the daemon, which only polls (every 2 s) 
 
 The choice is saved in `~/.config/xeito/tui.json` (or `$XDG_CONFIG_HOME/xeito/tui.json`; set `XEITO_TUI_CONFIG` to use another file), so the next TUI starts the same way. The segments are `gpu models cpu git calls tokens decision reply det cost budget queue`.
 
-**Quit** with `/quit` (or `/exit`, Ctrl-D, Ctrl-C). The session keeps running in the daemon. Reattach with the id printed at the top:
+**Quit** with `/quit` (or `/exit`, Ctrl-D, Ctrl-C). The session keeps running in the daemon, and the next TUI started in the same directory continues it: the last updated session of a directory is the default, with its earlier turns shown, even after the daemon restarted (it is rebuilt from the log). Up and Down recall the prompts typed in that directory before, from all of its sessions.
+
+```
+> /sessions                         this directory's sessions, last updated first
+  1  ses-abc123 · 2026-10-03 22:16 · 5 prompts · > fix the banner  (this one)
+  2  ses-def456 · 2026-10-02 09:00 · 1 prompt · > run the checks
+> /sessions 2                       switch to one (the other keeps its state)
+> /sessions new                     start another session in this directory
+```
+
+A given session opens with its id:
 
 ```bash
 mix xeito.tui --cwd ~/src/my-project --session ses-abc123
@@ -366,6 +376,7 @@ Every machine is listed with what it does and how requests reach it. The usage c
 | `/help` | every command |
 | `/machines` | the machines, their routing, and their use in this project |
 | `/quit` | close the client; the session keeps running in the daemon |
+| `/sessions` | this directory's sessions (TUI); `/sessions N` switches, `/sessions new` starts another |
 | status line | current state, tier of the last decision, number of decisions, spend on off-box tiers |
 
 ### Step mode and breakpoints
@@ -646,4 +657,4 @@ Replies echo the request `id`. Events stream as `{"event": …, "session": …, 
 | the first answer takes seconds | The local model was unloaded (`XEITO_LOCAL_KEEP_ALIVE`) and has to be loaded again, which takes ~2.5 s on a 24 GB GPU. |
 | text appears in one burst | Expected with Ollama: when tools are offered, it withholds streamed text until it knows the reply isn't a tool call ([bench 4](bench/4-harness.md)). |
 | `busy` | A run is in progress. Wait, answer its review, or use `/continue` if it's paused. |
-| a session seems gone | It closed after being idle. `--session <id>` with the same `--cwd` rebuilds it from the log. |
+| a session seems gone | It closed after being idle or a daemon restart. Starting the TUI in the same directory continues it from the log; `/sessions` lists the others. |

@@ -29,6 +29,7 @@ defmodule Xeito.Log.Schema do
     "step_redone" => ~w(effect_id label),
     # Lines typed while a turn ran: queued, then sent or dropped (`Xeito.Session`).
     "prompt_queued" => ~w(text),
+    "prompt_entered" => ~w(text),
     "prompt_dequeued" => ~w(text outcome)
   }
 

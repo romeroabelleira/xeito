@@ -7,13 +7,17 @@ defmodule Xeito.Api do
   Requests carry an `id` that the reply echoes:
 
       {"id": 1, "cmd": "start", "cwd": "/path/to/project"}  → {"id": 1, "ok": true, "session": "ses-…"}
+      {"id": 1, "cmd": "open", "cwd": "/path/to/project"}   (the directory's last updated session,
+                                    live or rebuilt from the log, or a new one; "continued" says which)
       {"id": 2, "cmd": "prompt", "session": "ses-…", "text": "the checkout test is red"}
       {"id": 3, "cmd": "approve", "session": "ses-…"}       (also "deny")
       {"id": 4, "cmd": "attach", "session": "ses-…", "cwd": "/path"}
                                     (follow a session; if the daemon restarted, rebuild it from
                                      the workspace log)
       {"id": 5, "cmd": "status", "session": "ses-…"}        (also "history")
-      {"id": 6, "cmd": "sessions"}
+      {"id": 6, "cmd": "sessions"}                          (the daemon's live sessions; with "cwd": that
+                                    directory's sessions from its log, last updated first)
+      {"id": 6, "cmd": "prompts", "cwd": "/path"}           (the prompts typed there, newest first, for Up/Down)
       {"id": 7, "cmd": "workspace", "session": "ses-…"}      (git and off-box budget; also an event)
       {"id": 7, "cmd": "machines", "cwd": "/path"}           (machines, routing, usage in that log)
       {"id": 8, "cmd": "monitor", "on": true}               (status snapshots every 2 s; "on": false stops)

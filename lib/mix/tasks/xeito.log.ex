@@ -261,7 +261,14 @@ defmodule Mix.Tasks.Xeito.Log do
     end
   end
 
-  defp runs(db), do: for([run] <- Sql.select(db, "SELECT DISTINCT run_id FROM xeito_term ORDER BY run_id"), do: run)
+  # The runs' event streams. A session's own stream (its typed and queued prompts, undo steps)
+  # is not a run: nothing replays it, and its events are small plain terms.
+  defp runs(db) do
+    sql =
+      "SELECT DISTINCT run_id FROM xeito_term WHERE run_id NOT IN (SELECT ocel_id FROM object_session) ORDER BY run_id"
+
+    for [run] <- Sql.select(db, sql), do: run
+  end
 
   # Plain terms (older logs) have no chain references, so they decode without the store tables.
   defp read_run(db, run) do

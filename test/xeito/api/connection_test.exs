@@ -10,12 +10,11 @@ defmodule Xeito.Api.ConnectionTest do
     on_exit(fn -> File.rm_rf(dir) end)
     path = Path.join(dir, "x.sock")
 
-    start_supervised!(
-      {Xeito.Api, socket: path, name: :"api_#{System.unique_integer([:positive])}", session: [log: start_log!()]}
-    )
+    log = start_log!()
+    start_supervised!({Xeito.Api, socket: path, name: :"api_#{System.unique_integer([:positive])}", session: [log: log]})
 
     {:ok, client} = Client.connect(path)
-    %{client: client, path: path, ws: ws}
+    %{client: client, path: path, ws: ws, log: log}
   end
 
   defp req(client, cmd, fields \\ %{}), do: Client.request(client, Map.put(fields, "cmd", cmd))
@@ -59,6 +58,29 @@ defmodule Xeito.Api.ConnectionTest do
     assert_receive {:xeito_event, %{"event" => "monitor", "attrs" => %{"system" => _}}}, 2_000
     assert %{"ok" => true} = req(client, "monitor", %{"on" => false})
     refute Xeito.Monitor.polling?()
+  end
+
+  test "open continues the directory's last updated session, or starts one", %{client: client, ws: ws, log: log} do
+    assert %{"ok" => true, "session" => first, "continued" => false} = req(client, "open", %{"cwd" => ws})
+    assert %{"ok" => true} = req(client, "prompt", %{"session" => first, "text" => "/help"})
+    assert %{"ok" => true, "session" => ^first, "continued" => true} = req(client, "open", %{"cwd" => ws})
+
+    # A session the daemon does not hold (it restarted) is rebuilt from the log.
+    gone = new_id()
+    Xeito.Log.put_object(log, gone, "session", %{cwd: ws, status: "closed"})
+
+    assert %{"ok" => true, "session" => ^gone, "continued" => true, "status" => %{"cwd" => ^ws}} =
+             req(client, "open", %{"cwd" => ws})
+  end
+
+  test "a directory's sessions and prompts", %{client: client, ws: ws} do
+    id = start(client, ws)
+    assert %{"ok" => true} = req(client, "prompt", %{"session" => id, "text" => "/help"})
+
+    assert %{"ok" => true, "sessions" => [%{"id" => ^id, "prompts" => 1, "last_prompt" => "/help", "live" => true}]} =
+             req(client, "sessions", %{"cwd" => ws})
+
+    assert %{"ok" => true, "prompts" => ["/help"]} = req(client, "prompts", %{"cwd" => ws})
   end
 
   test "unknown or incomplete commands", %{client: client} do

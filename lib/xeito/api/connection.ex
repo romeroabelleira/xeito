@@ -3,9 +3,11 @@ defmodule Xeito.Api.Connection do
 
   use GenServer, restart: :temporary
 
+  alias Xeito.Log
   alias Xeito.Log.Codec
   alias Xeito.Monitor
   alias Xeito.Session
+  alias Xeito.Session.Directory
   alias Xeito.Session.Router
 
   @max_line 4_194_304
@@ -74,8 +76,8 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  defp handle(cmd, req, s) when cmd in ~w(start attach resume), do: open_session(cmd, req, s)
-  defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions), do: daemon_request(cmd, req, s)
+  defp handle(cmd, req, s) when cmd in ~w(start attach resume open), do: open_session(cmd, req, s)
+  defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions prompts), do: daemon_request(cmd, req, s)
 
   # A followed session that closed while idle is resumed transparently from its workspace log.
   defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
@@ -88,6 +90,7 @@ defmodule Xeito.Api.Connection do
   defp open_session("start", req, s), do: start_session(Keyword.put(s.defaults, :cwd, workspace(req)), s)
   defp open_session("attach", %{"session" => id} = req, s), do: attach(id, req, s)
   defp open_session("resume", %{"session" => id} = req, s), do: resume(id, workspace(req), s)
+  defp open_session("open", req, s), do: open_latest(workspace(req), s)
   defp open_session(cmd, _req, s), do: unknown(cmd, s)
 
   defp workspace(req), do: req["cwd"] || File.cwd!()
@@ -121,6 +124,20 @@ defmodule Xeito.Api.Connection do
     end
   end
 
+  # The directory's last updated session, live or rebuilt from the log; a new one if it has none.
+  defp open_latest(cwd, s) do
+    case Directory.latest(log(cwd, s), cwd) do
+      nil -> s.defaults |> Keyword.put(:cwd, cwd) |> start_session(s) |> continued(false)
+      id -> id |> attach(%{"cwd" => cwd}, s) |> continued(true)
+    end
+  end
+
+  defp continued({%{ok: true} = reply, s}, continued), do: {Map.put(reply, :continued, continued), s}
+  defp continued(failed, _continued), do: failed
+
+  # The log sessions in a directory use: the configured one, else the workspace's own.
+  defp log(cwd, s), do: Keyword.get_lazy(s.defaults, :log, fn -> Log.for_workspace(cwd) end)
+
   # Status-bar data: the connection receives monitor snapshots while it is subscribed.
   defp daemon_request("monitor", req, s) do
     if req["on"] == false, do: Monitor.unsubscribe(self()), else: Monitor.subscribe(self())
@@ -128,6 +145,16 @@ defmodule Xeito.Api.Connection do
   end
 
   defp daemon_request("machines", req, s), do: {%{ok: true, machines: Router.describe(machines_cwd(req, s))}, s}
+
+  defp daemon_request("sessions", %{"cwd" => cwd}, s) do
+    sessions = for session <- Directory.sessions(log(cwd, s), cwd), do: Map.put(session, :live, exists?(session.id))
+    {%{ok: true, sessions: sessions}, s}
+  end
+
+  defp daemon_request("prompts", req, s) do
+    cwd = workspace(req)
+    {%{ok: true, prompts: Directory.prompts(log(cwd, s), cwd)}, s}
+  end
 
   defp daemon_request("sessions", _req, s) do
     ids = Registry.select(Xeito.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])

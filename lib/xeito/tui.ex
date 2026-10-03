@@ -19,6 +19,12 @@ defmodule Xeito.Tui do
 
   `/quit` (or `/exit`, Ctrl-D, Ctrl-C) closes the TUI; the session keeps running in the daemon.
 
+  Started in a directory, the TUI continues that directory's last updated session (live in the
+  daemon, or rebuilt from the log) with its earlier turns, or starts one if there is none;
+  `--session ID` opens a given one. `/sessions` lists the directory's sessions, last updated
+  first; `/sessions N` switches to one, `/sessions new` starts another. Up / Down start out
+  with the prompts typed in the directory before, from every session there.
+
   The status line starts with a marker: `○` idle, a spinner while the session works, `◆` (on
   a highlighted line) when it waits for you, `✗` without a daemon. Like the cursor, the
   spinner's timer runs only while there is work. At its right end, where commands run: the
@@ -36,7 +42,7 @@ defmodule Xeito.Tui do
   (halted, failed, stopped, a question) it is held: Enter on an empty line sends it, Esc drops it;
   Ctrl-J sends the typed line into the running chat turn instead, for its next model call
   (`/steer`); PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
-  session keeps running in the daemon and can be reattached with `--session`).
+  session keeps running in the daemon, and the next start in this directory continues it).
 
   The TUI owns no run state: everything shown comes from daemon events, so it can crash, be
   closed or be replaced without touching the runs.
@@ -51,6 +57,7 @@ defmodule Xeito.Tui do
   alias Xeito.Client.Config
   alias Xeito.Client.Render
   alias Xeito.Client.StatusBar
+  alias Xeito.Tui.Sessions
 
   @max_lines 5_000
   # Blink half-period and how long the cursor keeps blinking after the last key (as GTK does), so
@@ -65,7 +72,7 @@ defmodule Xeito.Tui do
   @placeholder "ask, or /help"
 
   # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
-  @own_commands ~w(quit exit statusbar legend)
+  @own_commands ~w(quit exit statusbar legend sessions)
 
   # --- init ----------------------------------------------------------------------------------
 
@@ -73,14 +80,17 @@ defmodule Xeito.Tui do
   def init(_runtime_opts) do
     opts = Application.get_env(:xeito, :tui, [])
     {:ok, client} = Client.connect(Keyword.fetch!(opts, :socket))
-    {session, status} = open(client, opts)
+    {session, status, continued} = open(client, opts)
+    cwd = status["cwd"] || opts[:cwd]
 
     [
       client: client,
       session: session,
-      cwd: status["cwd"] || opts[:cwd],
+      cwd: cwd,
       size: TermUI.Platform.terminal_size(),
-      earlier: if(opts[:session], do: earlier_turns(client, session), else: []),
+      continued: continued,
+      earlier: if(opts[:session] || continued, do: earlier_turns(client, session), else: []),
+      prompt_history: earlier_prompts(client, cwd),
       prefs: Config.load(),
       prefs_file: Config.path()
     ]
@@ -93,7 +103,8 @@ defmodule Xeito.Tui do
 
   @doc """
   An idle TUI state for a session: `client`, `session`, `cwd`, `size` (`{rows, cols}`), the
-  `earlier` transcript lines, the preferences and the file they are saved in (`prefs`,
+  `earlier` transcript lines, whether the session was `continued`, the `prompt_history` for
+  Up/Down (newest first), the preferences and the file they are saved in (`prefs`,
   `prefs_file`), and optionally `status_bar` to override the preferences' visibility.
   """
   @spec new(keyword()) :: map()
@@ -107,7 +118,7 @@ defmodule Xeito.Tui do
       client: Keyword.fetch!(opts, :client),
       session: session,
       cwd: opts[:cwd],
-      lines: Keyword.get(opts, :earlier, []) ++ ["session #{session} · /help · Esc halts · /quit"],
+      lines: Keyword.get(opts, :earlier, []) ++ [header(session, Keyword.get(opts, :continued, false))],
       partial: "",
       input: TextInput.set_focused(input, true),
       width: cols,
@@ -143,37 +154,56 @@ defmodule Xeito.Tui do
       blink_until: 0,
       # Earlier prompts for Up/Down, newest first; the one shown (-1: the line being typed,
       # kept as the draft meanwhile).
-      prompt_history: [],
+      prompt_history: Keyword.get(opts, :prompt_history, []),
       history_index: -1,
       history_draft: "",
       # While Tab cycles through completions: `{candidates, shown}`, the index of the one shown.
-      completion: nil
+      completion: nil,
+      # The sessions `/sessions` listed last, by number.
+      listed: []
     }
   end
 
+  @doc false
+  def header(session, true), do: "continuing session #{session} · /sessions · /help · Esc halts · /quit"
+  def header(session, false), do: "session #{session} · /help · Esc halts · /quit"
+
   defp open(client, opts) do
+    # Without a session named, the directory's last updated one, or a new one.
     req =
       case opts[:session] do
-        nil -> %{"cmd" => "start", "cwd" => opts[:cwd]}
+        nil -> %{"cmd" => "open", "cwd" => opts[:cwd]}
         id -> %{"cmd" => "attach", "session" => id, "cwd" => opts[:cwd]}
       end
 
     case Client.request(client, req) do
-      %{"ok" => true, "session" => id} = reply -> {id, reply["status"] || %{"cwd" => opts[:cwd]}}
-      %{"error" => error} -> raise "could not open a session: #{error}"
+      %{"ok" => true, "session" => id} = reply ->
+        {id, reply["status"] || %{"cwd" => opts[:cwd]}, reply["continued"] == true}
+
+      %{"error" => error} ->
+        raise "could not open a session: #{error}"
     end
   end
 
   # On reattach, the conversation so far (the runs' details stay in the log).
   defp earlier_turns(client, session) do
     case Client.request(client, %{"cmd" => "history", "session" => session}) do
-      %{"ok" => true, "history" => history} ->
-        for %{"role" => role, "content" => content} <- history,
-            role in ["user", "assistant"] and content not in [nil, ""],
-            do: history_line(role, content)
+      %{"ok" => true, "history" => history} -> history_lines(history)
+      _ -> []
+    end
+  end
 
-      _ ->
-        []
+  @doc false
+  def history_lines(history) do
+    for %{"role" => role, "content" => content} <- history,
+        role in ["user", "assistant"] and content not in [nil, ""],
+        do: history_line(role, content)
+  end
+
+  defp earlier_prompts(client, cwd) do
+    case Client.request(client, %{"cmd" => "prompts", "cwd" => cwd}) do
+      %{"ok" => true, "prompts" => prompts} -> prompts
+      _ -> []
     end
   end
 
@@ -224,19 +254,20 @@ defmodule Xeito.Tui do
 
   # Daemon events and request replies arrive as plain process messages.
   # Each monitor tick also refreshes the workspace (git, budget) if it is older than 10 s.
-  def handle_info({:xeito_event, %{"event" => "monitor", "attrs" => snapshot}}, state),
-    do: {on_monitor(snapshot, state), []}
-
-  def handle_info({:xeito_event, %{"event" => "workspace", "attrs" => ws}}, state),
-    do: {%{state | workspace: ws, workspace_at: now()}, []}
-
-  def handle_info({:xeito_event, event}, state), do: {state |> apply_event(event) |> spin(), []}
+  def handle_info({:xeito_event, event}, state), do: {on_event(event, state), []}
 
   def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state), do: {append(state, "✗ #{error}\n"), []}
+  def handle_info({:xeito_reply, tag, reply}, state), do: {Sessions.reply(tag, reply, state), []}
 
   # The cursor's and the spinner's timers. Only the latest timer of each counts; older ones are stale.
   def handle_info({timer, gen}, state) when timer in [:blink, :spin], do: {tick(timer, gen, state), []}
   def handle_info(_msg, state), do: {state, []}
+
+  # After a switch, the other session's events still arrive (the connection follows it): not shown.
+  defp on_event(%{"session" => other}, %{session: session} = state) when other != session, do: state
+  defp on_event(%{"event" => "monitor", "attrs" => snapshot}, state), do: on_monitor(snapshot, state)
+  defp on_event(%{"event" => "workspace", "attrs" => ws}, state), do: %{state | workspace: ws, workspace_at: now()}
+  defp on_event(event, state), do: state |> apply_event(event) |> spin()
 
   defp tick(:blink, gen, %{blink: gen} = state), do: blink(gen, state)
   defp tick(:spin, gen, %{spin_gen: gen} = state), do: spin_tick(gen, state)
@@ -299,15 +330,18 @@ defmodule Xeito.Tui do
     %{state | cursor_on: true, blink: gen, blink_until: now() + @blink_for_ms}
   end
 
-  defp handle_update(:quit, state), do: {state, [TermUI.Command.quit(:normal)]}
   defp handle_update(:submit, state), do: state.input |> TextInput.get_value() |> String.trim() |> submit(state)
   defp handle_update({:review, answer}, state), do: review(answer, state)
   defp handle_update({:recall, direction}, state), do: state |> recall(direction) |> recalled(state)
 
-  defp handle_update(msg, state) when msg in [:halt, :complete, :legend, :steer], do: line_key(msg, state)
+  defp handle_update(msg, state) when msg in [:quit, :halt, :complete, :legend, :steer], do: line_key(msg, state)
+
+  defp handle_update({:sessions, args}, state),
+    do: {Sessions.command(args, %{state | input: TextInput.clear(state.input)}), []}
 
   defp handle_update(msg, state), do: screen_update(msg, state)
 
+  defp line_key(:quit, state), do: {state, [TermUI.Command.quit(:normal)]}
   defp line_key(:halt, state), do: halt(state)
   defp line_key(:complete, state), do: complete(state)
   defp line_key(:legend, state), do: {legend(state), []}
@@ -464,6 +498,7 @@ defmodule Xeito.Tui do
   defp own_command(quit) when quit in ["quit", "exit"], do: :quit
   defp own_command("statusbar" <> args), do: {:statusbar, args}
   defp own_command("legend"), do: :legend
+  defp own_command("sessions" <> args), do: {:sessions, String.trim(args)}
   defp own_command(_daemon_command), do: nil
 
   defp send_line(text, state) do

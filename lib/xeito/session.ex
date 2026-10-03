@@ -281,6 +281,8 @@ defmodule Xeito.Session do
   # Commands that act on a running turn (or need none) are taken while it runs; while a review
   # waits, text is the answer: what to do instead of the call.
   defp prompt(trimmed, text, s) do
+    log_prompt(trimmed, text, s)
+
     cond do
       Regex.match?(
         ~r{^/(approve|deny|halt|send|drop|steer|why|budget|help|machines|step|next|continue|break|decide)\b},
@@ -299,6 +301,13 @@ defmodule Xeito.Session do
         {:ok, start_turn(text, trimmed, s)}
     end
   end
+
+  # Every line typed is logged, for Up/Down in this directory's later sessions
+  # (`Xeito.Session.Directory`); not the lines clients send for keys (Enter, Esc) or review answers.
+  @key_lines ~w(/send /drop /halt /next /approve /deny)
+
+  defp log_prompt(trimmed, _text, _s) when trimmed in ["" | @key_lines], do: :ok
+  defp log_prompt(_trimmed, text, s), do: log_event(s, "prompt_entered", %{"text" => text})
 
   defp answers_review?(trimmed, s), do: s.waiting != nil and trimmed != "" and not String.starts_with?(trimmed, "/")
 
@@ -821,7 +830,7 @@ defmodule Xeito.Session do
   defp enqueue(text, s) do
     queue = s.queue ++ [text]
     emit(s, "queued", nil, %{"text" => text, "queued" => length(queue)})
-    log_queue(s, "prompt_queued", %{"text" => text})
+    log_event(s, "prompt_queued", %{"text" => text})
     %{s | queue: queue}
   end
 
@@ -860,11 +869,11 @@ defmodule Xeito.Session do
 
   defp dequeue(%{queue: [text | rest]} = s, outcome) do
     emit(s, "dequeued", nil, %{"text" => text, "outcome" => outcome})
-    log_queue(s, "prompt_dequeued", %{"text" => text, "outcome" => outcome})
+    log_event(s, "prompt_dequeued", %{"text" => text, "outcome" => outcome})
     %{s | queue: rest, held: s.held and rest != []}
   end
 
-  defp log_queue(s, type, attrs), do: Log.append(s.log, s.id, [Log.Event.new(type, {String.to_atom(type), attrs}, attrs)])
+  defp log_event(s, type, attrs), do: Log.append(s.log, s.id, [Log.Event.new(type, {String.to_atom(type), attrs}, attrs)])
 
   defp review_ended(run_id, s), do: if(s.waiting && s.waiting.run == run_id, do: %{s | waiting: nil}, else: s)
 
@@ -1145,6 +1154,7 @@ defmodule Xeito.Session do
     /quit                     close the client (the session keeps running; attach with --session)
     /statusbar …              TUI only: on|off|reset|segments|show|hide <segment>
     /legend                   TUI only: what the coloured dots beside commands mean
+    /sessions [N|new]         TUI only: this directory's sessions; switch to one, or start another
     /step · /next · /continue step mode: pause before each result, release one, run on
     /decide <value>           answer a paused decision yourself (logged as a label)
     /break state:<s> | decision:<Type> | conf<0.6 | clear
