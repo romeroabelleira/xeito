@@ -13,7 +13,9 @@ defmodule Xeito.Effects.LocalTest do
 
   test "bash runs in the workspace and reports the exit status", %{ws: ws} do
     assert %{exit_status: 0, output: output} = Local.run(Effect.bash("pwd", cwd: ws), [])
-    assert String.trim(output) == Path.expand(ws)
+    # `pwd` prints the physical path; on macOS the temp directory is behind a symlink (/var -> /private/var).
+    {physical, 0} = System.cmd("pwd", ["-P"], cd: ws)
+    assert String.trim(output) == String.trim(physical)
     assert %{exit_status: 3} = Local.run(Effect.bash("exit 3", cwd: ws), [])
   end
 

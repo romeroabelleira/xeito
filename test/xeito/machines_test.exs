@@ -112,6 +112,10 @@ defmodule Xeito.MachinesTest do
 
     skills = Skills.discover(ws, home: home)
     assert Enum.map(skills, & &1.name) == ["release", "pdf"]
+
+    # Without a home given, tests read no user skills at all: whatever skills the machine running
+    # the suite has installed must not change what a session or the TUI sees.
+    assert Enum.map(Skills.discover(ws), & &1.name) == ["release"]
     [release, pdf] = skills
     assert release.description == "Cut a release: tag and changelog."
     assert String.starts_with?(release.dir, ws <> "/.pi/skills")

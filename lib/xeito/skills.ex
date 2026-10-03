@@ -26,10 +26,14 @@ defmodule Xeito.Skills do
 
   @max_description 1_024
 
-  @doc "The skills visible from a workspace, project skills first."
+  # The home whose user skills are read: `config :xeito, :skills_home` (tests point it nowhere),
+  # else the user's.
+  defp user_home, do: Application.get_env(:xeito, :skills_home) || System.user_home() || "/nonexistent"
+
+  @doc "The skills visible from a workspace, project skills first. `opts[:home]` overrides the user's home."
   @spec discover(Path.t(), keyword()) :: [t()]
   def discover(cwd, opts \\ []) do
-    home = Keyword.get_lazy(opts, :home, fn -> System.user_home() || "/nonexistent" end)
+    home = Keyword.get_lazy(opts, :home, &user_home/0)
 
     roots = [
       Path.join(cwd, ".pi/skills"),
