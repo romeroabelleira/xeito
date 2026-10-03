@@ -41,4 +41,4 @@ Too narrow and the skill is never loaded; too broad and it crowds out better one
 
 - `mix test test/xeito/repo_skills_test.exs` checks loading, naming, the description, tool-specific commands and attribution. `mix ci` runs it too.
 - Try the skill on the requests it is for. In xeito, `/skill:<name> <request>` forces it. A plain request that should trigger it shows whether the description works: the transcript shows when the skill is loaded.
-- Add the skill to the table in `.agents/skills/README.md` and to the list in `CLAUDE.md`.
+- Add the skill to the table in `.agents/skills/README.md` and to the list in `AGENTS.md`.

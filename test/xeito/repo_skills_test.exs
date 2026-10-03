@@ -18,14 +18,29 @@ defmodule Xeito.RepoSkillsTest do
 
   @repo Path.expand("../..", __DIR__)
 
-  test "every skill is listed in CLAUDE.md and in the skills README" do
-    claude = File.read!(Path.join(@repo, "CLAUDE.md"))
+  test "every skill is listed in AGENTS.md and in the skills README" do
+    agents = File.read!(Path.join(@repo, "AGENTS.md"))
     readme = File.read!(Path.join(@root, "README.md"))
 
     for name <- Enum.map(@skill_dirs, &Path.basename/1) do
-      assert claude =~ "(.agents/skills/#{name}/SKILL.md)", "CLAUDE.md does not list #{name}"
+      assert agents =~ "(.agents/skills/#{name}/SKILL.md)", "AGENTS.md does not list #{name}"
       assert readme =~ "(#{name}/SKILL.md)", "the README does not list #{name}"
     end
+  end
+
+  # The project's instructions for agents live once, in the tool-neutral AGENTS.md (which Xeito
+  # itself, pi and others read); CLAUDE.md, which Claude Code reads, only imports it.
+  test "AGENTS.md holds the project's rules, and CLAUDE.md only imports it" do
+    agents = File.read!(Path.join(@repo, "AGENTS.md"))
+    assert agents =~ "Hard rule: this repository is public"
+    assert agents =~ "mix ci"
+
+    assert @repo |> Path.join("CLAUDE.md") |> File.read!() |> String.trim() == "@AGENTS.md"
+  end
+
+  test "no skill or its README points agents at CLAUDE.md" do
+    for file <- [Path.join(@root, "README.md") | Path.wildcard(Path.join(@root, "*/SKILL.md"))],
+        do: refute(File.read!(file) =~ "CLAUDE.md", file)
   end
 
   for dir <- @skill_dirs do
