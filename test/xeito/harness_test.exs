@@ -195,7 +195,7 @@ defmodule Xeito.HarnessTest do
     assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
     assert ctx.answer == "Fixed now."
     assert ctx.checks == %{cmd: "grep -q fixed a.txt", exit_status: 0, passed: true}
-    assert kinds(log, id) == [:chat, :edit, :chat, :bash, :chat, :edit, :chat, :bash]
+    assert kinds(log, id) == [:decide, :chat, :edit, :chat, :bash, :chat, :edit, :chat, :bash]
 
     # The third request carries the failed checks as the user's reply.
     requests =
@@ -287,7 +287,7 @@ defmodule Xeito.HarnessTest do
     id = run_chat(log, ws, cfg, %{prompt: "Look around"})
     await_exit(id)
     assert {:ok, %{ctx: %{answer: "Done."}}} = Run.result(log, id)
-    assert kinds(log, id) == [:chat, :decide, :bash, :chat, :chat]
+    assert kinds(log, id) == [:decide, :chat, :decide, :bash, :chat, :chat]
 
     requests =
       for _ <- 1..3,
@@ -333,6 +333,48 @@ defmodule Xeito.HarnessTest do
     empty = run_chat(log, ws, ollama(self(), [{"  ", []}]), %{prompt: "hm"})
     await_exit(empty)
     assert {:ok, %{ctx: %{answer: "(The model ended this turn without an answer.)"}}} = Run.result(log, empty)
+  end
+
+  test "session: the user's skills are not listed; one that fits is chosen by the Skill decision and suggested",
+       %{ws: ws} do
+    home = Path.join(ws, "home")
+    dir = Path.join([home, ".agents", "skills", "diagnosing-bugs"])
+    File.mkdir_p!(dir)
+
+    File.write!(Path.join(dir, "SKILL.md"), """
+    ---
+    name: diagnosing-bugs
+    description: Diagnosis loop for hard bugs and performance regressions. Use when the user says diagnose.
+    ---
+    Reproduce first.
+    """)
+
+    previous = Application.get_env(:xeito, :skills_home)
+    Application.put_env(:xeito, :skills_home, home)
+    on_exit(fn -> Application.put_env(:xeito, :skills_home, previous) end)
+
+    log = start_log!()
+    decisions = %{"What does the user want" => "explain", "A skill is a set of instructions" => "first"}
+    cfg = ollama(self(), [{"Let me reproduce it first.", []}], decisions)
+
+    {:ok, id} =
+      Session.start(
+        cwd: ws,
+        log: log,
+        id: "ses-test-#{System.unique_integer([:positive])}",
+        chat: cfg,
+        decider: [deciders: [:local], tiers: [local: cfg]]
+      )
+
+    Session.subscribe(id)
+    :ok = Session.prompt(id, "the export got slow after the deploy; diagnose this performance regression")
+    assert %{attrs: %{"answer" => "Let me reproduce it first."}} = next_event("turn_finished")
+
+    assert_received {:chat_request, %{"messages" => [system | _] = messages}}
+    refute system["content"] =~ "diagnosing-bugs"
+
+    assert List.last(messages)["content"] =~
+             "load it with the skill tool before you start: diagnosing-bugs: Diagnosis loop"
   end
 
   test "session: a go-ahead after an unfinished turn continues it with tools; only rule small talk drops tools",
@@ -398,7 +440,7 @@ defmodule Xeito.HarnessTest do
     await_exit(id)
     assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
     refute Map.has_key?(ctx, :checks)
-    assert kinds(log, id) == [:chat]
+    assert kinds(log, id) == [:decide, :chat]
   end
 
   test "chat: a safe bash call runs, its output goes back to the model, then it answers", %{
@@ -419,7 +461,7 @@ defmodule Xeito.HarnessTest do
     await_exit(id)
     assert {:ok, %{state: :answered, ctx: ctx}} = Run.result(log, id)
     assert ctx.answer == "There is hello.txt."
-    assert kinds(log, id) == [:chat, :decide, :bash, :chat]
+    assert kinds(log, id) == [:decide, :chat, :decide, :bash, :chat]
 
     # Chat results carry their time to the first chunk (the status bar's reply latency).
     [first_chat | _] =
@@ -456,7 +498,7 @@ defmodule Xeito.HarnessTest do
 
     await_exit(id)
     assert {:ok, %{state: :answered}} = Run.result(log, id)
-    assert kinds(log, id) == [:chat, :decide, :chat]
+    assert kinds(log, id) == [:decide, :chat, :decide, :chat]
 
     assert_received {:chat_request, _}
     assert_received {:chat_request, second}

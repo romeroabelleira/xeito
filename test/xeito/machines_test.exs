@@ -58,13 +58,17 @@ defmodule Xeito.MachinesTest do
   end
 
   defp start(machine, input, cfg, log, extra \\ []) do
-    runner = {Local, [chat: cfg, decide: fn _ -> :safe end] ++ extra}
+    runner = {Local, [chat: cfg, decide: &safe_and_no_skill/1] ++ extra}
 
     {:ok, id} =
       RunSupervisor.start_run(machine, input, run_id: run_id(), log: log, runner: runner)
 
     id
   end
+
+  # Every command is safe, and no skill is suggested (a chat turn decides one first).
+  defp safe_and_no_skill(%{args: %{decision: Xeito.Decisions.Skill}}), do: :none
+  defp safe_and_no_skill(_effect), do: :safe
 
   defp leaf(id), do: Run.whereis(id) && Run.snapshot(id).leaf
 

@@ -117,21 +117,29 @@ defmodule Xeito.LogStoreTest do
   end
 
   test "replay detects a logged effect that differs from the one it recomputes (desync)" do
+    chat = Machine.fetch!(Chat)
     input = %{cwd: "/w", prompt: "hi", messages: [], system: "s"}
-    [effect] = Machine.Engine.start(Machine.fetch!(Chat), input).effects
-    effect = %{effect | id: "r/e1"}
+    # A chat turn first decides on a skill; the first model request follows.
+    started = Machine.Engine.start(chat, input)
+    [skill] = started.effects
+    {:ok, step} = Machine.Engine.handle(chat, started.leaf, started.ctx, {:decided, :none}, %{value: :none})
+    [effect] = step.effects
+    {skill, effect} = {%{skill | id: "r/e1"}, %{effect | id: "r/e2"}}
 
     entries = fn logged ->
       [
-        {1, "run_started", {:run_started, Chat, Machine.fetch!(Chat).version, input}},
-        {2, "effect_requested", {:effect_requested, logged}}
+        {1, "run_started", {:run_started, Chat, chat.version, input}},
+        {2, "effect_requested", {:effect_requested, skill}},
+        {3, "effect_completed", {:effect_completed, "r/e1", %{value: :none}}},
+        {4, "event_received", {:event, {:decided, :none}, %{value: :none}, :code}},
+        {5, "effect_requested", {:effect_requested, logged}}
       ]
     end
 
     assert {:ok, %{desync: nil, pending: [^effect]}} = Recovery.rebuild(Chat, entries.(effect))
 
     tampered = put_in(effect.args.messages, [msg("system", "s"), msg("user", "something else")])
-    assert {:ok, %{desync: "r/e1"}} = Recovery.rebuild(Chat, entries.(tampered))
+    assert {:ok, %{desync: "r/e2"}} = Recovery.rebuild(Chat, entries.(tampered))
   end
 
   test "messages are stored as JSON that SQL can read; the term only when JSON is not exact" do

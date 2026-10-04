@@ -5,7 +5,8 @@ defmodule Xeito.Decisions do
     Xeito.Decisions.Intent,
     Xeito.Decisions.Triage,
     Xeito.Decisions.Risk,
-    Xeito.Decisions.Done
+    Xeito.Decisions.Done,
+    Xeito.Decisions.Skill
   ]
 
   @doc "All built-in decision type modules."

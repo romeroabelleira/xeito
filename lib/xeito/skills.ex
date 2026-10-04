@@ -15,9 +15,12 @@ defmodule Xeito.Skills do
   Directories containing `SKILL.md` are found recursively. The frontmatter must have a `name` and
   a `description`; skills without a description are skipped, as in pi.
 
-  As in pi, only names and descriptions go into the chat model's system prompt. The model loads
-  a skill with the `skill` tool when a task matches, and `/skill:name args` forces one. A skill
-  with `disable-model-invocation: true` is listed only for the explicit command. The `skill`
+  As in pi, only names and descriptions go into the chat model's prompt, and the model loads a
+  skill with the `skill` tool when a task matches; `/skill:name args` forces one. Unlike pi, a
+  turn lists only the workspace's own skills: the user's are shortlisted by keyword
+  (`for_turn/3`, `rank/3`) and at most one is suggested per turn, by a typed decision
+  (`Xeito.Decisions.Skill`, P4e). A skill with `disable-model-invocation: true` is never listed
+  or suggested, only run by the explicit command. The `skill`
   tool reads files *inside that skill's directory only*; scripts it mentions run through `bash`,
   so the `Risk` decision still applies.
   """
@@ -84,6 +87,57 @@ defmodule Xeito.Skills do
       ["", _meta, body] -> String.trim(body)
       _ -> String.trim(text)
     end
+  end
+
+  @doc """
+  What a chat turn offers the model: the workspace's own skills, `listed` in its prompt, and up
+  to three of the user's skills as `candidates` for the turn's skill decision, shortlisted by
+  `rank/3` against the request.
+  """
+  @spec for_turn([t()], Path.t(), String.t()) :: %{listed: [t()], candidates: [t()]}
+  def for_turn(skills, cwd, request) do
+    root = Path.join(Path.expand(cwd), ".agents/skills") <> "/"
+    {listed, user} = Enum.split_with(skills, &String.starts_with?(&1.dir, root))
+    %{listed: listed, candidates: user |> Enum.filter(& &1.model_invocation) |> rank(request)}
+  end
+
+  # Words too common to say what a request is about.
+  @common ~w(the and for with this that from into when what which where why how use used user users
+             want wants need needs please can could should would will just about also any all some
+             its are was were been have has had does did not you your our their them they then than
+             there here make made get got one two new old way ways like more most less very much many
+             each other only own same such too out over under after before while because between
+             through during without within upon let lets now see say says)
+
+  @doc """
+  The skills that share at least two words with a request, the best first, at most `k`. A word of
+  the skill's name counts double, a word of its description once; common words do not count.
+  """
+  @spec rank([t()], String.t(), pos_integer()) :: [t()]
+  def rank(skills, request, k \\ 3) do
+    words = words(request)
+
+    skills
+    |> Enum.map(&{shared(&1, words), &1})
+    |> Enum.filter(fn {{_score, count}, _skill} -> count >= 2 end)
+    |> Enum.sort_by(fn {{score, _count}, skill} -> {-score, skill.name} end)
+    |> Enum.take(k)
+    |> Enum.map(fn {_shared, skill} -> skill end)
+  end
+
+  # `{score, distinct words shared}` between a skill and a request's words.
+  defp shared(skill, words) do
+    name = MapSet.intersection(words, words(skill.name))
+    description = words |> MapSet.intersection(words(skill.description)) |> MapSet.difference(name)
+    {2 * MapSet.size(name) + MapSet.size(description), MapSet.size(name) + MapSet.size(description)}
+  end
+
+  defp words(text) do
+    text
+    |> String.downcase()
+    |> String.split(~r/[^\p{L}\p{N}]+/u, trim: true)
+    |> Enum.filter(&(String.length(&1) >= 3 and &1 not in @common))
+    |> MapSet.new()
   end
 
   @doc "The system-prompt section listing skills the model may load itself (empty if none)."

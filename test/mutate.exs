@@ -6,7 +6,10 @@
   # What the model gets to see: the system prompt must never be cut.
   "lib/xeito/chat/window.ex" => ["test/xeito/chat_window_test.exs"],
   "lib/xeito/decisions/risk.ex" => ["test/xeito/decision_test.exs"],
-  "lib/xeito/machines/chat.ex" => [tests: ["test/xeito/chat_machine_test.exs"], section: "guards"],
+  "lib/xeito/machines/chat.ex" => [
+    tests: ["test/xeito/chat_machine_test.exs", "test/xeito/skills_per_turn_test.exs"],
+    section: "guards"
+  ],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
   "lib/xeito/undo.ex" => ["test/xeito/undo_test.exs", "test/xeito/undo_env_test.exs"],
   # Slow (every test runs git) and rarely changed: mutated only when they or their tests change.

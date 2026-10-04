@@ -331,6 +331,8 @@ The model only drafts the message; the git commands are fixed. Staged changes ar
 
 Xeito reads skills in the [Agent Skills](https://agentskills.io/specification) format, the same as pi: a directory with a `SKILL.md` that starts with `name` and `description` frontmatter. It looks in the project's `.agents/skills/`, then in `~/.agents/skills/`. That folder belongs to no single tool, and other agents read it too. Other harnesses' own folders (pi's `.pi/skills/` and `~/.pi/agent/skills/`) are not read: to use a skill with Xeito, put it (or a symlink to it) in `.agents/skills/`. Xeito's own repository keeps its skills there, with its rules for writing them in [.agents/skills/README.md](.agents/skills/README.md).
 
+**Which skills the model sees.** The project's own skills (`.agents/skills/` in the workspace) are listed in every chat turn. Your own (`~/.agents/skills/`) are not, so a large library costs nothing per request. Instead, each chat turn shortlists up to three of them that share words with your request, and a typed decision (`Skill`, logged like any other) suggests at most one, after your request; most turns decide by rule, without a model call. Any skill can still be run by name with `/skill:<name>`, and a skill with `disable-model-invocation: true` only that way.
+
 ```markdown
 ---
 name: py-inventory

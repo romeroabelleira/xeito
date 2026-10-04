@@ -650,7 +650,8 @@ defmodule Xeito.Session do
         Request: #{if request == "", do: "(none; follow the instructions)", else: request}
         """
 
-        start_machine(Chat, input_for(Chat, prompt, s), "/skill:#{name}", s)
+        # The skill is chosen already: no other is suggested.
+        start_machine(Chat, Map.put(input_for(Chat, prompt, s), :skill_candidates, []), "/skill:#{name}", s)
     end
   end
 
@@ -725,6 +726,8 @@ defmodule Xeito.Session do
   # Skills are discovered on every turn, so a new or edited SKILL.md applies at once.
   defp input_for(Chat, text, s) do
     skills = Skills.discover(s.cwd)
+    # The workspace's skills are listed; the user's are shortlisted for the turn's skill decision.
+    %{listed: listed, candidates: candidates} = Skills.for_turn(skills, s.cwd, text)
 
     # A turn that edits files is checked before it answers (`Xeito.Machines.Chat`): the quick
     # check (does it still build), not the full suite, which is the `check` machine's job.
@@ -734,9 +737,10 @@ defmodule Xeito.Session do
         prompt: text,
         messages: s.history,
         verify: Router.quick_check_command(s.cwd),
-        system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(skills),
+        system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(listed),
         context: local_context(),
-        skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))
+        skills: Enum.map(skills, &Map.take(&1, [:name, :dir])),
+        skill_candidates: Enum.map(candidates, &Map.take(&1, [:name, :description]))
       },
       &if(s.max_steps, do: Map.put(&1, :max_steps, s.max_steps), else: &1)
     )

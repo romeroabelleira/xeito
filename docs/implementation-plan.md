@@ -25,6 +25,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4b · Context economy (inserted) | shape tool output before the model reads it, elide old tool output from the conversation; measured with the code-navigation benchmark | — | ≈ 2026-09-30 → 10-12, within P4's dogfooding | [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-symbol-reads-and-the-project-map-2026-09-28) |
 | P4c · Summarising dropped turns (planned) | a summarising step replaces dropped turns with a logged summary | — | after P4b | [07](architecture/07-harness-frontend.md#context-and-configuration) |
 | P4d · Tier names | tiers named by kind and place (`local_decision`, `local`, `remote_decision`, `remote`, `remote_frontier`); backends separate; remote through OpenRouter | — | steps 1–2 done 2026-10-03; step 3 deferred | [P4d](#p4d--tier-names) |
+| P4e · Skills per turn | the chat prompt lists the project's skills only; a typed decision picks at most one of the user's skills per turn | — | built 2026-10-04 | [P4e](#p4e--skills-chosen-per-turn) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
@@ -49,6 +50,7 @@ gantt
   P4 dogfooding                  :active, p4d, 2026-09-28, 2w
   P4b Context economy            :p4b, 2026-09-30, 12d
   P4d Tier names                 :p4d, 2026-10-12, 1w
+  P4e Skills per turn            :done, p4e, 2026-10-04, 1d
   section Insight
   P5 OCEL, mining, portability   :p5, after p4d, 4w
   P6 Web inspector               :p6, after p5, 5w
@@ -341,6 +343,22 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
 4. **Later, a separate decision: chat on a remote tier.** Chat speaks Ollama's API only. A remote chat needs OpenAI-compatible tool calls, and a rule for which workspaces may leave the box at all.
 
 **Exit:** the tiers carry the new names everywhere: configuration, logs, monitor, status bar and documentation. With no remote tier configured, nothing leaves the machine. In tests, a configured `remote` and `remote_frontier` are reached through OpenRouter, with costs logged. The live run and the benchmark of step 3 wait until remote tiers are wanted.
+
+## P4e · Skills chosen per turn
+
+Added 2026-10-04. Every chat request listed every skill Xeito could see, with its description, in the system prompt. Following the Agent Skills format, pi and Claude Code do the same. With a user skill library (about 50 skills), that came to about 8 KB, some 2,800 tokens, sent with every model call of a turn (9–15 calls), on a local model where every cache miss pays for the whole prompt again.
+
+**Decision.** The project's own skills (`<workspace>/.agents/skills`) stay listed: they are few and always relevant. The user's skills (`~/.agents/skills`) are chosen per turn by a typed decision, so the chat model sees at most one of them.
+
+1. **Shortlist by keyword** (`Xeito.Skills.rank/3`). The session scores the user's skills against the request: words shared with the skill's name count double, with its description once, common words not at all. The top three with at least two points are the candidates. This is deterministic, and no model is involved.
+2. **Decide** (`Xeito.Decisions.Skill`). In the chat machine's first state, `choosing_skill`, which of the candidates, if any, the request needs: `first`, `second`, `third` or `none`. The decision type has a fixed set of values, while skills differ per directory, so the values are positions in the shortlist.
+   - Rules decide first: no candidates means `none`, and a request that names a candidate picks it.
+   - Otherwise the local model decides, with the request and the three descriptions in one short prompt.
+
+   The decision is logged like any other, so P5 can mine it and P7 can graduate it to rules or to `local_decision`.
+3. **Suggest.** The chosen skill goes into the turn's user message, after the request, as a hint to load it with the `skill` tool. It does not go into the system prompt, so the prompt's start (the model server's cache) does not change from turn to turn. Every skill can still be loaded by name, and `/skill:<name>` forces one as before (without a decision).
+
+**Exit:** a chat prompt carries the project's skills and at most one user skill. The decision is logged in each chat turn; most turns decide by rule, without a model call. The skill type has labelled examples for `mix xeito.eval`.
 
 ## P5 · OCEL export and process mining (≈4 weeks)
 

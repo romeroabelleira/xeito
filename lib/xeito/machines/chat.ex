@@ -39,13 +39,20 @@ defmodule Xeito.Machines.Chat do
   that has changed nothing yet: then the model is told to act on what it has, and keeps its
   tools (0.10.0).
 
+  **A skill per turn** (0.11.0, P4e). A turn starts in `choosing_skill`: the decision
+  `Xeito.Decisions.Skill` picks one of `skill_candidates` (the user's skills the session
+  shortlisted, `Xeito.Skills.for_turn/3`), or none. A chosen skill is suggested after the
+  request, in the turn's user message, so the system prompt (and the model server's prompt
+  cache) stays the same from turn to turn. Without candidates, a rule decides `none` at once.
+
   Input: `%{cwd: path, prompt: text, messages: [earlier messages], system: text, max_steps: n}`,
   optionally `verify: command` (see above),
-  optionally `skills: [skill]` (`Xeito.Skills`, adds the `skill` tool) and `tools: false` (a plain
-  answer with no tools, which streams sooner).
+  optionally `skills: [skill]` (`Xeito.Skills`, adds the `skill` tool), `skill_candidates:
+  [%{name, description}]` (see above) and `tools: false` (a plain answer with no tools, which
+  streams sooner).
   """
 
-  use Xeito.Machine, version: "0.10.0"
+  use Xeito.Machine, version: "0.11.0"
 
   alias Xeito.Chat.Window
   alias Xeito.Effect
@@ -64,7 +71,17 @@ defmodule Xeito.Machines.Chat do
   @default_context 32_768
   @output_reserve 8_192
 
-  initial :thinking
+  initial :choosing_skill
+
+  state :choosing_skill do
+    decide(Xeito.Decisions.Skill, input: :skill_input)
+    on {:decided, :first}, to: :thinking, action: :suggest_first
+    on {:decided, :second}, to: :thinking, action: :suggest_second
+    on {:decided, :third}, to: :thinking, action: :suggest_third
+    on {:decided, :none}, to: :thinking
+    on {:decided, :abstain}, to: :thinking
+    on :steered, action: :steer
+  end
 
   state :thinking, entry: :ask_model, timeout: 900_000 do
     on :chatted, to: :failed, guard: :chat_error?, action: :record_error
@@ -246,8 +263,30 @@ defmodule Xeito.Machines.Chat do
 
   defp messages(ctx) do
     system = %{role: "system", content: Map.get(ctx, :system, @default_system)}
-    [system | Map.get(ctx, :messages, [])] ++ [%{role: "user", content: ctx.prompt}]
+    [system | Map.get(ctx, :messages, [])] ++ [%{role: "user", content: ctx.prompt <> skill_hint(ctx[:suggested_skill])}]
   end
+
+  defp skill_hint(nil), do: ""
+
+  defp skill_hint(skill),
+    do:
+      "\n\n(A skill may fit this request; if it does, load it with the skill tool before you start: " <>
+        "#{skill.name}: #{skill.description})"
+
+  @doc "The Skill decision's input: the request and the shortlisted skills, `\"name: description\"`."
+  def skill_input(ctx) do
+    listed = for skill <- Map.get(ctx, :skill_candidates, []), do: "#{skill.name}: #{skill.description}"
+    %{request: ctx.prompt, first: Enum.at(listed, 0), second: Enum.at(listed, 1), third: Enum.at(listed, 2)}
+  end
+
+  @doc false
+  def suggest_first(ctx, _decision), do: suggest(ctx, 0)
+  @doc false
+  def suggest_second(ctx, _decision), do: suggest(ctx, 1)
+  @doc false
+  def suggest_third(ctx, _decision), do: suggest(ctx, 2)
+
+  defp suggest(ctx, n), do: Map.put(ctx, :suggested_skill, Enum.at(Map.get(ctx, :skill_candidates, []), n))
 
   @doc false
   def chat_error?(_ctx, message), do: Map.has_key?(message, :error)
