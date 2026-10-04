@@ -1,0 +1,34 @@
+{"request": "get the transcript of this youtube video", "skill": "video-transcript"}
+{"request": "summarise this youtube talk", "skill": "video-transcript"}
+{"request": "what does the speaker say in this video?", "skill": "video-transcript"}
+{"request": "search the web for the latest Elixir release", "skill": "web-search"}
+{"request": "look up what people online say about this library", "skill": "web-search"}
+{"request": "review the changes since main", "skill": "code-review"}
+{"request": "is this branch ready to merge?", "skill": "code-review"}
+{"request": "diagnose this performance regression", "skill": "diagnose-bug"}
+{"request": "the checkout page got slower after the last deploy, find out why", "skill": "diagnose-bug"}
+{"request": "this test fails only sometimes, track it down", "skill": "diagnose-bug"}
+{"request": "condense this prose, cut the filler", "skill": "condense-prose"}
+{"request": "make my writing shorter", "skill": "condense-prose"}
+{"request": "this paragraph is too wordy, tighten it", "skill": "condense-prose"}
+{"request": "write a commit message for the staged changes", "skill": "commit-message"}
+{"request": "describe what I changed for the git log", "skill": "commit-message"}
+{"request": "extract the tables from this PDF file", "skill": "pdf-extract"}
+{"request": "pull the numbers out of the attached invoice.pdf", "skill": "pdf-extract"}
+{"request": "draft release notes since the last tag", "skill": "release-notes"}
+{"request": "what changed for users in this version?", "skill": "release-notes"}
+{"request": "grill me on this design plan", "skill": "grill-plan"}
+{"request": "poke holes in my architecture before I build it", "skill": "grill-plan"}
+{"request": "write a database migration that adds an index", "skill": "db-migration"}
+{"request": "add a column to the users table and backfill it", "skill": "db-migration"}
+{"request": "translate this text to German", "skill": "translate-text"}
+{"request": "put this README into Spanish", "skill": "translate-text"}
+{"request": "take screenshots of the web app pages", "skill": "screenshot-ui"}
+{"request": "check how the settings page looks on a phone", "skill": "screenshot-ui"}
+{"request": "rename this module", "skill": "none"}
+{"request": "run the tests", "skill": "none"}
+{"request": "explain this function", "skill": "none"}
+{"request": "fix the typo in the config", "skill": "none"}
+{"request": "what does this error mean?", "skill": "none"}
+{"request": "add a test for the parser", "skill": "none"}
+{"request": "thanks, that works", "skill": "none"}

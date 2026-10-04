@@ -367,12 +367,12 @@ Added 2026-10-04. The P4e shortlist matches words: a request shortlists a skill 
 
 **Decision.** Skills are found through an index that ranks by relevance and is widened towards meaning in layers, cheapest first. Each layer must improve a measured benchmark before the next one is built. The decision step of P4e stays as it is: the index only produces a better shortlist. Nothing is added to the chat prompt.
 
-1. **Benchmark first.** `mix xeito.skills.bench <set.jsonl>` measures the shortlist. Each line pairs a request with the skill it needs, or with `none`. The task reports:
-   - recall at 1 and at 3;
-   - for `none` requests, how often the shortlist is empty or the decision says `none`;
-   - added latency per turn.
+1. **Benchmark first** (done 2026-10-04, `Xeito.Skills.Bench`). `mix xeito.skills.bench [set.jsonl] [--skills DIR]` measures the shortlist (`Xeito.Skills.shortlist/2`). Each line pairs a request with the skill it needs, or with `none`. The task reports:
+   - recall at 1 and at 3, and each miss with what the shortlist held instead;
+   - for `none` requests, how often the shortlist is empty, so the decision needs no model call;
+   - the shortlist's time per request.
 
-   The public repository holds a fixture skill library with its benchmark set. The operator's set, against their own library, is kept in the private companion repository. The first measurement is the P4e ranker, as the baseline.
+   The public repository ships a sample library of 12 skills with a set of 34 requests (`priv/skills/bench`); a set given without `--skills` runs against the user's skills. The operator's set, against their own library, is kept in the private companion repository. **Baseline**, the P4e ranker on the sample: top 1 and top 3 12/27 (44%), `none` 7/7, about 0.2 ms. Every miss is a request phrased without the skill's words ("make my writing shorter", "is this branch ready to merge?").
 2. **A full-text index with normalised words** (`Xeito.Skills.Index`). It replaces `rank/3`.
    - **The index.** An in-memory SQLite FTS5 table (`exqlite` is built with FTS5) holds each skill's name, description, keywords and example requests. Results are ranked by BM25, with name > keywords > examples > description > body.
    - **Rebuilds.** The index is built when the daemon starts. A skill is re-indexed when its content hash changes: an edit, or a `git pull` of a vendored collection.

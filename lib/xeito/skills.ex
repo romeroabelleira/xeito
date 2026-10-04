@@ -43,11 +43,16 @@ defmodule Xeito.Skills do
   def discover(cwd, opts \\ []) do
     home = Keyword.get_lazy(opts, :home, &user_home/0)
 
-    roots = [
-      Path.join(cwd, ".agents/skills"),
-      Path.join(home, ".agents/skills")
-    ]
+    from_dirs([Path.join(cwd, ".agents/skills"), Path.join(home, ".agents/skills")])
+  end
 
+  @doc "The directory of the user's skills."
+  @spec user_dir() :: Path.t()
+  def user_dir, do: Path.join(user_home(), ".agents/skills")
+
+  @doc "The skills under the directories, searched recursively in order; the first of a name wins."
+  @spec from_dirs([Path.t()]) :: [t()]
+  def from_dirs(roots) do
     roots
     |> Enum.flat_map(&(&1 |> Path.join("**/SKILL.md") |> Path.wildcard() |> Enum.sort()))
     |> Enum.flat_map(&load/1)
@@ -98,8 +103,15 @@ defmodule Xeito.Skills do
   def for_turn(skills, cwd, request) do
     root = Path.join(Path.expand(cwd), ".agents/skills") <> "/"
     {listed, user} = Enum.split_with(skills, &String.starts_with?(&1.dir, root))
-    %{listed: listed, candidates: user |> Enum.filter(& &1.model_invocation) |> rank(request)}
+    %{listed: listed, candidates: shortlist(user, request)}
   end
+
+  @doc """
+  The user's skills a turn may choose from: those the model may invoke, ranked against the
+  request (`rank/3`). `Xeito.Skills.Bench` measures it.
+  """
+  @spec shortlist([t()], String.t()) :: [t()]
+  def shortlist(skills, request), do: skills |> Enum.filter(& &1.model_invocation) |> rank(request)
 
   # Words too common to say what a request is about.
   @common ~w(the and for with this that from into when what which where why how use used user users
