@@ -25,21 +25,17 @@ defmodule Xeito.SkillsPerTurnTest do
       skill("brave-search", "Web search and content extraction via Brave Search API.")
     ]
 
-  describe "Skills.rank/3: a keyword shortlist of the user's skills" do
-    test "skills sharing words with the request, the best first; a name counts double" do
+  describe "Skills.shortlist/2: the user's skills a turn may choose from (Xeito.Skills.Index)" do
+    test "skills matching the request, the best first" do
       assert ["diagnosing-bugs"] =
-               library() |> Skills.rank("please diagnose this performance regression") |> Enum.map(& &1.name)
+               library() |> Skills.shortlist("please diagnose this performance regression") |> Enum.map(& &1.name)
 
       assert ["youtube-transcript"] =
-               library() |> Skills.rank("get the transcript of this youtube talk") |> Enum.map(& &1.name)
+               library() |> Skills.shortlist("summarise this youtube talk") |> Enum.map(& &1.name)
     end
 
-    test "one shared word is not enough, common words do not count, and at most three are listed" do
-      assert Skills.rank(library(), "review this") == []
-      assert Skills.rank(library(), "what is the use of this when the user wants it") == []
-
-      many = for n <- 1..5, do: skill("search-#{n}", "Search the web for pages.")
-      assert length(Skills.rank(many, "search the web")) == 3
+    test "a request with nothing in common shortlists nothing" do
+      assert Skills.shortlist(library(), "rename this module") == []
     end
   end
 

@@ -512,6 +512,58 @@ defmodule Xeito.TuiTest do
     end
   end
 
+  defp write_skills(dir, skills) do
+    for {name, description} <- skills do
+      skill = Path.join(dir, ".agents/skills/#{name}")
+      File.mkdir_p!(skill)
+      File.write!(Path.join(skill, "SKILL.md"), "---\nname: #{name}\ndescription: #{description}\n---\nbody\n")
+    end
+  end
+
+  describe "/skills: finding a skill by what it does" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: dir} do
+      write_skills(dir, [
+        {"youtube-transcript", "Fetch transcripts from YouTube videos for summarization and analysis."},
+        {"code-review", "Review the changes since a fixed point along two axes: standards and spec."},
+        {"brave-search", String.duplicate("Web search and content extraction. ", 5)}
+      ])
+
+      :ok
+    end
+
+    test "/skills <words> lists the skills they match, the best first, with what each does", %{tmp_dir: dir} do
+      {state, []} = submit(tui(cwd: dir), "/skills summarise a talk")
+
+      assert Enum.take(state.lines, -2) == [
+               ~s(skills for "summarise a talk", the best first:),
+               "  /skill:youtube-transcript · Fetch transcripts from YouTube videos for summarization and analysis."
+             ]
+
+      assert value(state) == ""
+    end
+
+    test "/skills alone lists them all, a long description cut", %{tmp_dir: dir} do
+      {state, []} = submit(tui(cwd: dir), "/skills")
+      [heading, brave, review, youtube] = Enum.take(state.lines, -4)
+
+      assert heading == "3 skills (/skills <words> finds one by what it does):"
+
+      assert brave ==
+               "  /skill:brave-search · " <>
+                 String.slice(String.duplicate("Web search and content extraction. ", 5), 0, 99) <> "…"
+
+      assert review =~ "  /skill:code-review · Review the changes"
+      assert youtube =~ "  /skill:youtube-transcript · "
+    end
+
+    test "says so when nothing matches", %{tmp_dir: dir} do
+      {state, []} = submit(tui(cwd: dir), "/skills zzz")
+      assert List.last(state.lines) == ~s(no skill matches "zzz" · /skills alone lists them all)
+    end
+  end
+
   describe "/legend: what the risk dots mean" do
     test "each dot in its own colour, the same as on commands, and what the small number is" do
       {state, []} = submit(tui(), "/legend")
@@ -963,8 +1015,8 @@ defmodule Xeito.TuiTest do
     end
 
     test "several matches: each Tab shows the next, in order, and wraps around" do
-      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(8) |> Enum.map(&value/1)
-      assert tabbed == ["/s", "/send", "/sessions", "/skill:", "/statusbar", "/steer", "/step", "/send"]
+      tabbed = tui() |> typing("/s") |> Stream.iterate(&tab/1) |> Enum.take(9) |> Enum.map(&value/1)
+      assert tabbed == ["/s", "/send", "/sessions", "/skill:", "/skills", "/statusbar", "/steer", "/step", "/send"]
     end
 
     test "typing after a Tab completes from the new text" do
@@ -992,8 +1044,25 @@ defmodule Xeito.TuiTest do
       assert [cwd: dir] |> tui() |> typing("/skill:zz-tui") |> tab() |> value() == "/skill:zz-tui-skill"
     end
 
+    @tag :tmp_dir
+    test "after /skill:, words that start no name find skills by what they do, after those they start",
+         %{tmp_dir: dir} do
+      write_skills(dir, [
+        {"zz-video", "Fetch transcripts from YouTube videos."},
+        {"zz-search", "Search the web and extract pages, and videos."},
+        {"videos-cut", "Cut video files."}
+      ])
+
+      assert [cwd: dir] |> tui() |> typing("/skill:transcripts") |> tab() |> value() == "/skill:zz-video"
+
+      tabbed =
+        [cwd: dir] |> tui() |> typing("/skill:videos") |> Stream.iterate(&tab/1) |> Enum.take(4) |> Enum.map(&value/1)
+
+      assert tabbed == ["/skill:videos", "/skill:videos-cut", "/skill:zz-video", "/skill:zz-search"]
+    end
+
     test "the commands are the daemon's and the TUI's own" do
-      assert Tui.commands() == Enum.sort(~w(quit exit statusbar legend sessions) ++ Xeito.Session.commands())
+      assert Tui.commands() == Enum.sort(~w(quit exit statusbar legend sessions skills) ++ Xeito.Session.commands())
     end
   end
 end

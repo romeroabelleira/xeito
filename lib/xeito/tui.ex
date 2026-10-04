@@ -39,8 +39,9 @@ defmodule Xeito.Tui do
   Keys: Enter sends (and steps a paused run when the prompt is empty); a pending review is
   answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
   running turn; Up / Down recall earlier prompts (the line being typed comes back past the
-  newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`,
-  and each further Tab shows the next match; a line sent while a turn runs is queued in the
+  newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`
+  (by name, then by what the typed words describe), and each further Tab shows the next match;
+  `/skills <words>` lists the skills those words describe (`Xeito.Tui.SkillSearch`); a line sent while a turn runs is queued in the
   session and shown above the prompt, and when the turn ended in a way it was not written for
   (halted, failed, stopped, a question) it is held: Enter on an empty line sends it, Esc drops it;
   Ctrl-J sends the typed line into the running chat turn instead, for its next model call
@@ -62,6 +63,7 @@ defmodule Xeito.Tui do
   alias Xeito.Client.StatusBar
   alias Xeito.Session.Router
   alias Xeito.Tui.Sessions
+  alias Xeito.Tui.SkillSearch
 
   @max_lines 5_000
   # Blink half-period and how long the cursor keeps blinking after the last key (as GTK does), so
@@ -76,7 +78,7 @@ defmodule Xeito.Tui do
   @placeholder "ask, or /help"
 
   # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
-  @own_commands ~w(quit exit statusbar legend sessions)
+  @own_commands ~w(quit exit statusbar legend sessions skills)
 
   # --- init ----------------------------------------------------------------------------------
 
@@ -394,10 +396,13 @@ defmodule Xeito.Tui do
 
   defp handle_update(msg, state) when msg in [:quit, :halt, :complete, :legend, :steer], do: line_key(msg, state)
 
-  defp handle_update({:sessions, args}, state),
-    do: {Sessions.command(args, %{state | input: TextInput.clear(state.input)}), []}
+  defp handle_update({list, args}, state) when list in [:sessions, :skills],
+    do: {list_command(list, args, %{state | input: TextInput.clear(state.input)}), []}
 
   defp handle_update(msg, state), do: screen_update(msg, state)
+
+  defp list_command(:sessions, args, state), do: Sessions.command(args, state)
+  defp list_command(:skills, words, state), do: SkillSearch.command(words, state)
 
   defp line_key(:quit, state), do: {state, [TermUI.Command.quit(:normal)]}
   defp line_key(:halt, state), do: halt(state)
@@ -557,6 +562,7 @@ defmodule Xeito.Tui do
   defp own_command("statusbar" <> args), do: {:statusbar, args}
   defp own_command("legend"), do: :legend
   defp own_command("sessions" <> args), do: {:sessions, String.trim(args)}
+  defp own_command("skills" <> args), do: {:skills, String.trim(args)}
   defp own_command(_daemon_command), do: nil
 
   defp send_line(text, state) do
@@ -606,10 +612,10 @@ defmodule Xeito.Tui do
   @spec commands() :: [String.t()]
   def commands, do: Enum.sort(@own_commands ++ Xeito.Session.commands())
 
-  # The completions of a line, in order: a command, a machine after `/machine `, a skill of the
-  # workspace after `/skill:`. Case is ignored.
+  # The completions of a line, in order: a command, a machine after `/machine `, a skill after
+  # `/skill:` (`Xeito.Tui.SkillSearch`). Case is ignored.
   defp completions("/machine " <> part, _cwd), do: matching("/machine ", Map.keys(Router.machines()), part)
-  defp completions("/skill:" <> part, cwd), do: matching("/skill:", Enum.map(Xeito.Skills.discover(cwd), & &1.name), part)
+  defp completions("/skill:" <> part, cwd), do: Enum.map(SkillSearch.completions(part, cwd), &("/skill:" <> &1))
   defp completions("/" <> part, _cwd), do: matching("/", commands(), part)
   defp completions(_line, _cwd), do: []
 
