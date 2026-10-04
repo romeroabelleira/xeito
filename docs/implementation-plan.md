@@ -361,6 +361,49 @@ Added 2026-10-04. Every chat request listed every skill Xeito could see, with it
 
 **Exit:** a chat prompt carries the project's skills and at most one user skill. The decision is logged in each chat turn; most turns decide by rule, without a model call. The skill type has labelled examples for `mix xeito.eval`.
 
+## P4f · Finding skills by meaning
+
+Added 2026-10-04. The P4e shortlist matches words: a request shortlists a skill only if they share two words. "summarise this youtube talk" finds no skill for transcripts, and "make my writing shorter" none described as "condense prose". You can only find a skill by guessing the words in its description.
+
+**Decision.** Skills are found through an index that ranks by relevance and is widened towards meaning in layers, cheapest first. Each layer must improve a measured benchmark before the next one is built. The decision step of P4e stays as it is: the index only produces a better shortlist. Nothing is added to the chat prompt.
+
+1. **Benchmark first.** `mix xeito.skills.bench <set.jsonl>` measures the shortlist. Each line pairs a request with the skill it needs, or with `none`. The task reports:
+   - recall at 1 and at 3;
+   - for `none` requests, how often the shortlist is empty or the decision says `none`;
+   - added latency per turn.
+
+   The public repository holds a fixture skill library with its benchmark set. The operator's set, against their own library, is kept in the private companion repository. The first measurement is the P4e ranker, as the baseline.
+2. **A full-text index with normalised words** (`Xeito.Skills.Index`). It replaces `rank/3`.
+   - **The index.** An in-memory SQLite FTS5 table (`exqlite` is built with FTS5) holds each skill's name, description, keywords and example requests. Results are ranked by BM25, with name > keywords > examples > description > body.
+   - **Rebuilds.** The index is built when the daemon starts. A skill is re-indexed when its content hash changes: an edit, or a `git pull` of a vendored collection.
+   - **Normalising words.** The porter tokenizer finds a word's other forms ("testing" finds "test"), and diacritics are removed. One spelling map runs on both the index and the query, so British and American spellings meet (`-ise`/`-ize`, `-isation`/`-ization`, `-our`/`-or`). Stemming alone keeps `summarise` and `summarize` apart.
+   - **No more word counting.** BM25 replaces the stopword list and the two-word rule.
+   - **Discovery for the user.** `/skills <query>` in the TUI lists ranked matches with their descriptions. `/skill:` Tab completion orders by relevance once something is typed. A second FTS5 table with the trigram tokenizer serves typos and fragments ("youtub").
+3. **Keywords** (manual synonyms).
+   - **In skill files.** A skill's frontmatter may carry `metadata: keywords:`. Following the Agent Skills format, extra fields go under `metadata`, so the frontmatter parser learns that one nested level.
+   - **For skills you can't edit.** For vendored skills, an overlay file maps skill names to keywords. It is named by `XEITO_SKILL_KEYWORDS`, and the operator keeps theirs in the private companion repository.
+4. **Example requests per skill** (doc2query). When a skill is indexed, the local model writes 10–20 requests it serves, in the user's words. They go into the index's examples column. This is where the index gains meaning, at no cost per turn.
+   - **A cache.** Generated requests are cached in a file keyed by the skill's content hash and the model's digest, so the index is stable across restarts. Only changed skills are regenerated.
+   - **Logged.** Generation is a logged model call, like any other.
+   - **In the background, at low priority.** The index uses whatever is ready. A first run over about 50 skills takes some minutes on the local model. `mix xeito.skills index` runs it explicitly.
+   - **Reviewable.** `mix xeito.skills examples <name>` shows what was generated, so a bad set can be spotted and regenerated.
+5. **Embeddings, fused with BM25 (opt-in).**
+   - **The model.** A small embedding model, served by Ollama on the CPU so it does not compete with the chat model for the GPU. It is configured by `XEITO_EMBEDDING_{URL,MODEL}`, and unset means off.
+   - **The vectors.** One per skill, from its name, description, keywords and examples. They are cached by content hash and model digest, so an edited skill, a different model or new weights under the same tag re-embeds automatically. They are held in ETS and compared by cosine similarity in Elixir: at this size, no vector extension is needed.
+   - **The shortlist.** Each turn embeds the request. The BM25 ranking and the similarity ranking are merged by reciprocal rank fusion. A skill enters the shortlist on a BM25 match or on a similarity above a threshold tuned with the benchmark.
+   - **Fallback.** If the model is missing or Ollama is down, the shortlist uses BM25 alone and logs one line.
+   - **The alternative.** Bumblebee in-process (as planned for P7's classifiers) would remove the Ollama dependency but bring in Nx and EXLA. It is kept for P7.
+6. **A wider fallback.** When no skill passes the threshold, the decision is not skipped. A sibling decision type, `skill_wide`, sees the ten best fused matches by position (`1`…`10` or `none`), so its values stay a fixed set. It runs only when the benchmark shows that the right skill is often ranked 4th to 10th.
+7. **Later: learning from use** (deferred). Requests for which a skill was chosen by `/skill:`, or chosen by the decision and then loaded, would add their words to that skill's index. The event log already holds them. This waits until there is enough history, and until a rule says which signals count.
+
+**Exit:**
+- On the operator's set, the right skill is in the shortlist (recall at 3) for at least 90% of requests that need one, up from the P4e baseline.
+- "summarise this youtube talk" shortlists the transcript skill.
+- Requests that need no skill mostly end in `none`.
+- A turn takes at most 250 ms longer.
+- The prompt is no larger than after P4e.
+- `/skills <query>` finds a skill by meaning.
+
 ## P5 · OCEL export and process mining (≈4 weeks)
 
 1. Validate the SQLite layout against the OCEL 2.0 spec, and add JSON export.
