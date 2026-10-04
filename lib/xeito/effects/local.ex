@@ -134,20 +134,21 @@ defmodule Xeito.Effects.Local do
   defp chat(%Effect{args: %{error: reason}}, _opts), do: %{error: {:context_window, reason}}
 
   defp chat(%Effect{args: args} = effect, opts) do
-    tools =
-      case args.tools do
-        names when is_list(names) -> Tools.specs(names)
-        true -> Tools.specs()
-        false -> []
-      end
+    on_delta = &Xeito.Events.delta(streamed_to(args, opts), effect.id, &1)
 
-    on_delta = &Xeito.Events.delta(opts[:run_id], effect.id, &1)
-
-    case Chat.complete(args.messages, tools, Keyword.get(opts, :chat, []), on_delta) do
+    case Chat.complete(args.messages, specs(args.tools), Keyword.get(opts, :chat, []), on_delta) do
       {:ok, message} -> message
       {:error, reason} -> %{error: reason}
     end
   end
+
+  defp specs(names) when is_list(names), do: Tools.specs(names)
+  defp specs(true), do: Tools.specs()
+  defp specs(false), do: []
+
+  # A quiet request (a summary) is not streamed: deltas without a run go nowhere.
+  defp streamed_to(%{quiet: true}, _opts), do: nil
+  defp streamed_to(_args, opts), do: opts[:run_id]
 
   defp machine(%Effect{args: args} = effect, opts) do
     log = Keyword.fetch!(opts, :log)

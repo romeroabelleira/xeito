@@ -254,6 +254,72 @@ defmodule Xeito.ChatMachineTest do
     end
   end
 
+  describe "summarising earlier turns (P4c)" do
+    # 12k tokens of context leave 4_096 for a request: 20 turns of 1k characters are far over 60%.
+    defp due(extra \\ %{}), do: ctx(Map.merge(%{system: "S", context: 12_288, messages: long_history(20, 1_000)}, extra))
+
+    test "a short conversation goes from the skill choice straight to thinking" do
+      machine = Machine.fetch!(Chat)
+
+      for value <- [:first, :second, :third, :none, :abstain] do
+        assert {:ok, %{to: :thinking}} =
+                 Engine.handle(machine, :choosing_skill, ctx(%{messages: long_history(2, 10)}), {:decided, value}, %{})
+      end
+    end
+
+    test "a long one is summarised first, the chosen skill kept" do
+      machine = Machine.fetch!(Chat)
+      skills = [%{name: "a", description: "A."}, %{name: "b", description: "B."}, %{name: "c", description: "C."}]
+
+      for {value, name} <- [first: "a", second: "b", third: "c", none: nil, abstain: nil] do
+        assert {:ok, %{to: :summarising, ctx: summarising}} =
+                 Engine.handle(machine, :choosing_skill, due(%{skill_candidates: skills}), {:decided, value}, %{})
+
+        assert get_in(summarising, [:suggested_skill, :name]) == name
+      end
+    end
+
+    test "the summary is asked without tools and without streaming, for the oldest turns only" do
+      [effect] = Chat.ask_summary(due())
+      assert %{tools: false, quiet: true} = effect.args
+      assert effect.reply == :summarised
+      assert [%{role: "system"}, %{role: "user", content: transcript}] = effect.args.messages
+      assert transcript =~ "User: request 1\n"
+      refute transcript =~ "User: request 20"
+    end
+
+    test "the summary stands in for those turns from then on, in the requests and in the turn" do
+      machine = Machine.fetch!(Chat)
+
+      assert {:ok, %{to: :thinking, ctx: summarised}} =
+               Engine.handle(machine, :summarising, due(), :summarised, message("Goal: x."))
+
+      assert [%{summary: true, content: summary, covers: covers} | kept] = summarised.messages
+      assert summary =~ "Goal: x."
+      assert covers + length(kept) == 40
+      assert List.last(kept) == List.last(long_history(20, 1_000))
+
+      [ask] = Chat.ask_model(summarised)
+      assert [%{role: "system"}, %{summary: true} | _] = ask.args.messages
+    end
+
+    test "a failed or empty summary leaves the conversation as it was" do
+      machine = Machine.fetch!(Chat)
+
+      for failed <- [%{error: :timeout}, message("  ")] do
+        assert {:ok, %{to: :thinking, ctx: unchanged}} = Engine.handle(machine, :summarising, due(), :summarised, failed)
+        assert unchanged.messages == due().messages
+      end
+    end
+
+    test "a steer while summarising waits for the model's request" do
+      assert {:ok, %{to: :summarising, ctx: steered}} =
+               Engine.handle(Machine.fetch!(Chat), :summarising, due(), :steered, %{text: "use psql"})
+
+      assert steered.steers == ["use psql"]
+    end
+  end
+
   describe "a review answered with text instead of y or n" do
     defp reviewing(extra \\ %{}) do
       bash = call("bash", %{"command" => "mix test"})

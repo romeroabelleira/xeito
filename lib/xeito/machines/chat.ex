@@ -3,6 +3,8 @@ defmodule Xeito.Machines.Chat do
   The free chat machine: pi's agent loop drawn as a statechart, and therefore logged and mined
   (`docs/architecture/07-harness-frontend.md#the-free-chat-machine-the-escape-hatch`).
 
+      choosing_skill ──decided──┬─ earlier turns too long → summarising ──summarised──→ thinking
+                                └─ otherwise ───────────────────────────────────────→ thinking
       thinking ──chatted──┬─ tool calls, next is bash ─→ risk_check ─┬─ safe ──────→ executing
                           ├─ tool calls, other ───────→ executing   ├─ review/abstain → ask_human
                           ├─ no tool calls, edited ───→ verifying   └─ forbidden ─→ thinking (told)
@@ -39,6 +41,12 @@ defmodule Xeito.Machines.Chat do
   that has changed nothing yet: then the model is told to act on what it has, and keeps its
   tools (0.10.0).
 
+  **Summaries** (0.12.0, P4c). After the skill is chosen, a turn whose earlier conversation
+  has grown past 60% of the request budget or 40 messages enters `summarising`: the model
+  summarises its oldest turns (`Xeito.Chat.Window.summary_request/2`), and the summary stands in
+  for them in `ctx.messages`, so also in `ctx.turn` and the session's history. A failed summary
+  changes nothing: fitting then drops turns with a note, as before.
+
   **A skill per turn** (0.11.0, P4e). A turn starts in `choosing_skill`: the decision
   `Xeito.Decisions.Skill` picks one of `skill_candidates` (the user's skills the session
   shortlisted, `Xeito.Skills.for_turn/3`), or none. A chosen skill is suggested after the
@@ -52,7 +60,7 @@ defmodule Xeito.Machines.Chat do
   streams sooner).
   """
 
-  use Xeito.Machine, version: "0.11.0"
+  use Xeito.Machine, version: "0.12.0"
 
   alias Xeito.Chat.Window
   alias Xeito.Effect
@@ -75,11 +83,25 @@ defmodule Xeito.Machines.Chat do
 
   state :choosing_skill do
     decide(Xeito.Decisions.Skill, input: :skill_input)
+    on {:decided, :first}, to: :summarising, guard: :summary_due?, action: :suggest_first
     on {:decided, :first}, to: :thinking, action: :suggest_first
+    on {:decided, :second}, to: :summarising, guard: :summary_due?, action: :suggest_second
     on {:decided, :second}, to: :thinking, action: :suggest_second
+    on {:decided, :third}, to: :summarising, guard: :summary_due?, action: :suggest_third
     on {:decided, :third}, to: :thinking, action: :suggest_third
+    on {:decided, :none}, to: :summarising, guard: :summary_due?
     on {:decided, :none}, to: :thinking
+    on {:decided, :abstain}, to: :summarising, guard: :summary_due?
     on {:decided, :abstain}, to: :thinking
+    on :steered, action: :steer
+  end
+
+  # The earlier conversation has grown past what a request should carry: its oldest turns are
+  # summarised before the model is asked (P4c, `Xeito.Chat.Window`). Without a summary (the call
+  # failed), the turn goes on as before, and fitting drops turns with a note.
+  state :summarising, entry: :ask_summary, timeout: 900_000 do
+    on :summarised, to: :thinking, guard: :summary_failed?
+    on :summarised, to: :thinking, action: :record_summary
     on :steered, action: :steer
   end
 
@@ -179,20 +201,28 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def ask_wrap_up(ctx), do: [request(ctx, messages(ctx) ++ steer_messages(ctx) ++ [wrap_up_request(ctx)], tools: false)]
 
+  @doc false
+  def ask_summary(ctx) do
+    {span, _kept} = Window.summary_split(Map.get(ctx, :messages, []), window(ctx))
+    [Effect.chat(Window.summary_request(span, window(ctx)), tools: false, quiet: true, reply: :summarised)]
+  end
+
   # The request as sent: elided, then fitted into the context window (`Xeito.Chat.Window`). A
   # request that cannot fit is not sent; the effect carries the reason and the turn fails with it.
   defp request(ctx, messages, opts) do
-    window = [
-      budget: (ctx[:context] || @default_context) - @output_reserve,
-      keep_from: 1 + length(Map.get(ctx, :messages, [])),
-      chars_per_token: Map.get(ctx, :chars_per_token, Window.default_chars_per_token())
-    ]
+    window = Keyword.put(window(ctx), :keep_from, 1 + length(Map.get(ctx, :messages, [])))
 
     case messages |> elide() |> Window.fit(window) do
       {:ok, fitted, _report} -> Effect.chat(fitted, opts)
       {:error, reason} -> Effect.chat(messages, Keyword.put(opts, :error, reason))
     end
   end
+
+  defp window(ctx),
+    do: [
+      budget: (ctx[:context] || @default_context) - @output_reserve,
+      chars_per_token: Map.get(ctx, :chars_per_token, Window.default_chars_per_token())
+    ]
 
   defp wrap_up_request(ctx) do
     why =
@@ -290,6 +320,18 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def chat_error?(_ctx, message), do: Map.has_key?(message, :error)
+
+  @doc false
+  def summary_due?(ctx, _decision), do: Window.summary_split(Map.get(ctx, :messages, []), window(ctx)) != :keep
+
+  @doc false
+  def summary_failed?(ctx, message), do: chat_error?(ctx, message) or String.trim(Map.get(message, :content) || "") == ""
+
+  @doc "The summary replaces the turns it covers in the earlier conversation, for this turn and the session's history."
+  def record_summary(ctx, message) do
+    {span, kept} = Window.summary_split(ctx.messages, window(ctx))
+    Map.put(ctx, :messages, [Window.summary_message(message.content, span) | kept])
+  end
 
   @doc false
   def calls_next_risky?(ctx, message), do: next_is?(valid(message, ctx), true)

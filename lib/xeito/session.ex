@@ -34,6 +34,7 @@ defmodule Xeito.Session do
   use GenServer
 
   alias Xeito.Budget
+  alias Xeito.Chat.Window
   alias Xeito.Decisions.Intent
   alias Xeito.Escalation
   alias Xeito.Events
@@ -1052,12 +1053,12 @@ defmodule Xeito.Session do
   defp local_context, do: (Tiers.config(:local) || [])[:context]
 
   defp remember(%{machine: Chat}, %{status: :halted, ctx: %{turn: [_system | messages]}}, answer),
-    do: window(settled(messages) ++ [%{role: "assistant", content: "(#{answer})"}])
+    do: trim_history(settled(messages) ++ [%{role: "assistant", content: "(#{answer})"}])
 
-  defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer), do: window(messages)
+  defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer), do: trim_history(messages)
 
   defp remember(s, _result, answer) do
-    window(s.history ++ [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
+    trim_history(s.history ++ [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
   end
 
   @doc false
@@ -1073,9 +1074,15 @@ defmodule Xeito.Session do
 
   defp calls?(message), do: match?(%{role: "assistant", tool_calls: [_ | _]}, message)
 
-  defp window(messages) when length(messages) > @max_history, do: Enum.take(messages, -@trimmed_history)
+  # A summary of earlier turns (P4c, `Xeito.Chat.Window.summary_message/2`) stays first: it
+  # stands for what was trimmed before.
+  @doc false
+  def trim_history(messages) when length(messages) > @max_history do
+    {pinned, rest} = Enum.split_while(messages, &Window.summary?/1)
+    pinned ++ Enum.take(rest, length(pinned) - @trimmed_history)
+  end
 
-  defp window(messages), do: messages
+  def trim_history(messages), do: messages
 
   # --- commands ------------------------------------------------------------------------------
 

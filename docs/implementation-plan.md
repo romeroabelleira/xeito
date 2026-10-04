@@ -290,7 +290,7 @@ Not in P4b (see [bench 4 §4](../bench/4-harness.md#4-code-navigation-outline-sy
 
 **Exit:** on the benchmark, input tokens per run are at least halved compared with variant C, with no fewer runs reaching an edit. Shaping and elision are covered by tests, including replay: a recovered run reproduces the shaped and elided messages exactly.
 
-## P4c · Summarising dropped turns (planned)
+## P4c · Summarising dropped turns
 
 Added 2026-10-03. Since chat machine 0.9.0, a chat request that does not fit the model's context window drops its oldest earlier turns, with a note ([07](architecture/07-harness-frontend.md#context-and-configuration)). That keeps the system prompt and the current turn intact, but a long session forgets what the dropped turns established. pi summarises instead: the dropped span becomes a structured summary that the model reads in its place.
 
@@ -300,6 +300,13 @@ Added 2026-10-03. Since chat machine 0.9.0, a chat request that does not fit the
    - It has its own budget: the span to summarise is itself fitted (stubs first), and the summary's length is capped.
 2. **When it does not pay.** Summarising costs a model call of the span's size; on a 24 GB GPU that is minutes for ~50k tokens (measured with pi). The step runs only when the dropped span is large enough to matter, and falls back to the note when the summary call fails.
 3. **Measure** on a long dogfood session: answers that need a dropped turn's facts, with the note against with the summary, and the time spent summarising.
+
+Built 2026-10-04 (chat machine 0.12.0, `Xeito.Chat.Window.summary_split/2`, `summary_request/2`, `summary_message/2`), with these choices:
+- **Before dropping, not at it.** A turn summarises when its earlier conversation passes 60% of the budget or 40 messages, and summarises its oldest whole turns until the rest takes at most 30% and 20 messages. Summarising only once a request would drop turns would leave no room for the turn's own growth, and would summarise again at almost every turn. The message limit also keeps the session's own trim of its history (past 80 messages, back to 60) from dropping turns silently; that trim keeps a summary first too.
+- **After the skill is chosen.** The machine's DSL has no transition without an event, so `summarising` follows `choosing_skill`, entered only when the guard says a summary is due.
+- **The summary request.** A transcript of the span: user and assistant lines, tool calls with their arguments, tool results clipped to 1,000 characters, and the summary so far. It is cut in the middle to fit the budget. The summary is asked for in at most 300 words under fixed headings and kept to 4,000 characters; the message records how many messages it stands for.
+- **Not streamed.** The chat effect gained `quiet:`, so a summary's text does not reach clients as if it were an answer.
+- **Step 3 (measuring on a long dogfood session) is open.** It needs a session long enough to summarise: the questions about its dropped turns, with the note against with the summary, and the time the summary took.
 
 **Exit:** a session that has dropped turns still answers questions about them, and replays reproduce its requests exactly.
 

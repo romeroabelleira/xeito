@@ -196,4 +196,119 @@ defmodule Xeito.ChatWindowTest do
       refute Window.truncated?(32_770, nil)
     end
   end
+
+  describe "summaries (P4c)" do
+    defp split(earlier, budget), do: Window.summary_split(earlier, budget: budget, chars_per_token: 1.0)
+    defp turns(range, chars), do: Enum.flat_map(range, &turn(&1, chars))
+
+    test "summarising starts past 40 messages and past 60% of the budget, not at them" do
+      assert split(turns(1..10, 10), 1_000_000) == :keep
+      assert {_, _} = split(turns(1..10, 10) ++ [user("one more")], 1_000_000)
+
+      # One message of n characters is n + 4 tokens at one character per token: 600 is 60% of 1_000.
+      assert split([user(String.duplicate("x", 596))], 1_000) == :keep
+      assert {_, _} = split([user(String.duplicate("x", 597))], 1_000)
+    end
+
+    test "a short conversation is kept as it is" do
+      assert split(turns(1..2, 100), 10_000) == :keep
+      assert split([], 10_000) == :keep
+    end
+
+    test "past 60% of the budget, the oldest turns are summarised until the rest fits in 30%" do
+      assert {span, kept} = split(turns(1..8, 1_000), 10_000)
+      assert span == turns(1..6, 1_000)
+      assert kept == turns(7..8, 1_000)
+    end
+
+    test "past 40 messages, the oldest turns are summarised until 20 are left" do
+      assert {span, kept} = split(turns(1..11, 10), 1_000_000)
+      assert span == turns(1..6, 10)
+      assert kept == turns(7..11, 10)
+    end
+
+    test "what is kept starts at a user message, and a summary so far is summarised again" do
+      summary = Window.summary_message("Goal: ship it.", turns(1..3, 10))
+      tail = [assistant("half a turn"), tool(0, 10)]
+
+      assert {[^summary | _] = span, [%{role: "user"} | _] = kept} =
+               split([summary | tail ++ turns(4..14, 10)], 1_000_000)
+
+      assert length(kept) <= 20
+      assert Enum.take(span, 3) == [summary | tail]
+    end
+
+    test "the summary message says how many messages it stands for, counting a summary so far" do
+      first = Window.summary_message("Goal: ship it.", turns(1..3, 10))
+      assert %{role: "user", summary: true, covers: 12} = first
+      assert first.content =~ ~r/^\[Summary of the 12 earlier messages/
+      assert first.content =~ "Goal: ship it."
+
+      second = Window.summary_message("Goal: ship it. Done.", [first | turns(4..5, 10)])
+      assert %{covers: 20} = second
+    end
+
+    test "a summary is cut to its length limit" do
+      assert String.length(Window.summary_message(String.duplicate("x", 20_000), []).content) < 5_000
+    end
+
+    test "the summarising request: instructions, then the span as a transcript" do
+      summary = Window.summary_message("Goal: ship it.", turns(1..3, 10))
+
+      call = %{
+        role: "assistant",
+        content: "",
+        tool_calls: [%{function: %{name: "bash", arguments: %{command: "mix test"}}}]
+      }
+
+      span = [summary, user("fix the build"), call, tool(1, 3_000), assistant("fixed")]
+
+      assert [%{role: "system", content: system}, %{role: "user", content: transcript}] =
+               Window.summary_request(span, budget: 100_000, chars_per_token: 1.0)
+
+      assert system =~ "Goal"
+      assert transcript =~ "Summary so far:\nGoal: ship it."
+      assert transcript =~ "User: fix the build"
+      assert transcript =~ ~s(Assistant called bash {"command":"mix test"})
+      assert transcript =~ "Result of bash: " <> String.duplicate("x", 1_000) <> " [… 2000 more characters]"
+      assert transcript =~ "Assistant: fixed"
+      refute transcript =~ ~r/^Assistant: $/m
+    end
+
+    test "an assistant message without text is only its calls; a result of exactly 1_000 characters is whole" do
+      call = %{role: "assistant", content: nil, tool_calls: [%{function: %{name: "read", arguments: %{path: "a"}}}]}
+      request = Window.summary_request([call, tool(1, 1_000)], budget: 100_000, chars_per_token: 1.0)
+      [_, %{content: transcript}] = request
+      assert transcript == ~s(Assistant called read {"path":"a"}\n\nResult of bash: ) <> String.duplicate("x", 1_000)
+    end
+
+    test "a transcript that fits its room exactly is not cut" do
+      span = turns(1..3, 50)
+      [%{content: system}, %{content: transcript}] = Window.summary_request(span, budget: 100_000, chars_per_token: 1.0)
+      # The room is the budget less the instructions and two messages' overhead.
+      budget = String.length(transcript) + String.length(system) + 8
+      assert [_, %{content: ^transcript}] = Window.summary_request(span, budget: budget, chars_per_token: 1.0)
+    end
+
+    test "the summarising request fits its budget: the transcript is cut in the middle" do
+      span = turns(1..50, 900)
+      request = Window.summary_request(span, budget: 5_000, chars_per_token: 1.0)
+      assert Window.estimate(request, 1.0) <= 5_000
+      [_, %{content: transcript}] = request
+      assert transcript =~ "User: request 1"
+      assert transcript =~ "User: request 50"
+      assert transcript =~ "characters cut to fit"
+    end
+
+    test "fitting never drops a summary: it stays first, before the note" do
+      summary = Window.summary_message("Goal: ship it.", turns(1..3, 10))
+      messages = [system(), summary | turns(4..9, 1_000)] ++ [user("now")]
+
+      assert {:ok, [_system, ^summary, %{content: "[" <> note} | _], %{dropped: dropped}} =
+               fit(messages, budget: 3_000, keep_from: length(messages) - 1)
+
+      assert dropped > 0
+      assert note =~ "earlier messages omitted"
+    end
+  end
 end

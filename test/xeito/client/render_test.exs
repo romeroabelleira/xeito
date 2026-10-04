@@ -16,6 +16,10 @@ defmodule Xeito.Client.RenderTest do
 
     test "delegated runs are indented one level per delegation; an event without a run is not" do
       assert line("state_entered", %{"state" => "fix"}, "ses-1/t1/e2/run") == "  · fix\n"
+
+      assert line("state_entered", %{"state" => "summarising"}) ==
+               "· summarising the earliest turns, which no longer fit the context window\n"
+
       assert line("state_entered", %{"state" => "fix"}, "ses-1/t1/e2/run/e1/run") == "    · fix\n"
       assert Render.line(%{"event" => "notice", "attrs" => %{"text" => "hi"}}) == "hi\n"
     end

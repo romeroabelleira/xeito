@@ -54,6 +54,10 @@ defmodule Xeito.Client.Render do
 
   # The chat loop's own states are visible through its tool calls and streamed text.
   defp state_line(state, _pad) when state in ["risk_check", "thinking", "executing", "answered"], do: ""
+
+  defp state_line("summarising", pad),
+    do: "#{pad}· summarising the earliest turns, which no longer fit the context window\n"
+
   defp state_line(state, pad), do: "#{pad}· #{state}\n"
 
   # A chat answer was already streamed; other machines get a one-line summary.

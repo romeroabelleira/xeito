@@ -90,8 +90,9 @@ defmodule Xeito.Effect do
 
   # `error:` marks a request the machine could not send (it does not fit the context window):
   # the runner answers it with the error instead of calling the model.
+  # `quiet:` asks for a reply that is not streamed to clients (it is not an answer: a summary).
   defp chat_args(messages, opts) do
-    args = %{messages: messages, tools: Keyword.get(opts, :tools, true)}
+    args = Map.merge(%{messages: messages, tools: Keyword.get(opts, :tools, true)}, Map.new(Keyword.take(opts, [:quiet])))
     if Keyword.has_key?(opts, :error), do: Map.put(args, :error, opts[:error]), else: args
   end
 

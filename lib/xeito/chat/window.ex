@@ -15,7 +15,15 @@ defmodule Xeito.Chat.Window do
 
   The system prompt is set aside before any of this and is never changed: a system prompt that
   does not fit on its own is an error, not a cut. The current prompt is part of the current
-  turn, which only step 3 touches.
+  turn, which only step 3 touches. Nor is a summary of earlier turns dropped (below): it stays
+  first, after the system prompt.
+
+  **Summaries** (P4c). Dropping turns keeps a request within its window, but a long session then
+  forgets what they established. So before it gets that far, the chat machine has the oldest
+  turns summarised (`summary_split/2`, `summary_request/2`): once the earlier conversation takes
+  more than 60% of the budget or 40 messages, its oldest whole turns, and any summary so far,
+  become one summary (`summary_message/2`), until the rest takes at most 30% and 20 messages.
+  The summary is a model call, logged, so a replay reads it instead of asking again.
 
   Tokens are estimated from characters (`estimate/2`), at a conservative 3.0 characters per
   token until the server has reported a real count (`calibrate/2`).
@@ -76,7 +84,8 @@ defmodule Xeito.Chat.Window do
       {:error, {:system_too_large, own, budget}}
     else
       {earlier, current} = Enum.split(rest, Keyword.fetch!(opts, :keep_from) - 1)
-      parts = %{earlier: earlier, current: current, report: %{dropped: 0, stubbed: 0, shortened: 0}}
+      {pinned, earlier} = Enum.split_while(earlier, &summary?/1)
+      parts = %{pinned: pinned, earlier: earlier, current: current, report: %{dropped: 0, stubbed: 0, shortened: 0}}
       steps(parts, room, system, budget)
     end
   end
@@ -101,8 +110,11 @@ defmodule Xeito.Chat.Window do
       else: {:error, {:over_budget, estimate(messages, room.cpt), budget}}
   end
 
-  defp assemble(%{earlier: earlier, current: current, report: %{dropped: 0}}), do: earlier ++ current
-  defp assemble(%{earlier: earlier, current: current, report: %{dropped: n}}), do: [note(n) | earlier ++ current]
+  defp assemble(%{pinned: pinned, earlier: earlier, current: current, report: %{dropped: 0}}),
+    do: pinned ++ earlier ++ current
+
+  defp assemble(%{pinned: pinned, earlier: earlier, current: current, report: %{dropped: n}}),
+    do: pinned ++ [note(n) | earlier ++ current]
 
   defp note(n), do: %{role: "user", content: "[#{n} earlier messages omitted to fit the context window.]"}
 
@@ -179,14 +191,106 @@ defmodule Xeito.Chat.Window do
     |> elem(1)
   end
 
-  # Keeps the first and the last quarter, so both ends of a long output stay readable.
-  defp cut_middle(%{content: content} = m) do
+  # Keeps both ends of a long text, so both stay readable: by default the first and the last
+  # quarter; with `max`, as much of both ends as fits in `max` characters.
+  defp cut_middle(%{content: content} = m, max \\ nil) do
     length = String.length(content)
-    keep = div(length, 4)
+    keep = if max, do: div(max - 60, 2), else: div(length, 4)
     cut = length - 2 * keep
     middle = "\n[… #{cut} characters cut to fit the context window …]\n"
     %{m | content: String.slice(content, 0, keep) <> middle <> String.slice(content, length - keep, keep)}
   end
+
+  # --- summaries ---------------------------------------------------------------------------------
+
+  @summarise_at 0.6
+  @summarise_messages 40
+  @keep_at 0.3
+  @keep_messages 20
+  @summary_max 4_000
+  @result_max 1_000
+  @args_max 300
+
+  @summary_system """
+  You summarise the earlier part of a conversation between a user and a coding assistant, so the \
+  assistant can go on without it. Write at most 300 words, under these headings: Goal; Decisions \
+  and facts established; Files touched (paths, and what changed); Open questions and next steps. \
+  If there is a summary so far, fold it in. Keep paths, names, commands and numbers exact. Leave \
+  out what is settled and no longer matters. Write only the summary.
+  """
+
+  @doc "Whether a message is a summary of earlier turns (`summary_message/2`)."
+  @spec summary?(message()) :: boolean()
+  def summary?(message), do: Map.get(message, :summary, false) == true
+
+  @doc """
+  Whether the earlier conversation (`earlier`, without the system prompt) is due for a summary,
+  and of what: `:keep`, or `{span, kept}`, the oldest whole turns (with any summary so far) to
+  summarise and the rest, which starts at a user message. Options: `:budget` (tokens) and
+  `:chars_per_token`.
+  """
+  @spec summary_split([message()], keyword()) :: :keep | {[message()], [message()]}
+  def summary_split(earlier, opts) do
+    limits = %{budget: Keyword.fetch!(opts, :budget), cpt: Keyword.get(opts, :chars_per_token, @default_chars_per_token)}
+    if over?(earlier, limits, @summarise_at, @summarise_messages), do: span(earlier, [], limits), else: :keep
+  end
+
+  defp over?(messages, limits, share, count),
+    do: length(messages) > count or estimate(messages, limits.cpt) > share * limits.budget
+
+  defp span(kept, span, limits) do
+    if over?(kept, limits, @keep_at, @keep_messages) do
+      {turn, rest} = first_span(kept)
+      span(rest, span ++ turn, limits)
+    else
+      {span, kept}
+    end
+  end
+
+  @doc "The request that has `span` summarised: instructions, then `span` as a transcript, fitted to `opts[:budget]`."
+  @spec summary_request([message()], keyword()) :: [message()]
+  def summary_request(span, opts) do
+    cpt = Keyword.get(opts, :chars_per_token, @default_chars_per_token)
+    system = %{role: "system", content: @summary_system}
+    room = (Keyword.fetch!(opts, :budget) - estimate([system, %{content: ""}], cpt)) * cpt
+    [system, %{role: "user", content: span |> transcript() |> cut_to(floor(room))}]
+  end
+
+  defp transcript(span), do: Enum.map_join(span, "\n\n", &line/1)
+
+  # A span holds user, assistant and tool messages (the system prompt is never in one).
+  defp line(%{summary: true, content: content}), do: "Summary so far:\n" <> body(content)
+  defp line(%{role: "user", content: content}), do: "User: " <> content
+  defp line(%{role: "tool"} = m), do: "Result of #{Map.get(m, :tool_name, "a tool")}: " <> clip(m.content, @result_max)
+  defp line(%{role: "assistant"} = m), do: Enum.join(said(m.content) ++ calls(Map.get(m, :tool_calls, [])), "\n")
+
+  defp said(text) when text in [nil, ""], do: []
+  defp said(text), do: ["Assistant: " <> text]
+
+  defp calls(calls),
+    do: for(%{function: f} <- calls, do: "Assistant called #{f.name} " <> clip(JSON.encode!(f.arguments), @args_max))
+
+  defp clip(text, max) do
+    case String.length(text) - max do
+      more when more > 0 -> String.slice(text, 0, max) <> " [… #{more} more characters]"
+      _ -> text
+    end
+  end
+
+  defp cut_to(text, max) do
+    if String.length(text) <= max, do: text, else: cut_middle(%{content: text}, max).content
+  end
+
+  @doc "The summary of `span`, written by the model, as the message that stands for it."
+  @spec summary_message(String.t(), [message()]) :: message()
+  def summary_message(text, span) do
+    covers = span |> Enum.map(&Map.get(&1, :covers, 1)) |> Enum.sum()
+    header = "[Summary of the #{covers} earlier messages, which no longer fit the context window:]\n"
+    %{role: "user", content: header <> String.slice(String.trim(text), 0, @summary_max), summary: true, covers: covers}
+  end
+
+  # A summary's text without its header.
+  defp body(content), do: content |> String.split("\n", parts: 2) |> List.last()
 
   # --- measurements ------------------------------------------------------------------------------
 
