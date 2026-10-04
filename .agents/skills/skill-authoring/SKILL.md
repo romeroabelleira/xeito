@@ -20,6 +20,8 @@ The description is the only part an agent always sees, next to every other skill
 
 Too narrow and the skill is never loaded; too broad and it crowds out better ones.
 
+Xeito does not show the user's skills to every turn: it shortlists them by the request's words (`Xeito.Skills.Index`). Words a request would use that the description cannot hold go under `metadata: keywords:` (`metadata:` then an indented `keywords: word, word`). One keyword is enough to shortlist the skill, so keep each specific, and each part of a hyphenated one too ("stress-test" matches every request about a test).
+
 ## The body
 
 - Write instructions in the imperative, and say **why** where the reason is not obvious: an agent that knows the reason handles the case the instruction did not foresee. Capital-letter rules without reasons are brittle.

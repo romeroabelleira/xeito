@@ -31,7 +31,8 @@ defmodule Xeito.Skills do
           name: String.t(),
           description: String.t(),
           dir: Path.t(),
-          model_invocation: boolean()
+          model_invocation: boolean(),
+          keywords: [String.t()]
         }
 
   @max_description 1_024
@@ -40,12 +41,54 @@ defmodule Xeito.Skills do
   # else the user's.
   defp user_home, do: Application.get_env(:xeito, :skills_home) || System.user_home() || "/nonexistent"
 
-  @doc "The skills visible from a workspace, project skills first. `opts[:home]` overrides the user's home."
+  @doc """
+  The skills visible from a workspace, project skills first, with the keywords of the overlay
+  file (`overlay/1`) added. `opts[:home]` overrides the user's home, `opts[:keywords]` the
+  overlay file (by default `XEITO_SKILL_KEYWORDS`; `nil` for none).
+  """
   @spec discover(Path.t(), keyword()) :: [t()]
   def discover(cwd, opts \\ []) do
     home = Keyword.get_lazy(opts, :home, &user_home/0)
+    overlay = overlay(Keyword.get_lazy(opts, :keywords, fn -> System.get_env("XEITO_SKILL_KEYWORDS") end))
 
-    from_dirs([Path.join(cwd, ".agents/skills"), Path.join(home, ".agents/skills")])
+    [Path.join(cwd, ".agents/skills"), Path.join(home, ".agents/skills")]
+    |> from_dirs()
+    |> add_keywords(overlay)
+  end
+
+  @doc "Adds an overlay's keywords (`overlay/1`) to the skills it names."
+  @spec add_keywords([t()], %{String.t() => [String.t()]}) :: [t()]
+  def add_keywords(skills, overlay),
+    do: Enum.map(skills, &%{&1 | keywords: Enum.uniq(&1.keywords ++ Map.get(overlay, &1.name, []))})
+
+  @doc """
+  An overlay file's keywords by skill name, for skills whose files are not yours to edit: one
+  `name: word, word` line per skill; `#` starts a comment. No file, no keywords.
+  """
+  @spec overlay(Path.t() | nil) :: %{String.t() => [String.t()]}
+  def overlay(nil), do: %{}
+
+  def overlay(path) do
+    case File.read(path) do
+      {:ok, text} ->
+        for [_, name, words] <- Regex.scan(~r/^([^#:\s][^:]*):(.*)$/m, text),
+            into: %{},
+            do: {String.trim(name), split(words)}
+
+      {:error, _} ->
+        %{}
+    end
+  end
+
+  # A list of words, `[a, "b"]` or `a, b`.
+  defp split(text) do
+    text
+    |> String.trim()
+    |> String.trim_leading("[")
+    |> String.trim_trailing("]")
+    |> String.split(",")
+    |> Enum.map(&(&1 |> String.trim() |> unquote_value()))
+    |> Enum.reject(&(&1 == ""))
   end
 
   @doc "The directory of the user's skills."
@@ -72,7 +115,8 @@ defmodule Xeito.Skills do
           name: name,
           description: String.slice(desc, 0, @max_description),
           dir: Path.dirname(file),
-          model_invocation: meta["disable-model-invocation"] not in ["true", "yes"]
+          model_invocation: meta["disable-model-invocation"] not in ["true", "yes"],
+          keywords: keywords(meta["metadata"])
         }
       ]
     else
@@ -84,6 +128,9 @@ defmodule Xeito.Skills do
        when is_binary(name) and name != "" and is_binary(desc) and desc != "", do: {:ok, name, desc}
 
   defp name_and_description(_meta), do: :error
+
+  defp keywords(%{"keywords" => words}), do: split(words)
+  defp keywords(_metadata), do: []
 
   @doc "The instructions of `SKILL.md` without its frontmatter."
   @spec body(t()) :: String.t()
@@ -130,7 +177,7 @@ defmodule Xeito.Skills do
   end
 
   # A minimal YAML subset: `key: value` lines, optional quotes, and folded or literal blocks
-  # (`>` / `|`) for multi-line values. Nested maps (`metadata:`) are skipped.
+  # (`>` / `|`) for multi-line values. One nested level (`metadata:`) is read as a map.
   @doc false
   def frontmatter(text) do
     case String.split(text, ~r/^---\s*$/m, parts: 3) do
@@ -143,19 +190,33 @@ defmodule Xeito.Skills do
 
   defp parse_yaml([line | rest], acc) do
     case Regex.run(~r/^([A-Za-z][\w-]*):\s*(.*)$/, line) do
-      [_, key, value] when value in [">", "|", ">-", "|-"] ->
-        {block, rest} = Enum.split_while(rest, &(String.starts_with?(&1, " ") or &1 == ""))
-        joiner = if String.starts_with?(value, ">"), do: " ", else: "\n"
-        text = block |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == "")) |> Enum.join(joiner)
-        parse_yaml(rest, Map.put(acc, key, text))
-
       [_, key, value] ->
-        parse_yaml(rest, Map.put(acc, key, unquote_value(String.trim(value))))
+        {value, rest} = value(value, rest)
+        parse_yaml(rest, Map.put(acc, key, value))
 
       nil ->
         parse_yaml(rest, acc)
     end
   end
+
+  # A key's value, and the lines after it: a folded or literal block, a nested map, or the rest
+  # of the line.
+  defp value(style, rest) when style in [">", "|", ">-", "|-"] do
+    {block, rest} = Enum.split_while(rest, &(String.starts_with?(&1, " ") or &1 == ""))
+    joiner = if String.starts_with?(style, ">"), do: " ", else: "\n"
+    {block |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == "")) |> Enum.join(joiner), rest}
+  end
+
+  defp value("", rest) do
+    {nested, rest} = Enum.split_while(rest, &String.starts_with?(&1, " "))
+    {nested(nested), rest}
+  end
+
+  defp value(text, rest), do: {unquote_value(String.trim(text)), rest}
+
+  # The indented `key: value` lines under a key without a value: its map (one level only).
+  defp nested([]), do: ""
+  defp nested(lines), do: lines |> Enum.map(&String.trim_leading/1) |> parse_yaml(%{})
 
   defp unquote_value(<<q, _::binary>> = v) when q in [?", ?'] and byte_size(v) >= 2,
     do: binary_part(v, 1, byte_size(v) - 2)

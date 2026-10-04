@@ -40,6 +40,27 @@ defmodule Mix.Tasks.Xeito.Skills.BenchTest do
     assert output() =~ "1 skills, 1 cases: 1 need a skill, 0 need none\ntop 1: 1/1 (100%)"
   end
 
+  test "--keywords adds an overlay file's keywords to the library" do
+    root = Path.join(System.tmp_dir!(), "xeito-bench-task-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf(root) end)
+    File.mkdir_p!(Path.join(root, "skills/youtube-transcript"))
+
+    File.write!(
+      Path.join(root, "skills/youtube-transcript/SKILL.md"),
+      "---\nname: youtube-transcript\ndescription: Fetch transcripts from YouTube videos.\n---\n"
+    )
+
+    set = Path.join(root, "set.jsonl")
+    File.write!(set, ~s({"request": "what does the speaker say?", "skill": "youtube-transcript"}\n))
+    File.write!(Path.join(root, "keywords.txt"), "youtube-transcript: speaker\n")
+
+    Bench.run([set, "--skills", Path.join(root, "skills")])
+    assert output() =~ "top 1: 0/1 (0%)"
+
+    Bench.run([set, "--skills", Path.join(root, "skills"), "--keywords", Path.join(root, "keywords.txt")])
+    assert output() =~ "top 1: 1/1 (100%)"
+  end
+
   test "a set without --skills runs against the user's skills" do
     set = Path.join(System.tmp_dir!(), "xeito-bench-task-#{System.unique_integer([:positive])}.jsonl")
     on_exit(fn -> File.rm(set) end)

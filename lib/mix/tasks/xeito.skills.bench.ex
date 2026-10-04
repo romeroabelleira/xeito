@@ -4,10 +4,12 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
   Runs a benchmark set against a skill library and reports how often the chat turn's shortlist
   holds the skill a request needs (`Xeito.Skills.Bench`, P4f step 1).
 
-      mix xeito.skills.bench [SET] [--skills DIR]...
+      mix xeito.skills.bench [SET] [--skills DIR]... [--keywords FILE]
 
   Without a set, the shipped sample set runs against the sample library. With a set, the library
-  is the user's (`~/.agents/skills`) unless `--skills` names one or more directories.
+  is the user's (`~/.agents/skills`) unless `--skills` names one or more directories, with the
+  keywords of the overlay file named by `--keywords` or else `XEITO_SKILL_KEYWORDS`
+  (`Xeito.Skills.overlay/1`).
   """
 
   use Mix.Task
@@ -15,7 +17,7 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
   alias Xeito.Skills
   alias Xeito.Skills.Bench
 
-  @switches [skills: :keep]
+  @switches [skills: :keep, keywords: :string]
 
   @impl true
   def run(args) do
@@ -25,7 +27,8 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
     if !File.exists?(set), do: Mix.raise("no benchmark set at #{set}")
 
     dirs = with [] <- Keyword.get_values(opts, :skills), do: default_dirs
-    report = Bench.run(Skills.from_dirs(dirs), Bench.read_set(set))
+    overlay = Skills.overlay(opts[:keywords] || System.get_env("XEITO_SKILL_KEYWORDS"))
+    report = dirs |> Skills.from_dirs() |> Skills.add_keywords(overlay) |> Bench.run(Bench.read_set(set))
     Mix.shell().info(String.trim_trailing(Bench.format(report)))
   end
 
