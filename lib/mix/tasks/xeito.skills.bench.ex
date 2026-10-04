@@ -9,13 +9,14 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
   Without a set, the shipped sample set runs against the sample library. With a set, the library
   is the user's (`~/.agents/skills`) unless `--skills` names one or more directories, with the
   keywords of the overlay file named by `--keywords` or else `XEITO_SKILL_KEYWORDS`
-  (`Xeito.Skills.overlay/1`).
+  (`Xeito.Skills.overlay/1`), and the cached example requests (`mix xeito.skills.examples`).
   """
 
   use Mix.Task
 
   alias Xeito.Skills
   alias Xeito.Skills.Bench
+  alias Xeito.Skills.Examples
 
   @switches [skills: :keep, keywords: :string]
 
@@ -28,7 +29,8 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
 
     dirs = with [] <- Keyword.get_values(opts, :skills), do: default_dirs
     overlay = Skills.overlay(opts[:keywords] || System.get_env("XEITO_SKILL_KEYWORDS"))
-    report = dirs |> Skills.from_dirs() |> Skills.add_keywords(overlay) |> Bench.run(Bench.read_set(set))
+    skills = dirs |> Skills.from_dirs() |> Skills.add_keywords(overlay) |> Examples.attach()
+    report = Bench.run(skills, Bench.read_set(set))
     Mix.shell().info(String.trim_trailing(Bench.format(report)))
   end
 

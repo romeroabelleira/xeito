@@ -7,4 +7,7 @@ config :xeito,
   check_log_roundtrip: config_env() == :test,
   # Where user skills are read from (`Xeito.Skills`, nil: the user's home). Tests read none, so
   # the skills installed on the machine running the suite cannot change what a test sees.
-  skills_home: if(config_env() == :test, do: "/nonexistent/xeito-test-home")
+  skills_home: if(config_env() == :test, do: "/nonexistent/xeito-test-home"),
+  # The home whose `.xeito/` holds the user's own state: skill examples and their log
+  # (`Xeito.Skills.Examples`; nil: the user's home). Tests use a scratch one.
+  state_home: if(config_env() == :test, do: Path.join(System.tmp_dir!(), "xeito-test-state"))

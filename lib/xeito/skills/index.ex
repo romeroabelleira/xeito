@@ -5,17 +5,18 @@ defmodule Xeito.Skills.Index do
   couple of milliseconds for about fifty skills, so an edited or new skill counts at once.
 
   Keywords (`Xeito.Skills`: a skill's `metadata.keywords`, or the user's overlay file) are words
-  the skill's author or user chose to find it by.
+  the skill's author or user chose to find it by. Examples are requests the local model wrote
+  for the skill (`Xeito.Skills.Examples`): they bring the words people use for it.
 
   Words are normalised the same way in the index and in the request: lower case, British
   endings in their American form (`summarise` and `summarize` meet), diacritics removed, and
   the Porter stemmer joins a word's other forms (`testing`, `tests`, `test`). A word of a skill's
-  name weighs most, then a keyword, then a word of its description; the skill bodies are not indexed (measured:
-  no better, and slower).
+  name weighs most, then a keyword, an example's word, and a word of its description; the skill
+  bodies are not indexed (measured: no better, and slower).
 
-  A turn's shortlist (the default) keeps a skill that shares two of the request's words, or one
-  of its name's or keywords, so most requests that need no skill shortlist nothing and decide without a
-  model call. `any: true` keeps every match and, when no word matches, looks for the request's
+  A turn's shortlist (the default) keeps a skill that shares one of the request's words in its
+  name or keywords, two in its name, keywords and description, or three in its examples, so
+  most requests that need no skill shortlist nothing and decide without a model call. `any: true` keeps every match and, when no word matches, looks for the request's
   fragments inside names and descriptions (`youtub`): for finding skills by hand.
   """
 
@@ -69,7 +70,7 @@ defmodule Xeito.Skills.Index do
   end
 
   @tables [
-    "CREATE VIRTUAL TABLE skill USING fts5(name, keywords, description, tokenize = 'porter unicode61 remove_diacritics 2')",
+    "CREATE VIRTUAL TABLE skill USING fts5(name, keywords, examples, description, tokenize = 'porter unicode61 remove_diacritics 2')",
     "CREATE VIRTUAL TABLE fragment USING fts5(text, tokenize = 'trigram remove_diacritics 1')"
   ]
 
@@ -86,17 +87,35 @@ defmodule Xeito.Skills.Index do
   end
 
   defp insert(db, {skill, rowid}) do
-    fields = Enum.map([skill.name, Enum.join(Map.get(skill, :keywords, []), ", "), skill.description], &normalize/1)
-    Sql.exec(db, "INSERT INTO skill (rowid, name, keywords, description) VALUES (?1, ?2, ?3, ?4)", [rowid | fields])
-    Sql.exec(db, "INSERT INTO fragment (rowid, text) VALUES (?1, ?2)", [rowid, Enum.join(fields, " ")])
+    [name, keywords, examples, description] =
+      Enum.map([skill.name, list(skill, :keywords), list(skill, :examples), skill.description], &normalize/1)
+
+    Sql.exec(db, "INSERT INTO skill (rowid, name, keywords, examples, description) VALUES (?1, ?2, ?3, ?4, ?5)", [
+      rowid,
+      name,
+      keywords,
+      examples,
+      description
+    ])
+
+    Sql.exec(db, "INSERT INTO fragment (rowid, text) VALUES (?1, ?2)", [
+      rowid,
+      Enum.join([name, keywords, description], " ")
+    ])
   end
+
+  defp list(skill, key), do: skill |> Map.get(key, []) |> Enum.join("\n")
 
   # Words hold letters and digits only, so quoting each keeps the index's query syntax out.
   defp rowids(db, words, true), do: with_fragments(db, ranked(db, words), words)
-  defp rowids(db, words, _shortlist), do: Enum.filter(ranked(db, words), &fits?(&1, hits(db, words), names(db, words)))
+
+  defp rowids(db, words, _shortlist) do
+    counts = {hits(db, words, "{name keywords description}"), hits(db, words, "examples"), names(db, words)}
+    Enum.filter(ranked(db, words), &fits?(&1, counts))
+  end
 
   defp ranked(db, words),
-    do: rows(db, "SELECT rowid FROM skill WHERE skill MATCH ?1 ORDER BY bm25(skill, 10.0, 5.0, 3.0)", any_of(words))
+    do: rows(db, "SELECT rowid FROM skill WHERE skill MATCH ?1 ORDER BY bm25(skill, 10.0, 5.0, 4.0, 3.0)", any_of(words))
 
   defp with_fragments(db, [], words) do
     case Enum.filter(words, &(String.length(&1) >= 3)) do
@@ -107,12 +126,18 @@ defmodule Xeito.Skills.Index do
 
   defp with_fragments(_db, ranked, _words), do: ranked
 
-  defp fits?(rowid, hits, names), do: Map.get(hits, rowid, 0) >= 2 or MapSet.member?(names, rowid)
+  # A word of the name or keywords, two of the name, keywords and description, or three of the
+  # examples: generated sentences hold everyday words ("tests", "error"), so one or two of them
+  # would shortlist skills for requests that need none.
+  defp fits?(rowid, {described, examples, names}),
+    do: MapSet.member?(names, rowid) or Map.get(described, rowid, 0) >= 2 or Map.get(examples, rowid, 0) >= 3
 
-  # How many of the words each skill holds.
-  defp hits(db, words),
+  # How many of the words each skill holds in `columns`.
+  defp hits(db, words, columns),
     do:
-      words |> Enum.flat_map(&rows(db, "SELECT rowid FROM skill WHERE skill MATCH ?1", ~s("#{&1}"))) |> Enum.frequencies()
+      words
+      |> Enum.flat_map(&rows(db, "SELECT rowid FROM skill WHERE skill MATCH ?1", ~s(#{columns} : "#{&1}")))
+      |> Enum.frequencies()
 
   # The skills whose name or keywords hold one of the words.
   defp names(db, words),

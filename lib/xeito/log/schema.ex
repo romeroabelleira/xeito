@@ -30,7 +30,10 @@ defmodule Xeito.Log.Schema do
     # Lines typed while a turn ran: queued, then sent or dropped (`Xeito.Session`).
     "prompt_queued" => ~w(text),
     "prompt_entered" => ~w(text),
-    "prompt_dequeued" => ~w(text outcome)
+    "prompt_dequeued" => ~w(text outcome),
+    # Example requests the local model wrote for a skill (`Xeito.Skills.Examples`), in the user's
+    # own log (`~/.xeito`), stream `skills/examples`.
+    "skill_examples_generated" => ~w(skill skill_hash model digest count tokens_in tokens_out latency_ms)
   }
 
   @object_types %{

@@ -25,9 +25,11 @@ defmodule Xeito.Skills do
   so the `Risk` decision still applies.
   """
 
+  alias Xeito.Skills.Examples
   alias Xeito.Skills.Index
 
   @type t :: %{
+          optional(:examples) => [String.t()],
           name: String.t(),
           description: String.t(),
           dir: Path.t(),
@@ -43,7 +45,7 @@ defmodule Xeito.Skills do
 
   @doc """
   The skills visible from a workspace, project skills first, with the keywords of the overlay
-  file (`overlay/1`) added. `opts[:home]` overrides the user's home, `opts[:keywords]` the
+  file (`overlay/1`) added and their cached example requests (`Xeito.Skills.Examples`). `opts[:home]` overrides the user's home, `opts[:keywords]` the
   overlay file (by default `XEITO_SKILL_KEYWORDS`; `nil` for none).
   """
   @spec discover(Path.t(), keyword()) :: [t()]
@@ -54,6 +56,7 @@ defmodule Xeito.Skills do
     [Path.join(cwd, ".agents/skills"), Path.join(home, ".agents/skills")]
     |> from_dirs()
     |> add_keywords(overlay)
+    |> Examples.attach()
   end
 
   @doc "Adds an overlay's keywords (`overlay/1`) to the skills it names."

@@ -50,6 +50,7 @@ defmodule Xeito.Session do
   alias Xeito.Session.Git
   alias Xeito.Session.Router
   alias Xeito.Skills
+  alias Xeito.Skills.Examples.Worker
   alias Xeito.Source.RepoMap
   alias Xeito.Tiers
   alias Xeito.Undo
@@ -726,6 +727,9 @@ defmodule Xeito.Session do
   # Skills are discovered on every turn, so a new or edited SKILL.md applies at once.
   defp input_for(Chat, text, s) do
     skills = Skills.discover(s.cwd)
+    # Their example requests are written in the background, for later turns (the daemon's worker;
+    # outside the daemon there is none, and the cast goes nowhere).
+    Worker.wanted(skills)
     # The workspace's skills are listed; the user's are shortlisted for the turn's skill decision.
     %{listed: listed, candidates: candidates} = Skills.for_turn(skills, s.cwd, text)
 

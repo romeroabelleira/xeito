@@ -12,7 +12,14 @@
   ],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
   # Which skills a turn may choose from, and so whether it needs a model call to decide.
-  "lib/xeito/skills/index.ex" => [tests: ["test/xeito/skills_index_test.exs"], section: "matching"],
+  "lib/xeito/skills/index.ex" => [
+    tests: [
+      "test/xeito/skills_index_test.exs",
+      "test/xeito/skill_keywords_test.exs",
+      "test/xeito/skill_examples_test.exs"
+    ],
+    section: "matching"
+  ],
   "lib/xeito/undo.ex" => ["test/xeito/undo_test.exs", "test/xeito/undo_env_test.exs"],
   # Slow (every test runs git) and rarely changed: mutated only when they or their tests change.
   "lib/xeito/undo/store.ex" => [

@@ -1,7 +1,9 @@
 defmodule Xeito.Tiers.Queue do
   @moduledoc """
   Per-backend capacity limits. Each tier admits at most `capacity` concurrent calls; further
-  callers wait in FIFO order.
+  callers wait in FIFO order. A `:background` call (generating skill examples, P4f) waits until
+  no other call waits for the tier, so it delays an interactive call by at most the one
+  background call already running.
 
   Bench 1 measured why this matters: `laya-serve` serialises requests (~16 decisions/s whatever
   the concurrency), and a GPU generation competes with itself. Capacities come from `config :xeito, :tier_capacity` (defaults below).
@@ -14,15 +16,18 @@ defmodule Xeito.Tiers.Queue do
   @doc false
   def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
 
-  @doc "Runs `fun` once a slot for `tier` is free. Returns `fun`'s result."
-  @spec run(atom(), (-> result), timeout()) :: result when result: term()
-  def run(tier, fun, timeout \\ :infinity) do
+  @doc """
+  Runs `fun` once a slot for `tier` is free, and returns its result. A `:background` call
+  takes a free slot only when no `:normal` call waits for it.
+  """
+  @spec run(atom(), (-> result), timeout(), :normal | :background) :: result when result: term()
+  def run(tier, fun, timeout \\ :infinity, priority \\ :normal) do
     case capacity(tier) do
       :infinity ->
         fun.()
 
       _ ->
-        :ok = GenServer.call(__MODULE__, {:acquire, tier}, timeout)
+        :ok = GenServer.call(__MODULE__, {:acquire, tier, priority}, timeout)
 
         try do
           fun.()
@@ -47,19 +52,19 @@ defmodule Xeito.Tiers.Queue do
   def init(:ok), do: {:ok, %{in_use: %{}, waiting: %{}, holders: %{}}}
 
   @impl true
-  def handle_call({:acquire, tier}, {pid, _} = from, state) do
+  def handle_call({:acquire, tier, priority}, {pid, _} = from, state) do
     in_use = Map.get(state.in_use, tier, 0)
 
     if in_use < capacity(tier) do
       {:reply, :ok, grant(state, tier, pid)}
     else
-      waiting = Map.update(state.waiting, tier, :queue.from_list([from]), &:queue.in(from, &1))
+      waiting = Map.update(state.waiting, {tier, priority}, :queue.from_list([from]), &:queue.in(from, &1))
       {:noreply, %{state | waiting: waiting}}
     end
   end
 
   def handle_call({:status, tier}, _from, state) do
-    waiting = state.waiting |> Map.get(tier, :queue.new()) |> :queue.len()
+    waiting = Enum.sum(for priority <- [:normal, :background], do: :queue.len(waiters(state, tier, priority)))
     {:reply, {Map.get(state.in_use, tier, 0), waiting}, state}
   end
 
@@ -95,17 +100,26 @@ defmodule Xeito.Tiers.Queue do
     end
   end
 
-  # A slot was freed: hand it to the next waiter, or decrement.
+  # A slot was freed: hand it to the next waiter, a normal one first, or decrement.
   defp next(state, tier) do
     state = %{state | in_use: Map.update(state.in_use, tier, 0, &max(&1 - 1, 0))}
 
-    case :queue.out(Map.get(state.waiting, tier, :queue.new())) do
-      {{:value, {pid, _} = from}, rest} ->
+    case Enum.find_value([:normal, :background], &waiter(state, tier, &1)) do
+      {{pid, _} = from, key, rest} ->
         GenServer.reply(from, :ok)
-        grant(%{state | waiting: Map.put(state.waiting, tier, rest)}, tier, pid)
+        grant(%{state | waiting: Map.put(state.waiting, key, rest)}, tier, pid)
 
-      {:empty, _} ->
+      nil ->
         state
     end
   end
+
+  defp waiter(state, tier, priority) do
+    case :queue.out(waiters(state, tier, priority)) do
+      {{:value, from}, rest} -> {from, {tier, priority}, rest}
+      {:empty, _} -> nil
+    end
+  end
+
+  defp waiters(state, tier, priority), do: Map.get(state.waiting, {tier, priority}, :queue.new())
 end

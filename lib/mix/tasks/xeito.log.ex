@@ -262,10 +262,12 @@ defmodule Mix.Tasks.Xeito.Log do
   end
 
   # The runs' event streams. A session's own stream (its typed and queued prompts, undo steps)
-  # is not a run: nothing replays it, and its events are small plain terms.
+  # is not a run, nor is `skills/examples` (`Xeito.Skills.Examples`): nothing replays them, and
+  # their events are small plain terms.
   defp runs(db) do
     sql =
-      "SELECT DISTINCT run_id FROM xeito_term WHERE run_id NOT IN (SELECT ocel_id FROM object_session) ORDER BY run_id"
+      "SELECT DISTINCT run_id FROM xeito_term WHERE run_id NOT IN (SELECT ocel_id FROM object_session) " <>
+        "AND run_id <> 'skills/examples' ORDER BY run_id"
 
     for [run] <- Sql.select(db, sql), do: run
   end

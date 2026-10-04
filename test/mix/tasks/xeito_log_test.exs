@@ -58,6 +58,14 @@ defmodule Mix.Tasks.Xeito.LogTest do
     assert run(ws, ["verify"]) =~ "1 runs: 1 replay exactly, 0 skipped (machine changed since), 0 failed"
   end
 
+  test "verify leaves out the streams that are not runs, such as the written skill examples", %{ws: ws} do
+    attrs = %{skill: "s", count: 1}
+    event = Xeito.Log.Event.new("skill_examples_generated", {:skill_examples_generated, attrs}, attrs)
+    {:ok, _} = ws |> Xeito.Log.for_workspace() |> Xeito.Log.append("skills/examples", [event])
+
+    assert run(ws, ["verify"]) =~ "1 runs: 1 replay exactly, 0 skipped (machine changed since), 0 failed"
+  end
+
   test "verify fails on a run that does not replay", %{ws: ws} do
     {:ok, db} = Sqlite3.open(Path.join([ws, ".xeito", "log.sqlite"]))
 

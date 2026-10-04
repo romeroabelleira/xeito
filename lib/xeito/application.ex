@@ -28,8 +28,9 @@ defmodule Xeito.Application do
   end
 
   # The client API (Unix socket) runs in the daemon only: `mix xeito.daemon` or `config :xeito, api: true`.
+  # So does the writer of skill examples, so a mix task never writes them twice alongside it.
   defp api_children do
-    if Application.get_env(:xeito, :api, false), do: [Xeito.Api], else: []
+    if Application.get_env(:xeito, :api, false), do: [Xeito.Api, Xeito.Skills.Examples.Worker], else: []
   end
 
   # The default log is started unless disabled (tests start their own logs).
