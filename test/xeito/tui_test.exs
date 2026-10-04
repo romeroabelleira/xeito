@@ -179,10 +179,65 @@ defmodule Xeito.TuiTest do
   defp submit(state, text), do: state |> typing(text) |> then(&Tui.update(:submit, &1))
   defp value(state), do: TextInput.get_value(state.input)
 
+  describe "banner/1: the greeting above the session line" do
+    test "keys, example prompts, the workspace's instructions and skills" do
+      lines = Tui.banner("/w")
+
+      assert lines == [
+               "Enter sends · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
+               "try: fix the failing test · run the checks · commit these changes · explain this code",
+               "machines: chat · check · commit · fix_failing_test · run_tests",
+               "no AGENTS.md in /w",
+               "no skills in /w",
+               ""
+             ]
+    end
+
+    @tag :tmp_dir
+    test "the first lines of AGENTS.md, the workspace's skills by name, and how many of yours", %{tmp_dir: dir} do
+      File.write!(Path.join(dir, "AGENTS.md"), "# Notes\n\nline two\n\nline three\nline four\n")
+
+      for {root, name} <- [
+            {".agents/skills", "zz-tui-skill"},
+            {"home/.agents/skills", "mine-a"},
+            {"home/.agents/skills", "mine-b"}
+          ] do
+        skill = Path.join([dir, root, name])
+        File.mkdir_p!(skill)
+        File.write!(Path.join(skill, "SKILL.md"), "---\nname: #{name}\ndescription: a long description\n---\nbody\n")
+      end
+
+      assert Enum.drop(Tui.banner(dir, home: Path.join(dir, "home")), 3) == [
+               "AGENTS.md: # Notes",
+               "  line two",
+               "  line three",
+               "  … (#{Path.join(dir, "AGENTS.md")})",
+               "skills here: /skill:zz-tui-skill · and 2 of yours (/skill: then Tab)",
+               ""
+             ]
+    end
+
+    @tag :tmp_dir
+    test "only your own skills, or no directory at all", %{tmp_dir: dir} do
+      skill = Path.join(dir, "home/.agents/skills/mine")
+      File.mkdir_p!(skill)
+      File.write!(Path.join(skill, "SKILL.md"), "---\nname: mine\ndescription: d\n---\n")
+
+      File.write!(Path.join(dir, "AGENTS.md"), "\n  \n")
+      lines = Tui.banner(dir, home: Path.join(dir, "home"))
+      assert "no skills here · 1 of yours (/skill: then Tab)" in lines
+      assert "AGENTS.md is empty (#{Path.join(dir, "AGENTS.md")})" in lines
+      assert Enum.drop(Tui.banner(nil), 3) == ["no AGENTS.md", "no skills", ""]
+    end
+  end
+
   describe "new/1" do
     test "an idle state with a greeting after the earlier turns, the bar from the preferences" do
       state = tui(earlier: ["> hi", "hello"])
-      assert ["> hi", "hello", "session ses-t · /help" <> _] = state.lines
+      assert ["> hi", "hello" | banner] = state.lines
+      [header | _] = Enum.reverse(banner)
+      assert banner == Tui.banner("/w") ++ [header]
+      assert header =~ "session ses-t · /help"
       assert %{leaf: "idle", bar: true, width: 80, height: 24, scroll: 0, hidden: []} = state
       refute tui(status_bar: false).bar
     end
@@ -765,15 +820,20 @@ defmodule Xeito.TuiTest do
 
     test "a new session: started in the daemon, in the workspace it reports" do
       state = init_with(socket: daemon([]), cwd: "/given")
-      assert %{session: "ses-new", cwd: "/from/daemon", lines: ["session ses-new · /help" <> _]} = state
+      assert %{session: "ses-new", cwd: "/from/daemon", lines: lines} = state
+      [header | banner] = Enum.reverse(lines)
+      assert Enum.reverse(banner) == Tui.banner("/from/daemon")
+      assert header =~ "session ses-new · /help"
     end
 
     test "a directory's last updated session is continued, with its earlier turns" do
       turns = [%{prompt: "fix the test", answer: "Fixed."}]
       state = init_with(socket: daemon(turns, true), cwd: "/w")
 
-      assert %{session: "ses-last", lines: ["> fix the test", "Fixed.", "continuing session ses-last · /sessions" <> _]} =
-               state
+      assert %{session: "ses-last", lines: ["> fix the test", "Fixed." | banner]} = state
+      [header | _] = Enum.reverse(banner)
+      assert banner == Tui.banner("/w") ++ [header]
+      assert header =~ "continuing session ses-last · /sessions"
     end
 
     test "Up and Down start with the prompts typed in this directory before" do
@@ -798,13 +858,19 @@ defmodule Xeito.TuiTest do
                "All green.",
                "",
                "- 12 tests",
-               "- 0 failures",
-               "session ses-old" <> _
+               "- 0 failures" | banner
              ] = state.lines
+
+      [header | _] = Enum.reverse(banner)
+      assert banner == Tui.banner("/w") ++ [header]
+      assert header =~ "session ses-old"
     end
 
     test "attaching without a history shows none; a session that cannot be opened is an error" do
-      assert ["session ses-old" <> _] = init_with(socket: daemon(:broken), cwd: "/w", session: "ses-old").lines
+      state = init_with(socket: daemon(:broken), cwd: "/w", session: "ses-old")
+      [header | _] = Enum.reverse(state.lines)
+      assert state.lines == Tui.banner("/w") ++ [header]
+      assert header =~ "session ses-old"
 
       assert_raise RuntimeError, "could not open a session: no such session", fn ->
         init_with(socket: daemon([]), session: "ses-gone")

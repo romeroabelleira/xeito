@@ -23,7 +23,9 @@ defmodule Xeito.Tui do
   daemon, or rebuilt from the log) with its earlier turns (each prompt, the first line of each
   answer, the last answer in full), or starts one if there is none;
   `--session ID` opens a given one. `/sessions` lists the directory's sessions, last updated
-  first; `/sessions N` switches to one, `/sessions new` starts another. Up / Down start out
+  first; `/sessions N` switches to one, `/sessions new` starts another. Above the session line,
+  a banner shows the keys, example prompts, the machines, the first lines of the workspace's
+  `AGENTS.md`, and its skills by name (the user's own are only counted). Up / Down start out
   with the prompts typed in the directory before, from every session there.
 
   The status line starts with a marker: `○` idle, a spinner while the session works, `◆` (on
@@ -58,6 +60,7 @@ defmodule Xeito.Tui do
   alias Xeito.Client.Config
   alias Xeito.Client.Render
   alias Xeito.Client.StatusBar
+  alias Xeito.Session.Router
   alias Xeito.Tui.Sessions
 
   @max_lines 5_000
@@ -119,7 +122,9 @@ defmodule Xeito.Tui do
       client: Keyword.fetch!(opts, :client),
       session: session,
       cwd: opts[:cwd],
-      lines: Keyword.get(opts, :earlier, []) ++ [header(session, Keyword.get(opts, :continued, false))],
+      lines:
+        Keyword.get(opts, :earlier, []) ++
+          banner(opts[:cwd]) ++ [header(session, Keyword.get(opts, :continued, false))],
       partial: "",
       input: TextInput.set_focused(input, true),
       width: cols,
@@ -168,6 +173,52 @@ defmodule Xeito.Tui do
   @doc false
   def header(session, true), do: "continuing session #{session} · /sessions · /help · Esc halts · /quit"
   def header(session, false), do: "session #{session} · /help · Esc halts · /quit"
+
+  @doc false
+  # The greeting above the session line: the keys, example prompts, the machines, the first lines
+  # of the workspace's AGENTS.md, and its skills by name (the user's are only counted: P4e keeps
+  # them out of the model's prompt too). `opts[:home]` is where the user's skills are (tests).
+  def banner(cwd, opts \\ []) do
+    [
+      "Enter sends · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
+      "try: fix the failing test · run the checks · commit these changes · explain this code",
+      "machines: #{Enum.join(Enum.sort(Map.keys(Router.machines())), " · ")}"
+    ] ++ agents_lines(cwd) ++ skills_lines(cwd, opts) ++ [""]
+  end
+
+  defp agents_lines(nil), do: ["no AGENTS.md"]
+
+  defp agents_lines(cwd) do
+    path = Path.join(cwd, "AGENTS.md")
+
+    case File.read(path) do
+      {:ok, text} -> text |> String.split("\n") |> Enum.reject(&(String.trim(&1) == "")) |> agents_excerpt(path)
+      {:error, _} -> ["no AGENTS.md in #{cwd}"]
+    end
+  end
+
+  # Its first three lines that are not blank, and where the rest is.
+  defp agents_excerpt([], path), do: ["AGENTS.md is empty (#{path})"]
+
+  defp agents_excerpt([first | rest], path) do
+    more = if length(rest) > 2, do: ["  … (#{path})"], else: []
+    ["AGENTS.md: " <> first] ++ Enum.map(Enum.take(rest, 2), &"  #{&1}") ++ more
+  end
+
+  defp skills_lines(nil, _opts), do: ["no skills"]
+
+  defp skills_lines(cwd, opts) do
+    %{listed: listed} = cwd |> Xeito.Skills.discover(opts) |> Xeito.Skills.for_turn(cwd, "")
+    yours = length(Xeito.Skills.discover(cwd, opts)) - length(listed)
+    [skills_line(Enum.map(listed, &"/skill:#{&1.name}"), yours, cwd)]
+  end
+
+  defp skills_line([], 0, cwd), do: "no skills in #{cwd}"
+  defp skills_line([], yours, _cwd), do: "no skills here · #{yours} of yours (/skill: then Tab)"
+  defp skills_line(here, 0, _cwd), do: "skills here: " <> Enum.join(here, " · ")
+
+  defp skills_line(here, yours, _cwd),
+    do: "skills here: #{Enum.join(here, " · ")} · and #{yours} of yours (/skill: then Tab)"
 
   defp open(client, opts) do
     # Without a session named, the directory's last updated one, or a new one.
@@ -557,7 +608,7 @@ defmodule Xeito.Tui do
 
   # The completions of a line, in order: a command, a machine after `/machine `, a skill of the
   # workspace after `/skill:`. Case is ignored.
-  defp completions("/machine " <> part, _cwd), do: matching("/machine ", Map.keys(Xeito.Session.Router.machines()), part)
+  defp completions("/machine " <> part, _cwd), do: matching("/machine ", Map.keys(Router.machines()), part)
   defp completions("/skill:" <> part, cwd), do: matching("/skill:", Enum.map(Xeito.Skills.discover(cwd), & &1.name), part)
   defp completions("/" <> part, _cwd), do: matching("/", commands(), part)
   defp completions(_line, _cwd), do: []
