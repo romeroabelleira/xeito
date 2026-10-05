@@ -112,6 +112,8 @@ stateDiagram-v2
 
 A turn that edited files ends only after a quick check has run (`verifying`: does it still build, e.g. format and compile warnings, in seconds; the full suite is the `check` machine's job), so the model's "done" is checked against the code that actually runs. `write` and `edit` refuse dependencies and build output (`deps/`, `_build/`, `node_modules/`) as well as `.git/` and `.xeito/`. Such edits never take effect, and a dogfood session lost two turns to one.
 
+**Other projects.** The daemon serves any directory (`mix xeito.tui --cwd DIR`). How a project is tested and checked comes from its own task runner first (`Xeito.Session.TaskRunner`): a `justfile` recipe or a `mise.toml` task named `test`, `check` or `ci`, and `check-quick` (`just test`, `mise run check-quick`), when that runner is installed. Only without one does Xeito infer the commands from build files (`mix.exs`, `package.json`, `Cargo.toml`, …) or a Makefile. Commands also run with the project's own tool versions: the daemon starts in its own directory, so a command would otherwise get the daemon's Erlang, Ruby or Node. When mise is installed and the workspace or a directory above it has mise configuration, every command runs as `mise exec -- sh -c …` (`Xeito.Effects.MiseEnv`); a `mise.toml` mise does not trust yet is reported with `mise trust` as the fix.
+
 Process mining of free chat runs is how **new skills and machines are discovered**. Frequent requests in the free-chat log are candidates for a skill, and those whose runs follow the same steps for a dedicated machine. Rule 6 in [01](01-principles.md) and the promotion process in [05](05-event-log-and-process-mining.md#promotion-from-free-chat-to-skills-and-machines) put this into practice.
 
 ## Tools (pi parity)

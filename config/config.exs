@@ -10,4 +10,7 @@ config :xeito,
   skills_home: if(config_env() == :test, do: "/nonexistent/xeito-test-home"),
   # The home whose `.xeito/` holds the user's own state: skill examples and their log
   # (`Xeito.Skills.Examples`; nil: the user's home). Tests use a scratch one.
-  state_home: if(config_env() == :test, do: Path.join(System.tmp_dir!(), "xeito-test-state"))
+  state_home: if(config_env() == :test, do: Path.join(System.tmp_dir!(), "xeito-test-state")),
+  # Executables taken as installed or not (`Xeito.Executables`; unset: the PATH decides). Tests
+  # take the task runners as absent unless they set them.
+  executables: if(config_env() == :test, do: %{"just" => false, "mise" => false}, else: %{})

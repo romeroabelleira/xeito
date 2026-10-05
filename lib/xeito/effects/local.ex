@@ -28,6 +28,7 @@ defmodule Xeito.Effects.Local do
   alias Xeito.Decider
   alias Xeito.Decision
   alias Xeito.Effect
+  alias Xeito.Effects.MiseEnv
   alias Xeito.Escalation
   alias Xeito.Log
   alias Xeito.Policy
@@ -253,12 +254,13 @@ defmodule Xeito.Effects.Local do
     end
   end
 
+  # With the workspace's own tool versions, when it pins them with mise (`Xeito.Effects.MiseEnv`).
   defp run_bash(cwd, args, opts) do
-    task =
-      Task.async(fn -> System.cmd("sh", ["-c", args.cmd], cd: cwd, stderr_to_stdout: true) end)
+    {exe, argv} = MiseEnv.command(cwd, args.cmd)
+    task = Task.async(fn -> System.cmd(exe, argv, cd: cwd, stderr_to_stdout: true) end)
 
     case Task.yield(task, args.timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {output, status}} -> %{exit_status: status, output: truncate(output, opts)}
+      {:ok, {output, status}} -> %{exit_status: status, output: truncate(MiseEnv.explain(output, status, cwd), opts)}
       nil -> %{exit_status: 124, output: "timed out after #{args.timeout} ms"}
     end
   end

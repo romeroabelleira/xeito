@@ -20,6 +20,7 @@ defmodule Xeito.Session.Router do
   alias Xeito.Machines.Commit
   alias Xeito.Machines.FixFailingTest
   alias Xeito.Machines.RunTests
+  alias Xeito.Session.TaskRunner
 
   # The registry: name, module, what it does, and how requests reach it (besides /machine).
   @registry [
@@ -125,12 +126,15 @@ defmodule Xeito.Session.Router do
   end
 
   @doc """
-  The check command for a workspace: a `ci` alias in `mix.exs` (`mix ci`), a `check` target in
+  The check command for a workspace: a `check` or `ci` task of its task runner
+  (`Xeito.Session.TaskRunner`: `just`, mise), a `ci` alias in `mix.exs` (`mix ci`), a `check` target in
   the Makefile (`make check`), else formatting, warnings and tests for Mix projects, `npm run
   lint && npm test` when `package.json` has a lint script, and the test command otherwise.
   """
   @spec check_command(Path.t()) :: String.t()
-  def check_command(cwd) do
+  def check_command(cwd), do: TaskRunner.command(cwd, ~w(check ci)) || inferred_check(cwd)
+
+  defp inferred_check(cwd) do
     mix = read(cwd, "mix.exs")
     make = read(cwd, "Makefile")
     npm = read(cwd, "package.json")
@@ -147,13 +151,16 @@ defmodule Xeito.Session.Router do
   @doc """
   The quick check for a chat turn that edited files: whether the code still builds, in a few
   seconds, without running the tests (those are what `check_command/1` and the `check` machine
-  are for). A `check.quick` alias in `mix.exs` or a `check-quick` Makefile target wins; else
+  are for). A `check-quick` task of its task runner (`Xeito.Session.TaskRunner`), a
+  `check.quick` alias in `mix.exs` or a `check-quick` Makefile target wins; else
   format and warnings for Mix, `cargo check`, `go build ./...`, `tsc --noEmit` for TypeScript,
   a lint script for other `package.json` projects, and `ruff check` when a Python project
   configures ruff. `nil` when nothing fits: the turn is then not checked.
   """
   @spec quick_check_command(Path.t()) :: String.t() | nil
-  def quick_check_command(cwd) do
+  def quick_check_command(cwd), do: TaskRunner.command(cwd, ["check-quick"]) || inferred_quick_check(cwd)
+
+  defp inferred_quick_check(cwd) do
     Enum.find_value(quick_checks(), fn {file, pattern, cmd} ->
       text = read(cwd, file)
       if File.exists?(Path.join(cwd, file)) and text =~ pattern, do: cmd
@@ -182,11 +189,14 @@ defmodule Xeito.Session.Router do
   end
 
   @doc """
-  The test command for a workspace, from its build files: `mix test`, `npm test`, `pytest`,
+  The test command for a workspace: a `test` task of its task runner (`Xeito.Session.TaskRunner`:
+  `just test`, `mise run test`), else from its build files: `mix test`, `npm test`, `pytest`,
   `cargo test`, `go test ./...`, else `make test`.
   """
   @spec test_command(Path.t()) :: String.t()
-  def test_command(cwd) do
+  def test_command(cwd), do: TaskRunner.command(cwd, ["test"]) || inferred_test(cwd)
+
+  defp inferred_test(cwd) do
     Enum.find_value(
       [
         {"mix.exs", "mix test"},
