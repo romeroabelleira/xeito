@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-09-30 (P0–P3b done; P4 built, dogfooding; P4b in progress) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-10-08 (P0–P3b done; P4 built, dogfooding; P4b–P4f built; P4g planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -26,6 +26,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4c · Summarising dropped turns (planned) | a summarising step replaces dropped turns with a logged summary | — | after P4b | [07](architecture/07-harness-frontend.md#context-and-configuration) |
 | P4d · Tier names | tiers named by kind and place (`local_decision`, `local`, `remote_decision`, `remote`, `remote_frontier`); backends separate; remote through OpenRouter | — | steps 1–2 done 2026-10-03; step 3 deferred | [P4d](#p4d--tier-names) |
 | P4e · Skills per turn | the chat prompt lists the project's skills only; a typed decision picks at most one of the user's skills per turn | — | built 2026-10-04 | [P4e](#p4e--skills-chosen-per-turn) |
+| P4g · One-shot mode (planned) | `mix xeito.run`: a skill or machine on stdin, free prose out, streaming and pipes; per-skill tier, variables, named contexts, strategies as machines (ideas from Fabric) | — | after P4f | [P4g](#p4g--one-shot-mode-and-composable-skills) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
@@ -51,6 +52,7 @@ gantt
   P4b Context economy            :p4b, 2026-09-30, 12d
   P4d Tier names                 :p4d, 2026-10-12, 1w
   P4e Skills per turn            :done, p4e, 2026-10-04, 1d
+  P4g One-shot mode              :p4g, after p4e, 1w
   section Insight
   P5 OCEL, mining, portability   :p5, after p4d, 4w
   P6 Web inspector               :p6, after p5, 5w
@@ -418,6 +420,65 @@ Added 2026-10-04. The P4e shortlist matches words: a request shortlists a skill 
 - The prompt is no larger than after P4e.
 - `/skills <query>` finds a skill by meaning.
 
+## P4g · One-shot mode and composable skills
+
+Added 2026-10-08, from a survey of [Fabric](https://github.com/danielmiessler/fabric) (see [references](architecture/references.md#6-the-front-end-model-pi)). Fabric is a pile of single-purpose prompts ("patterns") called as Unix filters: `pbpaste | fabric -p summarize -s`. Xeito has the better parts of that already (skills in the Agent Skills format, a streamed chat turn, tiers, a log), but only behind two interactive clients. Nothing runs a skill once, from a pipe, and prints an answer.
+
+**What exists (checked against the code, 2026-10-08).**
+
+| Fabric idea | In Xeito today |
+|---|---|
+| Prompt library | Skills (`Xeito.Skills`): project `.agents/skills`, then `~/.agents/skills`; the first of a name wins, so the project already overrides the user. Found by `/skills <words>`, chosen per turn (P4e, P4f). |
+| Run one by name | `/skill:name [request]` inside a session (`Session.skill_command/3`). |
+| Streaming | The chat turn streams model tokens as `delta` events (`Xeito.Chat`, `Xeito.Events`). A turn without tools streams at once. |
+| Free-text output | Already so: only *decisions* have a closed type. A chat answer is prose. |
+| Model per pattern | No. Tiers are set per session by `XEITO_<TIER>_*`; a skill cannot ask for one. |
+| One-shot, stdin to stdout | No. `mix xeito.chat` reads lines but is a conversation, and it prints the whole transcript. |
+| Variables, contexts, strategies | No. |
+| URL and transcript ingestion | No. The tools are `read`, `write`, `edit`, `bash`, `skill`. |
+| Compatible HTTP endpoint | No (see P9). |
+
+**Decision.** Prose is the default output, and a schema is an option. A skill or a call may ask for a closed type (`--as`), which runs through the same schema compiler as the decisions; nothing requires it. The one-shot mode is a thin client of `Xeito.Api`, not a new code path: it opens a session, sends one prompt, writes the streamed answer, and closes. The turn is a run in the workspace log like any other, so it is mined and replayed.
+
+1. **`mix xeito.run`** (`xeito run` once P8 packages the binary). Text from the arguments and/or stdin; the answer on stdout, everything else (notices, metadata, errors) on stderr; a non-zero exit code on failure. A daemon is needed, as for `mix xeito.chat`. The API's `start` and `prompt` gain the options below.
+
+   | Flag | Meaning |
+   |---|---|
+   | `--skill NAME`, `--machine NAME` | run that skill (as `/skill:NAME`) or machine; neither means a plain chat turn |
+   | `-s`, `--stream` | write tokens as they arrive. Off by default when stdout is not a terminal, so a pipe receives the finished text; `--no-stream` forces it off |
+   | `-o`, `--out FILE` | write the answer to a file as well |
+   | `--extract`, `--extract-last` | print only the fenced code blocks of the answer, or only the last |
+   | `--as TYPE\|FILE` | optional: constrain the answer to a decision type or a JSON Schema file, and print JSON. Without it the answer is prose |
+   | `--json` | print the events as JSON Lines, with the answer, tier, tokens, cost and run id (for scripts) |
+   | `--tier NAME`, `--model TAG` | override the skill's tier (P4d names) or model for this call; policy still applies |
+   | `-t`, `--temperature N`, `--think` / `--no-think` | sampling and thinking, passed to the tier |
+   | `-v`, `--var NAME=VALUE` | fill `{{NAME}}` in the skill (step 4) |
+   | `-C`, `--context NAME` | add a named context (step 5) |
+   | `--tools [LIST]` | allow tools (`read`, `bash`, …). **Off by default**: a one-shot filter is a pure text transformation, and without tools the answer streams at once. There is no one to answer a review, so with tools on, anything `Risk` sends to review is denied unless `--yes` |
+   | `--continue`, `--session ID` | go on in the directory's last session, or in that one, instead of a fresh session |
+   | `--cwd DIR` | the workspace (its skills, `AGENTS.md` and log); default the current directory |
+   | `--dry-run`, `--print-prompt` | build the prompt (system, skill, request, contexts) and print it, calling no model |
+   | `-l`, `--list`; `--print-skill NAME` | list the skills visible from the directory with the layer each comes from; print one |
+
+   **Test-first**: the argument parser and the request builder are pure functions with unit tests; one integration test runs a fake tier end to end through the socket.
+2. **A skill chooses its tier and its output** in the frontmatter, under `metadata` (the parser already reads one nested level, as for `keywords`): `tier: local` or `remote`, `output: text` (default) or `json:<type>`. The overlay file of P4f step 3 can set them for skills you can't edit. The data-locality and spend rules of the policy come first: a skill that asks for `remote` on local-only input stays local, and the notice says why. `/skills` shows both fields.
+3. **Layers and listing.** The existing order (project before user) is documented and shown by `--list`. The sample skills shipped in `priv/skills` become a third layer, so updating Xeito never overwrites what the user wrote. A second skill of the same name is listed as shadowed, not silently dropped.
+4. **Variables.** A skill may contain `{{name}}`, optionally declared with a default under `metadata: vars:`. `-v` and `/skill:name key=value` fill them. An undeclared `{{x}}` in the text is left alone, and a declared one without value or default is an error before any model call. Substitution happens in the user message, not in the system prompt, so the model server's prompt cache is not disturbed (the reason P4e gives).
+5. **Named contexts.** Plain Markdown files under `~/.agents/contexts/` and `<workspace>/.agents/contexts/`, added to the user message of a call on request (`-C`) or as a default in the frontmatter. `AGENTS.md` stays the always-on context; a named one is for "my review checklist" or "my house style", and counts against the context window like any text (`Xeito.Chat.Window`).
+6. **Strategies as machines.** Fabric's `self-refine` and `reflexion` are prompt add-ons. In Xeito, `--strategy self-refine` is a machine, `draft → critique → revise`, with a round cap and an internal typed `Done?` on the critique. Every round is logged, so the benchmark can say whether the second round improved the answer, and P5 can retire a strategy that does not. Benchmark first, as in P4f: no strategy ships before the sample set shows a gain over the single call. Chain-of-thought needs no machine: it is `--think`.
+7. **Ingestion as tools with a policy label.** A `fetch` tool (URL to Markdown, with a readability pass before the model sees it, in the spirit of P4b) is an effect, so it is logged and gated like `bash`; network access is *off* in the policy by default ([10](architecture/10-security-and-sandboxing.md#effect-policy-levels)), and what it fetches counts as public input. Transcripts of videos and audio are not core: they are a skill that bundles a script and asks for `bash`, which keeps `yt-dlp` and speech models out of the dependencies.
+8. **Optional, last: shell functions.** `xeito run --print-functions` prints one shell function per skill (`summarize() { xeito run --skill summarize "$@"; }`), the equivalent of Fabric's aliases. It needs nothing else, so it waits until the rest has been used.
+
+**Not taken from Fabric:** the 40-odd provider integrations (Xeito keeps its few tiers on purpose), session files kept apart from the log, and free-text *decisions*. Prose is allowed as an answer; a decision that steers a machine stays typed.
+
+**Exit:**
+- `echo "text" | mix xeito.run --skill NAME -s` streams a prose answer to stdout, and the run is in the workspace log with its tier and cost.
+- The same call piped into a file gets the finished text, with nothing else on stdout.
+- `--as` returns JSON that validates against the type; without it, nothing in the answer is constrained.
+- A skill with `tier: remote` and local-only input runs locally, and says so on stderr.
+- `--dry-run` prints the exact prompt a real call would send.
+- With tools off, a one-shot call never issues an effect.
+
 ## P5 · OCEL export and process mining (≈4 weeks)
 
 1. Validate the SQLite layout against the OCEL 2.0 spec, and add JSON export.
@@ -501,6 +562,7 @@ Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 3. **Survey other agent harnesses** worth bridging, for example Odysseus AI and Jensen (to be researched; neither is evaluated yet). For each, note its extension or RPC surface, and whether its loop can call out to typed decisions or delegate to a machine.
 4. Build the bridges the survey justifies. Each is a thin client of `Xeito.Api`, not a new code path in the daemon.
 5. **A skill for building MCP tools** (noted 2026-10-03), before the MCP server: vendor Anthropic's `mcp-builder` skill (Apache-2.0) under the skill convention ([.agents/skills/README.md](../.agents/skills/README.md)). Keep its MCP design guide (tool naming, pagination, actionable errors) and its evaluation method (ten realistic questions answered through the tools); drop its Node and Python implementation guides and scripts, and point implementation at Elixir and `mix ci`. Test it with and without the skill, as `skill-authoring` describes.
+6. **A compatible HTTP endpoint** (added 2026-10-08, from Fabric's `--serveOllama`): an OpenAI- and Ollama-style chat API on the loopback interface only, with skills and machines listed as models, so any editor or script that speaks those protocols can call them. Each call is a run in the log. It reuses the one-shot path of [P4g](#p4g--one-shot-mode-and-composable-skills), needs an API key file even on loopback, and never binds to a network address unless the user sets one.
 
 **Exit:** at least one bridge drives a Xeito machine end to end from the other harness, and the run is logged like any other. The MCP server passes the protocol's own conformance checks (its inspector tool), and a decision is requested from another agent through it.
 

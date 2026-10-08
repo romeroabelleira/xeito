@@ -99,6 +99,7 @@
 |---|---|
 | Zechner. **What I learned building an opinionated and minimal coding agent.** 30 Nov 2025. [mariozechner.at](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) | The minimalism Xeito's front end copies: 4 tools, a <1k-token prompt, no MCP or sub-agents by default, extensions for the rest. |
 | **pi-mono.** [GitHub](https://github.com/badlogic/pi-mono) (now appears under `earendil-works/pi`) · [pi.dev](https://pi.dev) | Four packages: `pi-ai` (providers), `pi-agent-core` (loop), `pi-tui`, `pi-coding-agent`. |
+| **Fabric.** Miessler. [GitHub](https://github.com/danielmiessler/fabric) | A library of single-purpose prompts ("patterns") run as Unix filters, with strategies, contexts, a model per pattern and a REST API. The source of [P4g](../implementation-plan.md#p4g--one-shot-mode-and-composable-skills): a one-shot mode, per-skill tier, variables, contexts and a compatible endpoint. Xeito keeps prose as an allowed output and adds typed decisions, machines and the log underneath. |
 
 **Where Xeito deliberately departs from pi:**
 
