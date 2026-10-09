@@ -8,6 +8,7 @@ defmodule Mix.Tasks.Xeito.Chat do
       mix xeito.chat [--cwd DIR] [--socket PATH] [--session ID]
 
   Needs a running daemon (`mix xeito.daemon`). Slash commands are passed through (`/help`).
+  A line ending in `\\` goes on in the next, for a prompt of several lines.
   `y` / `n` answer a pending review. `/quit` (or Ctrl-D) quits; the session keeps running in the
   daemon, and `--session ID` attaches to it again.
   """
@@ -59,7 +60,7 @@ defmodule Mix.Tasks.Xeito.Chat do
     end
   end
 
-  defp input_loop(client, session, printer) do
+  defp input_loop(client, session, printer, acc \\ "") do
     case IO.gets("") do
       :eof ->
         send(printer, :quit)
@@ -68,11 +69,24 @@ defmodule Mix.Tasks.Xeito.Chat do
         send(printer, :quit)
 
       line ->
-        case String.trim(line) do
-          quit when quit in ["/quit", "/exit"] -> send(printer, :quit)
-          text -> send_line(client, session, printer, text)
+        case take_line(acc, line) do
+          {:more, acc} -> input_loop(client, session, printer, acc)
+          {:done, text} -> run_line(client, session, printer, String.trim(text))
         end
     end
+  end
+
+  defp run_line(_client, _session, printer, quit) when quit in ["/quit", "/exit"], do: send(printer, :quit)
+  defp run_line(client, session, printer, text), do: send_line(client, session, printer, text)
+
+  @doc false
+  # A line read, added to the prompt so far: one ending in `\` goes on in the next line.
+  def take_line(acc, line) do
+    line = line |> String.trim_trailing("\n") |> String.trim_trailing("\r")
+
+    if String.ends_with?(line, "\\"),
+      do: {:more, acc <> String.slice(line, 0..-2//1) <> "\n"},
+      else: {:done, acc <> line}
   end
 
   defp send_line(client, session, printer, line) do

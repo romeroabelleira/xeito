@@ -36,10 +36,12 @@ defmodule Xeito.Tui do
   The prompt's cursor blinks like an editor's: solid while you type, blinking in between, and
   solid again (with no timer running) after 10 s without a key.
 
-  Keys: Enter sends (and steps a paused run when the prompt is empty); a pending review is
-  answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
-  running turn; Up / Down recall earlier prompts (the line being typed comes back past the
-  newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`
+  Keys: Enter sends (and steps a paused run when the prompt is empty); `\\` then Enter starts a
+  new line in its place (so does Enter with a modifier, where the terminal reports one), and a
+  paste keeps its lines (bracketed paste, turned on by `mix xeito.tui`): the prompt grows to 6
+  rows, then scrolls with the cursor; a pending review is answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
+  running turn; Up / Down move between the prompt's lines, and past its first or last recall
+  earlier prompts (the line being typed comes back past the newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`
   (by name, then by what the typed words describe), and each further Tab shows the next match;
   `/skills <words>` lists the skills those words describe (`Xeito.Tui.SkillSearch`); a line sent while a turn runs is queued in the
   session and shown above the prompt, and when the turn ended in a way it was not written for
@@ -76,6 +78,8 @@ defmodule Xeito.Tui do
   # The workspace in the status line is shortened from the left to about this many characters.
   @place_max 30
   @placeholder "ask, or /help"
+  # The prompt grows a row per line up to this many, then scrolls with the cursor.
+  @prompt_rows 6
 
   # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
   @own_commands ~w(quit exit statusbar legend sessions skills)
@@ -117,7 +121,7 @@ defmodule Xeito.Tui do
   def new(opts) do
     {rows, cols} = Keyword.fetch!(opts, :size)
     prefs = Keyword.fetch!(opts, :prefs)
-    {:ok, input} = TextInput.init(TextInput.new(placeholder: @placeholder, width: cols - 2))
+    {:ok, input} = TextInput.init(TextInput.new(placeholder: @placeholder, width: cols - 2, multiline: true))
     session = Keyword.fetch!(opts, :session)
 
     %{
@@ -182,7 +186,7 @@ defmodule Xeito.Tui do
   # them out of the model's prompt too). `opts[:home]` is where the user's skills are (tests).
   def banner(cwd, opts \\ []) do
     [
-      "Enter sends · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
+      "Enter sends · \\ Enter new line · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
       "try: fix the failing test · run the checks · commit these changes · explain this code",
       "machines: #{Enum.join(Enum.sort(Map.keys(Router.machines())), " · ")}"
     ] ++ agents_lines(cwd) ++ skills_lines(cwd, opts) ++ [""]
@@ -277,6 +281,7 @@ defmodule Xeito.Tui do
   @impl true
   def event_to_msg(%Event.Key{} = key, state), do: key_to_msg(key, state)
   def event_to_msg(%Event.Resize{width: w, height: h}, _state), do: {:msg, {:resize, w, h}}
+  def event_to_msg(%Event.Paste{content: text}, _state), do: {:msg, {:insert, pasted(text)}}
   def event_to_msg(_event, _state), do: :ignore
 
   @keys %{
@@ -293,6 +298,7 @@ defmodule Xeito.Tui do
        when key in [:c, "c", :d, "d", :t, "t", :j, "j"] and mods != [], do: control_key(key, mods)
 
   defp key_to_msg(%Event.Key{key: :tab}, _state), do: {:msg, :complete}
+  defp key_to_msg(%Event.Key{key: :enter, modifiers: [_ | _]}, _state), do: {:msg, {:insert, "\n"}}
 
   defp key_to_msg(%Event.Key{key: key} = event, _state) do
     case Map.get(@keys, key) do
@@ -390,9 +396,9 @@ defmodule Xeito.Tui do
     %{state | cursor_on: true, blink: gen, blink_until: now() + @blink_for_ms}
   end
 
-  defp handle_update(:submit, state), do: state.input |> TextInput.get_value() |> String.trim() |> submit(state)
+  defp handle_update(:submit, state), do: enter(state)
   defp handle_update({:review, answer}, state), do: review(answer, state)
-  defp handle_update({:recall, direction}, state), do: state |> recall(direction) |> recalled(state)
+  defp handle_update({:recall, direction}, state), do: move_or_recall(direction, state)
 
   defp handle_update(msg, state) when msg in [:quit, :halt, :complete, :legend, :steer], do: line_key(msg, state)
 
@@ -413,6 +419,15 @@ defmodule Xeito.Tui do
   # Only Tab continues a completion; any other key ends it.
   defp keep_completion(state, :complete), do: state
   defp keep_completion(state, _msg), do: %{state | completion: nil}
+
+  # A line ending in `\` at the cursor goes on in a new line, as in a shell; otherwise Enter sends.
+  defp enter(state) do
+    if continued?(state.input),
+      do: {%{state | input: :input |> edit(%Event.Key{key: :backspace}, state.input) |> insert("\n")}, []},
+      else: state.input |> TextInput.get_value() |> String.trim() |> submit(state)
+  end
+
+  defp continued?(input), do: input |> before_cursor() |> String.ends_with?("\\")
 
   # Ctrl-J: the typed line for the running chat turn, at its next model call (`/steer`).
   defp steer("", state), do: {state, []}
@@ -438,6 +453,20 @@ defmodule Xeito.Tui do
     {append(%{state | waiting: false}, "  #{said}\n"), []}
   end
 
+  # In a prompt of several lines, Up and Down move between its lines; past the first or the last
+  # they recall.
+  defp move_or_recall(direction, state) do
+    if within?(state.input, direction),
+      do: screen_update({:input, %Event.Key{key: arrow(direction)}}, state),
+      else: state |> recall(direction) |> recalled(state)
+  end
+
+  defp within?(input, :older), do: input.cursor_row > 0
+  defp within?(input, :newer), do: input.cursor_row < length(input.lines) - 1
+
+  defp arrow(:older), do: :up
+  defp arrow(:newer), do: :down
+
   defp recalled({:ok, text, state}, _state), do: {%{state | input: put_text(state.input, text)}, []}
   defp recalled(:none, state), do: {state, []}
 
@@ -462,10 +491,8 @@ defmodule Xeito.Tui do
     {statusbar(String.split(args, ~r/[\s,]+/, trim: true), state), []}
   end
 
-  defp screen_update({:input, event}, state) do
-    {:ok, input} = TextInput.handle_event(event, state.input)
-    {%{state | input: input}, []}
-  end
+  defp screen_update({edit, arg}, state) when edit in [:input, :insert],
+    do: {%{state | input: edit(edit, arg, state.input)}, []}
 
   defp screen_update({:scroll, n}, state), do: {%{state | scroll: max(state.scroll + n, 0)}, []}
 
@@ -553,7 +580,7 @@ defmodule Xeito.Tui do
 
   defp run_line(text, %{waiting: true} = state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
-    {append(%{state | input: TextInput.clear(state.input), waiting: false}, "  instead: #{text}\n"), []}
+    {append(%{state | input: TextInput.clear(state.input), waiting: false}, "  instead: #{one_line(text)}\n"), []}
   end
 
   defp run_line(text, state), do: send_line(text, state)
@@ -567,7 +594,7 @@ defmodule Xeito.Tui do
 
   defp send_line(text, state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => text})
-    {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{text}\n"), []}
+    {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{String.replace(text, "\n", "\n  ")}\n"), []}
   end
 
   # Every line sent is remembered, as a shell does, but not twice in a row.
@@ -592,7 +619,40 @@ defmodule Xeito.Tui do
   defp recall(_state, _direction), do: :none
 
   # TextInput.set_value/2 puts the cursor at the start; a recalled line is edited at its end.
-  defp put_text(input, text), do: %{TextInput.set_value(input, text) | cursor_col: String.length(text)}
+  defp put_text(input, text), do: input |> TextInput.clear() |> insert(text)
+
+  # A key goes to TextInput; text (a paste, a new line) is inserted here, since TextInput inserts
+  # only single characters.
+  defp edit(:input, event, input), do: event |> TextInput.handle_event(input) |> elem(1)
+  defp edit(:insert, text, input), do: insert(input, text)
+
+  defp insert(input, text) do
+    before = before_cursor(input) <> text
+    lines = String.split(before, "\n")
+    value = Enum.join(Enum.take(input.lines, input.cursor_row), "\n") <> sep(input) <> before <> after_cursor(input)
+
+    %{
+      TextInput.set_value(input, value)
+      | cursor_row: input.cursor_row + length(lines) - 1,
+        cursor_col: String.length(List.last(lines))
+    }
+  end
+
+  defp sep(%{cursor_row: 0}), do: ""
+  defp sep(_input), do: "\n"
+
+  # The cursor's line, before and after the cursor; then the lines below it.
+  defp before_cursor(input), do: input.lines |> Enum.at(input.cursor_row) |> String.slice(0, input.cursor_col)
+
+  defp after_cursor(input) do
+    [line | below] = Enum.drop(input.lines, input.cursor_row)
+    Enum.join([String.slice(line, input.cursor_col..-1//1) | below], "\n")
+  end
+
+  @doc false
+  # Pasted text, with its line breaks as `\n` and without control characters other than tabs (an
+  # escape sequence would be written to the screen as it is).
+  def pasted(text), do: text |> String.replace(~r/\r\n?/, "\n") |> String.replace(~r/[\x00-\x08\x0B-\x1F\x7F]/, "")
 
   # Tab shows the first completion of the line; each further Tab the next, around and around.
   defp complete(%{completion: {candidates, shown}} = state),
@@ -746,8 +806,9 @@ defmodule Xeito.Tui do
       end
 
     queued = queue_rows(state)
-    # The header, the queue, the prompt line between its two borders, the bar and the status line.
-    body_height = max(state.height - 5 - length(bar) - length(queued), 1)
+    prompt = prompt_lines(state, state.width)
+    # The header, the queue, the prompt between its two borders, the bar and the status line.
+    body_height = max(state.height - 4 - length(prompt) - length(bar) - length(queued), 1)
 
     stack(:vertical, [
       text(
@@ -757,10 +818,7 @@ defmodule Xeito.Tui do
       stack(:vertical, Enum.map(visible(state, body_height), &line_node/1)),
       stack(:vertical, Enum.map(queued, &text(pad(&1, state.width), Style.new(attrs: [:dim])))),
       border(state.width),
-      stack(:horizontal, [
-        text("> "),
-        input_line(state, state.width - 2)
-      ]),
+      stack(:vertical, prompt),
       border(state.width),
       stack(:vertical, Enum.map(bar, &text(pad(" " <> &1, state.width), bar_style()))),
       text(status_line(state, state.width), status_style(state))
@@ -769,24 +827,63 @@ defmodule Xeito.Tui do
 
   # Lines typed while a turn ran, above the prompt: queued, or held (with how to send or drop).
   defp queue_rows(%{queue: []}), do: []
-  defp queue_rows(%{held: false, queue: queue}), do: Enum.map(queue, &" ⏸ queued: #{&1}")
+  defp queue_rows(%{held: false, queue: queue}), do: Enum.map(queue, &" ⏸ queued: #{one_line(&1)}")
 
   defp queue_rows(%{held: reason, queue: [first | rest]}),
-    do: [" ⏸ held (#{held_because(reason)}): #{first} · Enter sends · Esc drops" | Enum.map(rest, &" ⏸ held: #{&1}")]
+    do: [
+      " ⏸ held (#{held_because(reason)}): #{one_line(first)} · Enter sends · Esc drops"
+      | Enum.map(rest, &" ⏸ held: #{one_line(&1)}")
+    ]
+
+  # A prompt of several lines, in one row: its first line, and how many more.
+  defp one_line(text) do
+    case String.split(text, "\n") do
+      [line] -> line
+      [line | more] -> "#{line} (+#{length(more)} lines)"
+    end
+  end
 
   defp held_because("question"), do: "the turn asked you something"
   defp held_because("stopped"), do: "the turn stopped at its step limit"
   defp held_because(status), do: "the turn #{status}"
 
-  # The input line is drawn here; TermUI's TextInput keeps the text and handles editing. Its own
-  # cursor (reverse video) was easy to miss, and its style cannot be changed, so the typing
+  @doc "How many rows the prompt grows to before it scrolls."
+  @spec prompt_rows() :: pos_integer()
+  def prompt_rows, do: @prompt_rows
+
+  @doc false
+  # The prompt, a row per line after its mark: `> ` on the first, and an arrow where lines above
+  # or below are out of sight. Past `@prompt_rows` lines, the rows shown follow the cursor.
+  def prompt_lines(state, width) do
+    %{lines: lines, cursor_row: row} = state.input
+    first = max(row - (@prompt_rows - 1), 0)
+    last = min(first + @prompt_rows, length(lines)) - 1
+
+    for i <- first..last do
+      line =
+        if i == row, do: input_line(state, width - 2), else: text(String.slice(shown(Enum.at(lines, i)), 0, width - 2))
+
+      stack(:horizontal, [text(mark(i, first, last, length(lines))), line])
+    end
+  end
+
+  defp mark(0, _first, _last, _count), do: "> "
+  defp mark(i, i, _last, _count), do: "↑ "
+  defp mark(i, _first, i, count) when i < count - 1, do: "↓ "
+  defp mark(_i, _first, _last, _count), do: "  "
+
+  # A tab takes one cell, so the cursor's column is the character's.
+  defp shown(line), do: String.replace(line, "\t", " ")
+
+  # The cursor's line is drawn here; TermUI's TextInput keeps the text and handles editing. Its
+  # own cursor (reverse video) was easy to miss, and its style cannot be changed, so the typing
   # position is a solid block in a colour nothing else on screen uses. In the blink's off phase
-  # the cell is drawn plain. Long input scrolls so the cursor stays visible; an empty line shows
-  # the placeholder, dimmed, after the cursor.
+  # the cell is drawn plain. A long line scrolls so the cursor stays visible; an empty prompt
+  # shows the placeholder, dimmed, after the cursor.
 
   @doc false
   def input_line(state, width) do
-    value = TextInput.get_value(state.input)
+    value = state.input.lines |> Enum.at(state.input.cursor_row) |> shown()
     col = min(state.input.cursor_col, String.length(value))
     start = max(col - (width - 1), 0)
     shown = String.slice(value, start, width)
@@ -794,7 +891,7 @@ defmodule Xeito.Tui do
     {at, after_cursor} = if rest == "", do: {" ", ""}, else: String.split_at(rest, 1)
 
     hint =
-      if value == "",
+      if TextInput.get_value(state.input) == "",
         do: [text(" " <> String.slice(@placeholder, 0, max(width - 2, 0)), placeholder_style())],
         else: []
 

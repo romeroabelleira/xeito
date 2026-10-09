@@ -10,6 +10,12 @@ defmodule Mix.Tasks.Xeito.ChatTest do
     assert Chat.request_for("", "ses-1") == nil
   end
 
+  test "a line ending in \\ continues the prompt on the next line" do
+    assert Chat.take_line("", "first\\\n") == {:more, "first\n"}
+    assert Chat.take_line("first\n", "second\r\n") == {:done, "first\nsecond"}
+    assert Chat.take_line("", "plain\n") == {:done, "plain"}
+  end
+
   test "opening starts a session in the workspace, or attaches to one" do
     cwd = Path.expand("w")
     assert Chat.open_request(cwd: "w") == %{"cmd" => "start", "cwd" => cwd}
@@ -37,6 +43,12 @@ defmodule Mix.Tasks.Xeito.ChatTest do
     test "sends lines; a review answer with nothing waiting is shown as an error; the end of input quits", ctx do
       out = capture_io("y\n\n", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end)
       assert out =~ ~r/session ses-\w+ · \/help/
+      assert out =~ "nothing_to_approve"
+    end
+
+    test "a prompt continued with \\ is sent as one prompt of several lines", ctx do
+      # `y\` and an empty line are one prompt, "y\n": the answer y, with nothing waiting for it.
+      out = capture_io("y\\\n\n", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end)
       assert out =~ "nothing_to_approve"
     end
 

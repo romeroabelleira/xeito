@@ -8,6 +8,9 @@ defmodule Mix.Tasks.Xeito.Tui do
   Needs a running daemon (`mix xeito.daemon`) and a real terminal. The TUI is a thin client:
   closing it leaves the session and its runs in the daemon, and `--session ID` reattaches.
   For pipes and plain logs, use `mix xeito.chat`.
+
+  Bracketed paste is on while the TUI runs, so a paste of several lines arrives in one piece
+  instead of as keys, each line ending in Enter.
   """
 
   use Mix.Task
@@ -16,7 +19,19 @@ defmodule Mix.Tasks.Xeito.Tui do
   def run(args) do
     Application.put_env(:xeito, :tui, config(args))
     {:ok, _} = Application.ensure_all_started(:term_ui)
-    TermUI.Runtime.run(root: Xeito.Tui)
+    with_bracketed_paste(fn -> TermUI.Runtime.run(root: Xeito.Tui) end)
+  end
+
+  # TermUI parses bracketed paste but leaves turning it on, and off again, to its host.
+  @doc false
+  def with_bracketed_paste(fun) do
+    IO.write(TermUI.ANSI.enable_bracketed_paste())
+
+    try do
+      fun.()
+    after
+      IO.write(TermUI.ANSI.disable_bracketed_paste())
+    end
   end
 
   @doc false

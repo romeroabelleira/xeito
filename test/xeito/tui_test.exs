@@ -184,7 +184,7 @@ defmodule Xeito.TuiTest do
       lines = Tui.banner("/w")
 
       assert lines == [
-               "Enter sends · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
+               "Enter sends · \\ Enter new line · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
                "try: fix the failing test · run the checks · commit these changes · explain this code",
                "machines: chat · check · commit · fix_failing_test · run_tests",
                "no AGENTS.md in /w",
@@ -509,6 +509,112 @@ defmodule Xeito.TuiTest do
       assert_receive {:request, %{"cmd" => "prompt", "text" => "a"}}
       assert state |> up() |> value() == "a"
       assert state |> up() |> up() |> value() == "b"
+    end
+  end
+
+  describe "a prompt of several lines: pasted, or typed with \\ then Enter" do
+    defp paste(state, text),
+      do: state |> then(&Tui.update(elem(Tui.event_to_msg(Event.paste(text), &1), 1), &1)) |> elem(0)
+
+    defp enter(state), do: state |> then(&Tui.update(:submit, &1)) |> elem(0)
+    defp cursor(state), do: {state.input.cursor_row, state.input.cursor_col}
+
+    test "a paste is inserted at the cursor in one piece, its line breaks kept and not sent" do
+      state = tui() |> typing("fix: ") |> paste("one\r\ntwo\rthree")
+      assert value(state) == "fix: one\ntwo\nthree"
+      assert cursor(state) == {2, 5}
+      refute_receive {:request, _}, 100
+
+      {sent, []} = Tui.update(:submit, state)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "fix: one\ntwo\nthree"}}
+      assert value(sent) == ""
+    end
+
+    test "a paste in the middle of a line splits it around the pasted text" do
+      state = tui() |> typing("ab") |> then(&elem(Tui.update({:input, key(:left)}, &1), 0)) |> paste("1\n2")
+      assert {value(state), cursor(state)} == {"a1\n2b", {1, 1}}
+    end
+
+    test "a paste drops control characters, so it cannot write escape sequences to the screen, and keeps tabs" do
+      assert tui() |> paste("red\e[31m\tx\a") |> value() == "red[31m\tx"
+    end
+
+    test "\\ then Enter starts a new line in place of the backslash; Enter alone sends it all" do
+      state = tui() |> typing("first\\") |> enter() |> typing("second\\") |> enter() |> typing("third")
+      refute_receive {:request, _}, 100
+      assert {value(state), cursor(state)} == {"first\nsecond\nthird", {2, 5}}
+
+      {_, []} = Tui.update(:submit, state)
+      assert_receive {:request, %{"cmd" => "prompt", "text" => "first\nsecond\nthird"}}
+    end
+
+    test "Enter with a modifier the terminal reports starts a new line" do
+      for mods <- [[:shift], [:alt], [:ctrl]] do
+        {:msg, msg} = Tui.event_to_msg(key(:enter, mods), tui())
+        assert tui() |> typing("a") |> then(&elem(Tui.update(msg, &1), 0)) |> value() == "a\n"
+      end
+    end
+
+    test "Up and Down move between the prompt's lines, and recall earlier prompts past its first or last" do
+      state = tui() |> sent("earlier") |> paste("one\ntwo")
+      assert state |> up() |> cursor() == {0, 3}
+      assert state |> up() |> value() == "one\ntwo"
+      assert state |> up() |> up() |> value() == "earlier"
+      assert state |> up() |> down() |> cursor() == {1, 3}
+      assert state |> down() |> value() == "one\ntwo"
+    end
+
+    test "a recalled prompt of several lines is edited at the end of its last line" do
+      state = tui() |> sent("one\ntwo three") |> up()
+      assert {value(state), cursor(state)} == {"one\ntwo three", {1, 9}}
+    end
+
+    test "the transcript shows the lines sent under the prompt mark; a queue shows each line's first" do
+      {state, []} = tui() |> paste("one\ntwo") |> then(&Tui.update(:submit, &1))
+      assert Enum.take(state.lines, -2) == ["> one", "  two"]
+
+      queued = Tui.apply_event(tui(status_bar: false), %{"event" => "queued", "attrs" => %{"text" => "a\nb\nc"}})
+
+      assert [" ⏸ queued: a (+2 lines)"] =
+               queued
+               |> Tui.view()
+               |> screen()
+               |> Enum.filter(&(is_binary(&1) and &1 =~ "⏸"))
+               |> Enum.map(&String.trim_trailing/1)
+    end
+
+    test "the prompt grows a row per line, up to a limit, and the screen still fits" do
+      rows = fn state -> state |> Tui.view() |> screen() |> Enum.count(&(&1 == :row)) end
+      single = rows.(tui(status_bar: false))
+
+      three = [status_bar: false] |> tui() |> paste("1\n2\n3")
+      assert rows.(three) == single + 2
+      assert length(screen(Tui.view(three))) == three.height
+
+      many = [status_bar: false] |> tui() |> paste(Enum.map_join(1..20, "\n", &"line #{&1}"))
+      assert rows.(many) == single + Tui.prompt_rows() - 1
+      assert length(screen(Tui.view(many))) == many.height
+    end
+
+    test "each line is drawn after its mark; the cursor's line has the cursor, a tab is drawn as a space" do
+      state = tui() |> paste("one\n\ttwo") |> up()
+      [first, second] = Tui.prompt_lines(state, 20)
+      assert inspect(first) =~ ~s(content: "> ") and inspect(first) =~ "bg: :yellow"
+      assert inspect(second) =~ ~s(content: "  ") and inspect(second) =~ ~s(content: " two")
+      refute inspect(second) =~ "bg: :yellow"
+    end
+
+    test "past the limit, the lines around the cursor are shown, with arrows where lines are hidden" do
+      state = paste(tui(), Enum.map_join(1..20, "\n", &"line #{&1}"))
+      shown = state |> Tui.prompt_lines(40) |> Enum.map(&inspect/1)
+      assert length(shown) == Tui.prompt_rows()
+      assert hd(shown) =~ "↑ " and hd(shown) =~ "line #{21 - Tui.prompt_rows()}"
+      assert List.last(shown) =~ "line 20"
+
+      top = Enum.reduce(1..19, state, fn _, st -> up(st) end)
+      shown = top |> Tui.prompt_lines(40) |> Enum.map(&inspect/1)
+      assert hd(shown) =~ "> " and hd(shown) =~ "line 1"
+      assert List.last(shown) =~ "↓ "
     end
   end
 

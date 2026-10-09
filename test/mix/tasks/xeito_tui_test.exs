@@ -15,6 +15,16 @@ defmodule Mix.Tasks.Xeito.TuiTest do
     assert Tui.config(["--socket", socket]) == [socket: socket, cwd: File.cwd!(), session: nil, status_bar: true]
   end
 
+  test "bracketed paste is on while the TUI runs, and off again after, even when it fails" do
+    import ExUnit.CaptureIO
+
+    assert capture_io(fn -> assert Tui.with_bracketed_paste(fn -> IO.write("ui") end) == :ok end) ==
+             "\e[?2004hui\e[?2004l"
+
+    assert capture_io(fn -> catch_error(Tui.with_bracketed_paste(fn -> raise "crash" end)) end) ==
+             "\e[?2004h\e[?2004l"
+  end
+
   test "config/1: no daemon at the socket is an error" do
     assert_raise Mix.Error, ~r/^no daemon at \/nonexistent\/x.sock/, fn ->
       Tui.config(["--socket", "/nonexistent/x.sock"])
