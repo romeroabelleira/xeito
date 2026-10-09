@@ -89,7 +89,7 @@ scripts/try-local.sh --cwd .               # in the directory you are in
 echo /help | scripts/try-local.sh --chat   # the line-mode client, scriptable: a quick smoke test
 ```
 
-Model tiers are loaded as the service unit loads them, from `$XEITO_TIERS_ENV` or `~/.config/xeito/tiers.env` ([USAGE.md](../USAGE.md#model-tiers)); the chat model is the local tier. With `--no-models`, or without that file, everything but model calls works.
+Model tiers are loaded as the service unit loads them, from `$XEITO_TIERS_ENV` or `~/.config/xeito/tiers.env` ([INSTALL.md](../INSTALL.md#model-tiers)); the chat model is the local tier. With `--no-models`, or without that file, everything but model calls works.
 
 What to check after a TUI change:
 - **Typing:** the cursor is a solid block while typing and blinks when idle. Long lines scroll.

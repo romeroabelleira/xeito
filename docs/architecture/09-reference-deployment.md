@@ -94,7 +94,7 @@ A typed decision is prompt-heavy and output-light. The **target is p50 below 400
 ### Tiers: remote and remote_frontier (optional, off-box)
 
 - Both go through OpenRouter. `remote` is a hosted language model with logprobs, so its answers carry a calibrated confidence ([04](04-delegation.md#openrouter)): useful for models too large for the local GPU, and for trying a model before downloading it. `remote_frontier` is the strongest hosted model (Claude, for example); it returns no logprobs, so its answer is terminal.
-- Opt-in: each is configured only when its model and key file are set (`XEITO_REMOTE_MODEL`, `XEITO_REMOTE_KEY_FILE`, and the same for `XEITO_REMOTE_FRONTIER_*`; see [USAGE](../../USAGE.md#model-tiers)). The key's limits can be checked for free (`GET /api/v1/key`).
+- Opt-in: each is configured only when its model and key file are set (`XEITO_REMOTE_MODEL`, `XEITO_REMOTE_KEY_FILE`, and the same for `XEITO_REMOTE_FRONTIER_*`; see [INSTALL](../../INSTALL.md#model-tiers)). The key's limits can be checked for free (`GET /api/v1/key`).
 - Governed by policy ([04](04-delegation.md#guards-on-escalation)): `Risk` never goes remote, `:local_only` inputs never go remote, and each run has a budget.
 
 ### Thread budget
@@ -117,7 +117,7 @@ All services bind to **loopback only**. Remote access goes through an SSH tunnel
 
 ### Configuration
 
-Tiers are read from the environment at startup (`Xeito.Tiers.Settings`; [USAGE](../../USAGE.md#model-tiers)), from one file that both the shell and the service source:
+Tiers are read from the environment at startup (`Xeito.Tiers.Settings`; [INSTALL](../../INSTALL.md#model-tiers)), from one file that both the shell and the service source:
 
 ```bash
 # ~/.config/xeito/tiers.env

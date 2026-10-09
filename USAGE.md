@@ -1,6 +1,6 @@
 # Using Xeito
 
-A hands-on guide: set up the tiers, start the daemon, work in the TUI, and inspect what happened. For the ideas behind it, read the [design doc](docs/design.md). For the current state of the project, see the [implementation plan](docs/implementation-plan.md).
+A hands-on guide: work in the TUI, run and extend machines, and inspect what happened. To install Xeito and connect its models, start with [INSTALL.md](INSTALL.md). For the ideas behind it, read the [design doc](docs/design.md). For the current state of the project, see the [implementation plan](docs/implementation-plan.md).
 
 > Xeito is pre-release software. Commands and file formats may still change between phases.
 
@@ -20,80 +20,11 @@ A hands-on guide: set up the tiers, start the daemon, work in the TUI, and inspe
 
 ## 2. Setup
 
-### Toolchain
-
-Xeito is Elixir/OTP. The pinned versions are in `.tool-versions`, and [mise](https://mise.jdx.dev) or asdf installs them:
-
-```bash
-mise install
-mix deps.get
-mix test
-```
-
-### Model tiers
-
-Tiers are places on the escalation ladder, named by the kind of model and where it runs:
-
-| Tier | Kind | Default backend |
-|---|---|---|
-| `local_decision` | a System One decision model on this machine (`laya-serve`) | `system_one` |
-| `remote_decision` | a hosted System One decision model (Jev) | `system_one` |
-| `local` | the language model on the local GPU: the chat model, and the decider of every built-in decision type | `ollama` |
-| `remote` | a hosted language model with logprobs, so its confidence is calibrated | `openrouter` |
-| `remote_frontier` | the strongest hosted language model; it answers without a confidence, terminally | `openrouter` |
-
-Each tier reads the same variables under its own prefix, `XEITO_<TIER>_`, at startup (`Xeito.Tiers.Settings`). A tier that is not configured is not used. A practical minimum is the local tier alone:
-
-| Variable (for `XEITO_LOCAL_…`; the same for every tier) | Meaning | Example |
-|---|---|---|
-| `XEITO_LOCAL_URL` | the backend's address; a local tier is configured by it | `http://127.0.0.1:11434` |
-| `XEITO_LOCAL_MODEL` | the model | `qwen3.6:27b` |
-| `XEITO_LOCAL_KEY_FILE` | a file holding the backend's API key | `~/.config/xeito/laya_api_key` |
-| `XEITO_LOCAL_BACKEND` | the API the tier speaks: `ollama`, `openrouter` or `system_one` | (the tier's default) |
-| `XEITO_LOCAL_CONTEXT` | Ollama: the context window in tokens, sent as `num_ctx` with every request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
-| `XEITO_LOCAL_KEEP_ALIVE` | Ollama: how long the model stays in VRAM after the last request | `5m` (default `10m`) |
-| `XEITO_REMOTE_PROVIDERS`, `XEITO_REMOTE_ZDR` | OpenRouter: providers to pin (comma list); `false` to allow endpoints that retain prompts | `Parasail`; default on |
-| `XEITO_SOCKET` | the daemon socket | default `~/.xeito/run/xeito.sock` |
-
-**Remote tiers are opt-in.** A remote tier is configured only when its model and its key file are both set; an OpenRouter tier's URL defaults to OpenRouter's. One OpenRouter key file can serve both `remote` and `remote_frontier`, but each needs its own `…_MODEL` and `…_KEY_FILE`. Even configured, a remote tier is reached only where the decision's policy allows off-box tiers ([guards on escalation](docs/architecture/04-delegation.md#guards-on-escalation); [spend limits](#spend-limits)). `remote_decision` has no default URL, since no hosted System One model is reachable through OpenRouter.
-
-**Keys are never put in variables.** The `*_KEY_FILE` variables name a file that contains only the key, with mode 0600. For example, with the 1Password CLI:
-
-```bash
-op read "op://Private/OpenRouter/credential" > ~/.config/xeito/openrouter.key && chmod 600 ~/.config/xeito/openrouter.key
-```
-
-Keep the variables in one file that both your shell and the service can source:
-
-```bash
-# ~/.config/xeito/tiers.env
-export XEITO_LOCAL_URL=http://127.0.0.1:11434
-export XEITO_LOCAL_MODEL=qwen3.6:27b
-export XEITO_LOCAL_CONTEXT=65536
-export XEITO_LOCAL_KEEP_ALIVE=5m
-# Off-box, opt-in: uncomment to use a hosted model where policy allows it.
-# export XEITO_REMOTE_MODEL=qwen/qwen3.8-27b
-# export XEITO_REMOTE_KEY_FILE="$HOME/.config/xeito/openrouter.key"
-```
-
-The [reference deployment](docs/architecture/09-reference-deployment.md) explains how to choose models and hardware. [`deploy/`](deploy/) has an example systemd unit for the daemon.
+[INSTALL.md](INSTALL.md) covers the requirements, building, connecting the model tiers (`XEITO_<TIER>_*` in `~/.config/xeito/tiers.env`) and the recommended local configuration.
 
 ## 3. Start the daemon
 
-In a terminal, for trying things out:
-
-```bash
-source ~/.config/xeito/tiers.env
-mix xeito.daemon
-```
-
-As a service that stays out of the way of desktop work (lower CPU weight and priority, capped memory, which also applies to the commands the agent runs):
-
-```bash
-cp deploy/systemd/xeitod.service.example ~/.config/systemd/user/xeitod.service   # then edit the paths
-systemctl --user daemon-reload && systemctl --user enable --now xeitod
-journalctl --user -u xeitod -f
-```
+In a terminal, `source ~/.config/xeito/tiers.env && mix xeito.daemon`; as a systemd user service, see [INSTALL.md](INSTALL.md#5-run-the-daemon).
 
 When idle, the daemon uses about 100 MB of RAM and no CPU. Sessions without activity close after two hours; they're rebuilt from the log the next time you use them. A project's log closes after 30 minutes without use and reopens on its own.
 

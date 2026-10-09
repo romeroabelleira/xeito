@@ -18,6 +18,9 @@ Restart=on-failure
 RestartSec=5
 # Runs recover from the log on the next start, so a short stop timeout is safe.
 TimeoutStopSec=15
+# SIGTERM to the daemon alone, which stops the commands it started in order; what is left
+# when TimeoutStopSec ends gets SIGKILL. With the default, every process got SIGTERM at once.
+KillMode=mixed
 
 # Desktop first: the daemon and every command it runs share this cgroup.
 Nice=10
