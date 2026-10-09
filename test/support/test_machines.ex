@@ -59,6 +59,22 @@ defmodule Xeito.TestMachines.Patient do
   def note(ctx, _data), do: Map.update(ctx, :notes, 1, &(&1 + 1))
 end
 
+defmodule Xeito.TestMachines.Reviewing do
+  @moduledoc "Waits in `ask_human` for `:approved` or `:denied`, as the chat machine does for a command."
+
+  use Xeito.Machine, version: "1.0.0"
+
+  initial :ask_human
+
+  state :ask_human, timeout: 60_000 do
+    on :approved, to: :done
+    on :denied, to: :done
+  end
+
+  final :done
+  final :failed
+end
+
 defmodule Xeito.TestMachines.Sleepy do
   @moduledoc "Waits for `:wake`; its 50 ms default timeout is unhandled, so it fails."
 

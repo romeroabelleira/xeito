@@ -12,7 +12,8 @@ defmodule Xeito.Session do
     5. when the run finishes, appends the turn to the conversation history.
 
   A run waiting in an `ask_human` state (for example a `bash` call the `Risk` decision sent to
-  review) is answered with `approve/1` or `deny/1`.
+  review) is answered with `approve/2` or `deny/1`. Approved with a scope (`"session"` or
+  `"always"`), the command is not asked about again (`Xeito.Session.Allowed`).
 
   Slash commands: `/machine <name> [prompt]`, `/run <command>`, `/approve`, `/deny`, `/why`,
   `/budget <usd>`, `/help`, and for step mode (`docs/architecture/06-observability.md#2-step`):
@@ -48,6 +49,7 @@ defmodule Xeito.Session do
   alias Xeito.Policy
   alias Xeito.Run
   alias Xeito.RunSupervisor
+  alias Xeito.Session.Allowed
   alias Xeito.Session.Git
   alias Xeito.Session.Router
   alias Xeito.Skills
@@ -111,9 +113,23 @@ defmodule Xeito.Session do
   @spec prompt(String.t(), String.t()) :: :ok | {:error, term()}
   def prompt(id, text), do: GenServer.call(via(id), {:prompt, text})
 
-  @doc "Approves the command a run is waiting on."
-  @spec approve(String.t()) :: :ok | {:error, :nothing_to_approve}
-  def approve(id), do: GenServer.call(via(id), {:human, :approved})
+  @doc """
+  Approves the command a run is waiting on. With a scope, `"session"` or `"always"`, the command
+  is also remembered and not asked about again (`Xeito.Session.Allowed`).
+  """
+  @spec approve(String.t(), String.t() | nil) ::
+          :ok
+          | {:error, :nothing_to_approve | :not_accepted | :not_a_command | :unknown_scope | {:not_saved, File.posix()}}
+  def approve(id, scope \\ nil)
+  def approve(id, nil), do: GenServer.call(via(id), {:human, :approved})
+
+  def approve(id, scope) when scope in ["session", "always"],
+    do: GenServer.call(via(id), {:human, {:allow, scope(scope)}})
+
+  def approve(_id, _scope), do: {:error, :unknown_scope}
+
+  defp scope("session"), do: :session
+  defp scope("always"), do: :always
 
   @doc "Denies the command a run is waiting on."
   @spec deny(String.t()) :: :ok | {:error, :nothing_to_approve}
@@ -180,6 +196,7 @@ defmodule Xeito.Session do
       machine: nil,
       prompt: nil,
       waiting: nil,
+      allowed: Allowed.new(),
       idle_timeout:
         Keyword.get_lazy(opts, :idle_timeout, fn ->
           Application.get_env(:xeito, :session_idle_timeout, 7_200_000)
@@ -309,6 +326,7 @@ defmodule Xeito.Session do
   @key_lines ~w(/send /drop /halt /next /approve /deny)
 
   defp log_prompt(trimmed, _text, _s) when trimmed in ["" | @key_lines], do: :ok
+  defp log_prompt("/approve " <> _scope, _text, _s), do: :ok
   defp log_prompt(_trimmed, text, s), do: log_event(s, "prompt_entered", %{"text" => text})
 
   defp answers_review?(trimmed, s), do: s.waiting != nil and trimmed != "" and not String.starts_with?(trimmed, "/")
@@ -324,6 +342,7 @@ defmodule Xeito.Session do
   end
 
   defp human_answer(_answer, %{waiting: nil} = s), do: {{:error, :nothing_to_approve}, s}
+  defp human_answer({:allow, scope}, s), do: allow(scope, s)
 
   defp human_answer(answer, s) do
     case answer_human(s.waiting.run, answer) do
@@ -449,7 +468,7 @@ defmodule Xeito.Session do
   defp command([name, arg | _], raw, s) do
     case command_group(name) do
       :start -> start_command(name, arg, raw, s)
-      :turn -> turn_command(name, s)
+      :turn -> turn_command(name, arg, s)
       :info -> info_command(name, arg, s)
       :debug -> debug_command(name, arg, raw, s)
       :undo -> undo_command(name, arg, s)
@@ -484,10 +503,31 @@ defmodule Xeito.Session do
   defp start_command("run", cmd, _raw, s), do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
 
   # Commands for the turn that is running.
-  defp turn_command("approve", s), do: human_command(:approved, s)
-  defp turn_command("deny", s), do: human_command(:denied, s)
-  defp turn_command("halt", s), do: halt(s)
-  defp turn_command(send_or_drop, s), do: queue_command(send_or_drop, s)
+  defp turn_command("approve", arg, s), do: approve_command(arg, s)
+  defp turn_command("deny", _arg, s), do: human_command(:denied, s)
+  defp turn_command("halt", _arg, s), do: halt(s)
+  defp turn_command(send_or_drop, _arg, s), do: queue_command(send_or_drop, s)
+
+  # `/approve` answers the review; `/approve session` and `/approve always` also remember the command.
+  defp approve_command("", s), do: human_command(:approved, s)
+  defp approve_command(scope, s) when scope in ["session", "always"], do: allow_command(scope(scope), s)
+  defp approve_command(arg, s), do: error(s, "/approve takes session or always, not #{inspect(arg)}")
+
+  defp allow_command(scope, s) do
+    case human_answer({:allow, scope}, s) do
+      {:ok, s} -> s
+      {{:error, reason}, s} -> error(s, allow_error(reason))
+    end
+  end
+
+  @allow_errors %{
+    nothing_to_approve: "nothing is waiting for approval",
+    not_a_command: "only a shell command can be allowed; /approve answers this review",
+    not_accepted: "the waiting run did not accept approved"
+  }
+
+  defp allow_error({:not_saved, reason}), do: "approved, but .xeito/allowed.json could not be written: #{inspect(reason)}"
+  defp allow_error(reason), do: Map.fetch!(@allow_errors, reason)
 
   # /send and /drop: the first line typed while a turn ran.
   defp queue_command(_send_or_drop, %{queue: []} = s), do: error(s, "nothing is queued")
@@ -708,14 +748,37 @@ defmodule Xeito.Session do
     end
   end
 
+  # The waiting command is approved and remembered for the scope (`Xeito.Session.Allowed`): the
+  # next review about the very same command is skipped. Only a shell command can be allowed.
+  defp allow(scope, %{waiting: %{run: run, call: call}} = s) do
+    with {:ok, command} <- Allowed.command(call),
+         :ok <- answer_human(run, :approved) do
+      keep_allowed(scope, command, %{s | waiting: nil})
+    else
+      :error -> {{:error, :not_a_command}, s}
+      :ignored -> {{:error, :not_accepted}, s}
+    end
+  end
+
+  # Approved already; what fails here is the write to `.xeito/allowed.json`.
+  defp keep_allowed(scope, command, s) do
+    case Allowed.remember(scope, command, s.cwd, s.allowed) do
+      {:ok, allowed} -> {:ok, notice(%{s | allowed: allowed}, "approved · `#{command}` is now #{allowed_how(scope)}")}
+      {:error, reason} -> {{:error, {:not_saved, reason}}, s}
+    end
+  end
+
+  defp allowed_how(:session), do: "allowed for this session"
+  defp allowed_how(:always), do: "always allowed in this workspace (.xeito/allowed.json)"
+
   # Review states take :approved / :denied (the chat machine); a machine's own ask_human state
   # may continue with :answered and stop with :abort (fix_failing_test).
   @fallback %{approved: :answered, denied: :abort}
 
-  defp answer_human(run, answer) do
+  defp answer_human(run, answer, data \\ %{}) do
     # --- run tracking --------------------------------------------------------------------------
-    with :ignored <- Run.send_event(run, answer, %{}, :human),
-         :ignored <- Run.send_event(run, @fallback[answer], %{}, :human) do
+    with :ignored <- Run.send_event(run, answer, data, :human),
+         :ignored <- Run.send_event(run, @fallback[answer], data, :human) do
       :ignored
     else
       {:ok, _leaf} -> :ok
@@ -790,9 +853,12 @@ defmodule Xeito.Session do
   end
 
   defp track(run_id, %{type: "state_entered", attrs: %{"state" => :ask_human}}, s) do
-    waiting = %{run: run_id, call: pending_call(run_id)}
-    emit(s, "human_needed", run_id, %{"call" => waiting.call})
-    %{s | waiting: waiting}
+    call = pending_call(run_id)
+
+    case Allowed.scope(s.cwd, s.allowed, call) do
+      nil -> wait_for_human(run_id, call, s)
+      scope -> skip_review(run_id, call, scope, s)
+    end
   end
 
   defp track(run_id, %{type: "state_exited", attrs: %{"state" => :ask_human}}, s), do: review_ended(run_id, s)
@@ -811,6 +877,22 @@ defmodule Xeito.Session do
   end
 
   defp track(run_id, event, s), do: track_run(run_id, event, s)
+
+  defp wait_for_human(run_id, call, s) do
+    emit(s, "human_needed", run_id, %{"call" => call})
+    %{s | waiting: %{run: run_id, call: call}}
+  end
+
+  # The command was allowed before (`/approve session|always`): approved as the human would
+  # have, with the scope in the log, and said so. The `Risk` decision has already run.
+  defp skip_review(run_id, call, scope, s) do
+    {:ok, command} = Allowed.command(call)
+
+    case answer_human(run_id, :approved, %{allowed: scope}) do
+      :ok -> notice(s, "· `#{command}` runs without asking: #{allowed_how(scope)}")
+      :ignored -> wait_for_human(run_id, call, s)
+    end
+  end
 
   # --- input while busy ---
 
@@ -1170,6 +1252,8 @@ defmodule Xeito.Session do
     /skill:<name> [request]   run a skill (pi / Agent Skills format)
     /run <command>            run a command once
     /approve · /deny          answer a command waiting for review (or type what to do instead)
+    /approve session|always   approve it and do not ask about this exact command again: for the
+                              rest of this session, or ever in this workspace (.xeito/allowed.json)
     /undo [n] · /redo [n]     revert this session's last n file changes, or put them back
     /steer <text>             a line for the running chat turn, taken at its next model call
                               (Ctrl-J in the TUI); idle, a prompt

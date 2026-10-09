@@ -45,7 +45,9 @@ defmodule Xeito.Client.Render do
   end
 
   defp decision_line("human_needed", %{"call" => call}, pad),
-    do: "#{pad}? review: #{review_what(call)} — y approves, n denies, or say what to do instead\n"
+    do:
+      "#{pad}? review: #{review_what(call)} — y approves (s for this session, a always), n denies, " <>
+        "or say what to do instead\n"
 
   defp decision_line("paused", a, pad),
     do: "#{pad}‖ paused in #{a["state"]} before #{paused_what(a)} — /next · /decide <value> · /continue\n"

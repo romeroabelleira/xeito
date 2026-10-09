@@ -11,6 +11,8 @@
     section: "guards"
   ],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
+  # Which commands run without asking the human again.
+  "lib/xeito/session/allowed.ex" => ["test/xeito/session/allowed_test.exs"],
   # Which skills a turn may choose from, and so whether it needs a model call to decide.
   "lib/xeito/skills/index.ex" => [
     tests: [

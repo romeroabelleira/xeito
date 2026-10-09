@@ -84,6 +84,7 @@ flowchart LR
 | `/budget 0.50` | Sets the run's remote-tier budget ([04](04-delegation.md#guards-on-escalation)) |
 | `/step`, `/next`, `/decide <value>`, `/continue`, `/break …` | Step mode and breakpoints ([06](06-observability.md#2-step)); implemented in P4 |
 | `y` / `n` | Approve or deny a command waiting in review (the TUI's shortcut for `/approve`, `/deny`) |
+| `s` / `a` | Approve it and do not ask about this exact command again: for the rest of the session, or always in this workspace (`/approve session`, `/approve always`; `Xeito.Session.Allowed`, `.xeito/allowed.json`) |
 | `\` then Enter, or a paste | A prompt of several lines: `\` then Enter starts a new line, and a paste keeps its lines instead of sending each (bracketed paste); Up/Down move between the lines |
 | Ctrl-J or `/steer <text>` | Puts the line into the running chat turn, for its next model call; implemented in P4 |
 | A line while a turn runs | Queued in the session and sent when the turn ends normally; held otherwise (`/send`, `/drop`); implemented in P4 |

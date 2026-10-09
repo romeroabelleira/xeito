@@ -300,13 +300,26 @@ defmodule Xeito.TuiTest do
 
     test "a review answer approves or denies, and ends the wait" do
       {state, []} = Tui.update({:review, "y"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"}}
+      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"} = approve}
+      refute Map.has_key?(approve, "allow")
       assert List.last(state.lines) == "  approved"
       refute state.waiting
 
       {state, []} = Tui.update({:review, "n"}, %{tui() | waiting: true})
       assert_receive {:request, %{"cmd" => "deny"}}
       assert List.last(state.lines) == "  denied"
+    end
+
+    test "s and a approve and allow the command, for this session or always" do
+      {state, []} = Tui.update({:review, "s"}, %{tui() | waiting: true})
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "session", "session" => "ses-t"}}
+      assert List.last(state.lines) == "  approved for this session"
+      refute state.waiting
+
+      {state, []} = Tui.update({:review, "a"}, %{tui() | waiting: true})
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "always", "session" => "ses-t"}}
+      assert List.last(state.lines) == "  approved, always"
+      refute state.waiting
     end
 
     test "Ctrl-T toggles the status bar and the daemon's monitor with it" do
@@ -336,7 +349,7 @@ defmodule Xeito.TuiTest do
   describe "answering a review and halting" do
     defp waiting, do: %{tui() | waiting: true, leaf: "ask_human"}
 
-    test "Enter on y or n approves or denies" do
+    test "Enter on y or n approves or denies; on s or a, approves and allows the command" do
       {state, []} = submit(waiting(), "y")
       assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"}}
       refute state.waiting
@@ -344,6 +357,14 @@ defmodule Xeito.TuiTest do
 
       {_, []} = submit(waiting(), " n ")
       assert_receive {:request, %{"cmd" => "deny"}}
+
+      {state, []} = submit(waiting(), "s")
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "session"}}
+      refute state.waiting
+
+      {state, []} = submit(waiting(), " a ")
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "always"}}
+      refute state.waiting
     end
 
     test "other text answers it in words: sent as the prompt, the wait ends" do
@@ -360,9 +381,11 @@ defmodule Xeito.TuiTest do
       assert List.last(state.lines) == "> /why"
     end
 
-    test "without a review, y is an ordinary prompt" do
-      {_, []} = submit(tui(), "y")
-      assert_receive {:request, %{"cmd" => "prompt", "text" => "y"}}
+    test "without a review, y, n, s and a are ordinary prompts" do
+      for answer <- ["y", "n", "s", "a"] do
+        {_, []} = submit(tui(), answer)
+        assert_receive {:request, %{"cmd" => "prompt", "text" => ^answer}}
+      end
     end
 
     test "Esc halts a running turn, and does nothing when idle" do
@@ -678,7 +701,8 @@ defmodule Xeito.TuiTest do
       assert legend == [
                "Risk: the dot beside each command",
                {:marked, :green, "", "safe · runs without asking"},
-               {:marked, :yellow, "", "review · waits for you: y, n, or say what to do instead"},
+               {:marked, :yellow, "",
+                "review · waits for you: y, n, s or a (allow it for this session, or always), or say what to do instead"},
                {:marked, :yellow, "", "abstain · no decider was sure: waits for you too"},
                {:marked, :red, "", "forbidden · refused, never runs"},
                {:marked, :green, "⁹⁴", "the small number · how sure the decider was, in percent"},
@@ -799,7 +823,7 @@ defmodule Xeito.TuiTest do
       assert %{leaf: "intent", decisions: 1, tier: "rule"} = state
 
       waiting = Tui.apply_event(state, event("human_needed", %{}))
-      assert Tui.status_line(waiting, 80) =~ "review: y / n"
+      assert Tui.status_line(waiting, 80) =~ "review: y / n / s / a"
       paused = Tui.apply_event(state, event("paused", %{}))
       assert Tui.status_line(%{paused | scroll: 3}, 80) =~ "paused: Enter steps · scrolled"
 
@@ -854,7 +878,7 @@ defmodule Xeito.TuiTest do
     test "the status line stays at the bottom, below the border, and shows a pending review" do
       rows = %{tui(status_bar: false) | waiting: true} |> Tui.view() |> screen()
       assert border?(Enum.at(rows, -2))
-      assert List.last(rows) =~ ~r/^ ◆ state idle .* review: y \/ n/
+      assert List.last(rows) =~ ~r/^ ◆ state idle .* review: y \/ n \/ s \/ a/
     end
 
     test "the header names the machine; where commands run is in the status line" do

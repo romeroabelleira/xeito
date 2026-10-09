@@ -188,11 +188,12 @@ defmodule Xeito.Api.Connection do
   end
 
   defp session_cmd("prompt", id, req), do: result(Session.prompt(id, req["text"] || ""))
-  defp session_cmd(cmd, id, _req) when cmd in ~w(approve deny), do: result(answer(cmd, id))
+  defp session_cmd(cmd, id, req) when cmd in ~w(approve deny), do: result(answer(cmd, id, req))
   defp session_cmd(cmd, id, _req), do: query(cmd, id)
 
-  defp answer("approve", id), do: Session.approve(id)
-  defp answer("deny", id), do: Session.deny(id)
+  # `approve` with `"allow": "session" | "always"` also remembers the command (`Xeito.Session.Allowed`).
+  defp answer("approve", id, req), do: Session.approve(id, req["allow"])
+  defp answer("deny", id, _req), do: Session.deny(id)
 
   defp query("status", id), do: %{ok: true, status: Session.status(id)}
   defp query("history", id), do: %{ok: true, history: Session.history(id)}

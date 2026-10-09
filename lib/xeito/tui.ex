@@ -447,9 +447,18 @@ defmodule Xeito.Tui do
   defp submit("", state), do: {state, []}
   defp submit(text, state), do: run_line(text, remember(state, text))
 
+  # What each review key asks the daemon, and the echo on the transcript (`Xeito.Session.Allowed`
+  # for s and a).
+  @review_answers %{
+    "y" => {%{"cmd" => "approve"}, "approved"},
+    "n" => {%{"cmd" => "deny"}, "denied"},
+    "s" => {%{"cmd" => "approve", "allow" => "session"}, "approved for this session"},
+    "a" => {%{"cmd" => "approve", "allow" => "always"}, "approved, always"}
+  }
+
   defp review(answer, state) do
-    {cmd, said} = if answer == "y", do: {"approve", "approved"}, else: {"deny", "denied"}
-    request(state, %{"cmd" => cmd, "session" => state.session})
+    {req, said} = Map.fetch!(@review_answers, answer)
+    request(state, Map.put(req, "session", state.session))
     {append(%{state | waiting: false}, "  #{said}\n"), []}
   end
 
@@ -565,9 +574,10 @@ defmodule Xeito.Tui do
 
   # Handled here: these change how this client shows things, never what runs.
 
-  # A pending review: y or n answers it, other text says what to do instead (the daemon takes a
-  # prompt during a review as that answer).
-  defp run_line(answer, %{waiting: true} = state) when answer in ["y", "n"],
+  # A pending review: y or n answers it, s or a answer it and allow the command (for this session,
+  # or always), other text says what to do instead (the daemon takes a prompt during a review as
+  # that answer).
+  defp run_line(answer, %{waiting: true} = state) when answer in ["y", "n", "s", "a"],
     do: handle_update({:review, answer}, %{state | input: TextInput.clear(state.input)})
 
   # The TUI's own commands run here; every other command goes to the daemon.
@@ -704,7 +714,7 @@ defmodule Xeito.Tui do
 
   @risk_meanings [
     {"safe", "runs without asking"},
-    {"review", "waits for you: y, n, or say what to do instead"},
+    {"review", "waits for you: y, n, s or a (allow it for this session, or always), or say what to do instead"},
     {"abstain", "no decider was sure: waits for you too"},
     {"forbidden", "refused, never runs"}
   ]
@@ -1003,7 +1013,7 @@ defmodule Xeito.Tui do
     |> then(&(lead <> Path.join(&1)))
   end
 
-  defp waiting_for(%{waiting: true}), do: " · review: y / n"
+  defp waiting_for(%{waiting: true}), do: " · review: y / n / s / a"
   defp waiting_for(%{paused: true}), do: " · paused: Enter steps"
   defp waiting_for(_state), do: ""
 

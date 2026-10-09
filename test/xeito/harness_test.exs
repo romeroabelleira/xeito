@@ -15,6 +15,7 @@ defmodule Xeito.HarnessTest do
   alias Xeito.Run
   alias Xeito.RunSupervisor
   alias Xeito.Session
+  alias Xeito.Session.Allowed
   alias Xeito.Session.Git
   alias Xeito.Session.Router
 
@@ -667,6 +668,55 @@ defmodule Xeito.HarnessTest do
 
     assert {RunTests, _} = Router.route(:run, "run the tests")
     assert {Chat, _} = Router.route(:edit, "rename this function")
+  end
+
+  test "session: a command allowed for the session or always is not asked about again", %{ws: ws} do
+    log = start_log!()
+    touch = fn name -> {"", [{"bash", %{"command" => "sh -c 'touch #{name}'"}}]} end
+    one = "sh -c 'touch one.txt'"
+    # Six turns: three in the first session, three in a second one in the same workspace.
+    turns = [touch.("one.txt"), {"ok", []}, touch.("one.txt"), {"ok", []}, touch.("two.txt"), {"ok", []}]
+    later = [touch.("two.txt"), {"ok", []}, touch.("one.txt"), {"ok", []}]
+    decisions = %{"What does the user want" => "edit", "Is this shell command safe" => "review"}
+    cfg = ollama(self(), turns ++ later, decisions)
+    id = session(ws, log, cfg)
+
+    :ok = Session.prompt(id, "please do something unusual")
+    assert %{attrs: %{"call" => %{"arguments" => %{"command" => ^one}}}} = next_event("human_needed")
+    :ok = Session.prompt(id, "/approve session")
+    assert %{attrs: %{"text" => "approved · `" <> _ = said}} = next_event("notice")
+    assert said == "approved · `#{one}` is now allowed for this session"
+    next_event("turn_finished")
+    assert File.exists?(Path.join(ws, "one.txt"))
+    File.rm!(Path.join(ws, "one.txt"))
+
+    # The same command again: the Risk decision still runs, the human is not asked.
+    :ok = Session.prompt(id, "again, please")
+    assert %{attrs: %{"text" => "· `" <> _ = said}} = next_event("notice")
+    assert said == "· `#{one}` runs without asking: allowed for this session"
+    next_event("turn_finished")
+    assert File.exists?(Path.join(ws, "one.txt"))
+    refute_received {:xeito, _, %{type: "human_needed"}}
+
+    :ok = Session.prompt(id, "and something else unusual")
+    next_event("human_needed")
+    assert :ok = Session.approve(id, "always")
+    assert %{attrs: %{"text" => said}} = next_event("notice")
+    assert said == "approved · `sh -c 'touch two.txt'` is now always allowed in this workspace (.xeito/allowed.json)"
+    next_event("turn_finished")
+    assert Allowed.always(ws) == ["sh -c 'touch two.txt'"]
+
+    # A later session in the workspace: the `always` command runs without asking, the session's asks again.
+    other = session(ws, log, cfg)
+    :ok = Session.prompt(other, "please do something unusual")
+    assert %{attrs: %{"text" => said}} = next_event("notice")
+    assert said == "· `sh -c 'touch two.txt'` runs without asking: always allowed in this workspace (.xeito/allowed.json)"
+    next_event("turn_finished")
+
+    :ok = Session.prompt(other, "and once more")
+    assert %{attrs: %{"call" => %{"arguments" => %{"command" => ^one}}}} = next_event("human_needed")
+    :ok = Session.deny(other)
+    next_event("turn_finished")
   end
 
   test "session: a text answer to a review is not run; the model is told what to do instead", %{ws: ws} do

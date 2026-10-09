@@ -3,6 +3,8 @@ defmodule Xeito.SessionCommandsTest do
 
   alias Xeito.Decisions.Risk
   alias Xeito.Session
+  alias Xeito.Session.Allowed
+  alias Xeito.Session.Directory
 
   setup do
     ws = Path.join(System.tmp_dir!(), "xeito-cmd-#{System.unique_integer([:positive])}")
@@ -361,11 +363,81 @@ defmodule Xeito.SessionCommandsTest do
         do: assert(Session.parse_breakpoint(spec) == :error, spec)
   end
 
-  test "an answer for a run that has ended meanwhile is not accepted", %{id: id} do
+  # The session waits on a review, as it would after a run entered `ask_human`.
+  defp wait_on(id, waiting) do
     [{pid, _}] = Registry.lookup(Xeito.SessionRegistry, id)
-    :sys.replace_state(pid, &%{&1 | waiting: %{run: "ses-gone/t1", call: nil}})
+    :sys.replace_state(pid, &%{&1 | waiting: waiting})
+  end
+
+  test "an answer for a run that has ended meanwhile is not accepted", %{id: id} do
+    wait_on(id, %{run: "ses-gone/t1", call: nil})
 
     assert Session.approve(id) == {:error, :not_accepted}
     assert {:error, "the waiting run did not accept denied"} = reply(id, "/deny")
+  end
+
+  describe "/approve session and /approve always: a command not asked about again" do
+    defp bash(command), do: %{"tool" => "bash", "arguments" => %{"command" => command}}
+
+    test "with nothing waiting, or with a scope that is neither", %{id: id} do
+      assert {:error, "nothing is waiting for approval"} = reply(id, "/approve session")
+      assert {:error, "nothing is waiting for approval"} = reply(id, "/approve always")
+      assert {:error, "/approve takes session or always, not \"forever\""} = reply(id, "/approve forever")
+      assert Session.approve(id, "session") == {:error, :nothing_to_approve}
+      assert Session.approve(id, "forever") == {:error, :unknown_scope}
+    end
+
+    test "a review that is not about a shell command cannot be allowed", %{id: id} do
+      wait_on(id, %{run: "ses-gone/t1", call: %{"tool" => "review", "summary" => "commit it"}})
+
+      assert {:error, "only a shell command can be allowed; /approve answers this review"} =
+               reply(id, "/approve session")
+
+      assert Session.approve(id, "always") == {:error, :not_a_command}
+    end
+
+    test "a run that has ended meanwhile is not accepted, and nothing is remembered", %{id: id, ws: ws} do
+      wait_on(id, %{run: "ses-gone/t1", call: bash("mix ci")})
+
+      assert {:error, "the waiting run did not accept approved"} = reply(id, "/approve always")
+      assert Session.approve(id, "always") == {:error, :not_accepted}
+      assert Allowed.always(ws) == []
+    end
+
+    # A run waiting in `ask_human` for a command, as the chat machine would after the Risk decision.
+    defp reviewing(id, log, command) do
+      {:ok, run} = Xeito.RunSupervisor.start_run(Xeito.TestMachines.Reviewing, %{}, run_id: run_id(), log: log)
+      wait_on(id, %{run: run, call: bash(command)})
+      run
+    end
+
+    test "approved for the session: the run goes on, the command is remembered", %{id: id, log: log} do
+      run = reviewing(id, log, "mix ci")
+      assert reply(id, "/approve session") == {:notice, "approved · `mix ci` is now allowed for this session"}
+      await_exit(run)
+      assert %{waiting: nil} = Session.status(id)
+      assert {:error, "nothing is waiting for approval"} = reply(id, "/approve session")
+    end
+
+    test "approved, but the workspace file cannot be written", %{id: id, log: log, ws: ws} do
+      File.mkdir_p!(Path.join([ws, ".xeito", "allowed.json"]))
+
+      run = reviewing(id, log, "mix ci")
+      assert Session.approve(id, "always") == {:error, {:not_saved, :eisdir}}
+      await_exit(run)
+      assert %{waiting: nil} = Session.status(id)
+
+      reviewing(id, log, "git push")
+
+      assert {:error, "approved, but .xeito/allowed.json could not be written: :eisdir"} =
+               reply(id, "/approve always")
+    end
+
+    test "review answers are not kept for Up/Down", %{id: id, log: log, ws: ws} do
+      reply(id, "/approve session")
+      reply(id, "/approve")
+      reply(id, "/why")
+      assert Directory.prompts(log, ws) == ["/why"]
+    end
   end
 end

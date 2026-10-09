@@ -108,7 +108,7 @@ defmodule Xeito.Client.RenderTest do
       review = &line("human_needed", %{"call" => &1})
 
       assert review.(%{"tool" => "bash", "arguments" => %{"command" => "rm x"}}) ==
-               "? review: run `rm x` — y approves, n denies, or say what to do instead\n"
+               "? review: run `rm x` — y approves (s for this session, a always), n denies, or say what to do instead\n"
 
       assert review.(%{"summary" => "write a.ex"}) =~ "review: write a.ex —"
       assert review.(%{"tool" => "edit"}) =~ "review: edit —"
