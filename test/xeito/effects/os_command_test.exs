@@ -30,6 +30,17 @@ defmodule Xeito.Effects.OsCommandTest do
     assert {:exited, 0, "here.txt\n"} = sh("ls", ws)
   end
 
+  test "output is handed on as it arrives, in order, as well as returned", %{ws: ws} do
+    test = self()
+    on_output = &send(test, {:chunk, &1})
+
+    assert {:exited, 0, output} = sh("echo one; sleep 0.2; echo two", ws, on_output: on_output)
+    assert_received {:chunk, "one\n"}
+    assert_received {:chunk, "two\n"}
+    refute_received {:chunk, _}
+    assert output == "one\ntwo\n"
+  end
+
   test "a timeout returns the output so far and kills the command's children too", %{ws: ws} do
     assert {:timeout, output} = sh("echo started; " <> @with_child, ws, timeout: 300)
     assert output == "started\n"

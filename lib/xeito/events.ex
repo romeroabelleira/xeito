@@ -1,13 +1,15 @@
 defmodule Xeito.Events do
   @moduledoc """
   Live event feed for clients (TUI, CLI, bridge): everything a run appends to the log, plus
-  ephemeral stream deltas that are not logged (model tokens).
+  ephemeral streams that are not logged: model tokens and the output of running commands.
 
   Subscribers receive `{:xeito, run_id, event}` messages, where `event` is one of:
 
     * `%{type: "state_entered", attrs: %{...}}` and every other logged event type, with the
       attributes that went into the log
     * `%{type: "delta", attrs: %{"effect_id" => id, "text" => text}}` for streamed model output
+    * `%{type: "output", attrs: %{"effect_id" => id, "text" => text}}` for a running command's
+      output, as it arrives; the logged result holds it whole when the command ends
 
   Topics are run ids, or `:all`. Child runs (escalations, sub-machines) have ids that extend
   their parent's (`<parent>/e3/esc`), so a client following a session subscribes to `:all` and
@@ -47,6 +49,13 @@ defmodule Xeito.Events do
 
   def delta(run_id, effect_id, text),
     do: broadcast(run_id, %{type: "delta", attrs: %{"effect_id" => effect_id, "text" => text}})
+
+  @doc "Publishes a piece of a running command's output (not logged)."
+  @spec output(String.t() | nil, String.t(), String.t()) :: :ok
+  def output(nil, _effect_id, _text), do: :ok
+
+  def output(run_id, effect_id, text),
+    do: broadcast(run_id, %{type: "output", attrs: %{"effect_id" => effect_id, "text" => text}})
 
   @doc "Publishes a run notice that is not logged (for example `paused` in step mode)."
   @spec transient(String.t(), String.t(), map()) :: :ok

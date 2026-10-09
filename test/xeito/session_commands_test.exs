@@ -392,6 +392,18 @@ defmodule Xeito.SessionCommandsTest do
                    2_000
   end
 
+  test "a paused run stays paused when output of its command arrives late", %{id: id} do
+    assert {:notice, "step mode on"} = reply(id, "/step")
+    :ok = Session.prompt(id, "/run true")
+    assert_receive {:xeito, _, %{type: "paused", run: run}}, 5_000
+
+    [{pid, _}] = Registry.lookup(Xeito.SessionRegistry, id)
+    send(pid, {:xeito, run, %{type: "output", attrs: %{"effect_id" => run <> "/e1", "text" => "late\n"}}})
+
+    :ok = Session.prompt(id, "/next")
+    assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :done}}}, 5_000
+  end
+
   test "/machine starts any registered machine with the input it needs", %{id: id} do
     for name <- ~w(check commit fix_failing_test run_tests) do
       :ok = Session.prompt(id, "/machine #{name}")

@@ -2,10 +2,11 @@ defmodule Xeito.Effects.Local do
   @moduledoc """
   Executes effects on the local machine, confined to the effect's workspace (`:cwd`).
 
-    * `bash` runs `sh -c` in the workspace. Output is merged (stderr into stdout) and
-      truncated to `opts[:max_output]` bytes (default 64 KiB). On timeout the result is
-      `exit_status: 124` and `timed_out: true`, with the output so far. A timeout or a halt stops the command and every
-      process it started (`Xeito.Effects.OsCommand`).
+    * `bash` runs `sh -c` in the workspace. Output is merged (stderr into stdout), published to
+      the run's clients as it arrives (`Xeito.Events.output/3`), and truncated to
+      `opts[:max_output]` bytes (default 64 KiB). On timeout the result is `exit_status: 124`
+      and `timed_out: true`, with the output so far. A timeout or a halt stops the command and
+      every process it started (`Xeito.Effects.OsCommand`).
     * `read` / `write` / `edit` resolve paths relative to the workspace and refuse anything
       outside it. `edit` replaces exactly one occurrence of the old text, or fails.
     * `chat` runs one chat-model turn with the core tools (`Xeito.Chat`) and streams its output
@@ -99,7 +100,7 @@ defmodule Xeito.Effects.Local do
     cwd = workspace!(args)
 
     if File.dir?(cwd),
-      do: effect |> Shape.shape(run_bash(cwd, args, opts)) |> with_ref(effect),
+      do: effect |> Shape.shape(run_bash(cwd, effect, opts)) |> with_ref(effect),
       else: workspace_missing(cwd)
   end
 
@@ -257,10 +258,12 @@ defmodule Xeito.Effects.Local do
   end
 
   # With the workspace's own tool versions, when it pins them with mise (`Xeito.Effects.MiseEnv`).
-  defp run_bash(cwd, args, opts) do
+  # Its output is published as it arrives, for clients following the run (`Xeito.Events`).
+  defp run_bash(cwd, %Effect{id: id, args: args}, opts) do
     {exe, argv} = MiseEnv.command(cwd, args.cmd)
+    on_output = &Xeito.Events.output(opts[:run_id], id, &1)
 
-    case OsCommand.run(exe, argv, cd: cwd, timeout: args.timeout) do
+    case OsCommand.run(exe, argv, cd: cwd, timeout: args.timeout, on_output: on_output) do
       {:exited, status, output} ->
         %{exit_status: status, output: truncate(MiseEnv.explain(output, status, cwd), opts)}
 

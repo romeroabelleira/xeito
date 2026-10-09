@@ -132,6 +132,9 @@ defmodule Xeito.Tui do
         Keyword.get(opts, :earlier, []) ++
           banner(opts[:cwd]) ++ [header(session, Keyword.get(opts, :continued, false))],
       partial: "",
+      # The last lines of a running command's output, and the one being written.
+      live: [],
+      live_partial: "",
       input: TextInput.set_focused(input, true),
       width: cols,
       height: rows,
@@ -704,10 +707,43 @@ defmodule Xeito.Tui do
     track(%{state | usage: StatusBar.count(state.usage, event), marker: risk_marker(a)}, "decision_made", event)
   end
 
+  # A running command's output is a live tail, not transcript: its result shows it once it ends.
+  def apply_event(state, %{"event" => "output", "attrs" => %{"text" => text}}), do: live(state, text)
+
   def apply_event(state, %{"event" => type} = event) do
     %{state | usage: StatusBar.count(state.usage, event)}
     |> track(type, event)
+    |> settle_live(type)
     |> append(Render.line(event))
+  end
+
+  @live_rows 5
+
+  defp live(state, text) do
+    {complete, [partial]} = (state.live_partial <> text) |> String.split("\n") |> Enum.split(-1)
+    %{state | live: Enum.take(state.live ++ Enum.map(complete, &plain/1), -@live_rows), live_partial: partial}
+  end
+
+  # The tail goes when its command ends, another starts, or the turn is over.
+  defp settle_live(state, type) when type in ~w(effect_requested effect_completed turn_finished disconnected),
+    do: %{state | live: [], live_partial: ""}
+
+  defp settle_live(state, _type), do: state
+
+  # What a terminal would show of a line: no colours, and a line redrawn with `\r` (a progress
+  # bar) in its latest state.
+  defp plain(line) do
+    line
+    |> String.replace(~r/\e\[[0-9;?]*[ -\/]*[@-~]/, "")
+    |> String.trim_trailing("\r")
+    |> String.split("\r")
+    |> List.last()
+  end
+
+  defp live_rows(state) do
+    partial = plain(state.live_partial)
+    lines = if partial == "", do: state.live, else: state.live ++ [partial]
+    for line <- Enum.take(lines, -@live_rows), do: pad("   │ " <> line, state.width)
   end
 
   @risk_colors %{"safe" => :green, "review" => :yellow, "abstain" => :yellow, "forbidden" => :red}
@@ -815,10 +851,12 @@ defmodule Xeito.Tui do
         _ -> []
       end
 
+    live = live_rows(state)
     queued = queue_rows(state)
     prompt = prompt_lines(state, state.width)
-    # The header, the queue, the prompt between its two borders, the bar and the status line.
-    body_height = max(state.height - 4 - length(prompt) - length(bar) - length(queued), 1)
+    # The header, a running command's tail, the queue, the prompt between its two borders, the
+    # bar and the status line.
+    body_height = max(state.height - 4 - length(prompt) - length(bar) - length(live) - length(queued), 1)
 
     stack(:vertical, [
       text(
@@ -826,6 +864,7 @@ defmodule Xeito.Tui do
         header_style()
       ),
       stack(:vertical, Enum.map(visible(state, body_height), &line_node/1)),
+      stack(:vertical, Enum.map(live, &text(&1, Style.new(attrs: [:dim])))),
       stack(:vertical, Enum.map(queued, &text(pad(&1, state.width), Style.new(attrs: [:dim])))),
       border(state.width),
       stack(:vertical, prompt),

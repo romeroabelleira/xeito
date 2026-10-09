@@ -64,6 +64,8 @@ defmodule Xeito.TuiTest do
       usage: StatusBar.new(),
       lines: [],
       partial: "",
+      live: [],
+      live_partial: "",
       marker: nil,
       decisions: 0,
       tier: nil,
@@ -395,6 +397,49 @@ defmodule Xeito.TuiTest do
       {_, []} = Tui.update(:halt, tui())
       {_, []} = Tui.update(:halt, %{tui() | leaf: "disconnected"})
       refute_receive {:request, _}
+    end
+  end
+
+  describe "a running command's output: a live tail above the prompt" do
+    defp output(state, text),
+      do:
+        Tui.apply_event(state, %{
+          "event" => "output",
+          "run" => "ses-x/t1",
+          "attrs" => %{"effect_id" => "ses-x/t1/e1", "text" => text}
+        })
+
+    defp live_rows(state), do: state |> Tui.view() |> screen() |> Enum.filter(&(is_binary(&1) and &1 =~ "│"))
+
+    test "shows the last lines as they arrive, the line being written included; the transcript is left alone" do
+      before = tui(status_bar: false)
+      state = before |> output("one\ntwo\nthr") |> output("ee\nfour\nfive\nsix\nsev")
+
+      assert Enum.map(live_rows(state), &String.trim_trailing/1) ==
+               Enum.map(["three", "four", "five", "six", "sev"], &("   │ " <> &1))
+
+      assert state.lines == before.lines
+      assert length(screen(Tui.view(state))) == state.height
+    end
+
+    test "a progress line shows its latest state, without colours; long lines are cut to the width" do
+      state = [status_bar: false] |> tui() |> output("\e[32m10%\e[0m\r50%\r90%\n") |> output(String.duplicate("x", 200))
+      assert [progress, long] = live_rows(state)
+      assert String.trim_trailing(progress) == "   │ 90%"
+      assert String.length(long) == state.width
+    end
+
+    test "goes away when the command ends, or the turn does" do
+      running = output(tui(status_bar: false), "building\n")
+
+      completed = %{
+        "event" => "effect_completed",
+        "run" => "ses-x/t1",
+        "attrs" => %{"kind" => "bash", "result" => %{"exit_status" => 0, "output" => "building\n"}}
+      }
+
+      assert live_rows(Tui.apply_event(running, completed)) == []
+      assert live_rows(Tui.apply_event(running, %{"event" => "turn_finished", "attrs" => %{"status" => "halted"}})) == []
     end
   end
 

@@ -984,7 +984,9 @@ defmodule Xeito.Session do
   defp track_run(run_id, %{type: "run_finished"}, s),
     do: %{s | live: MapSet.delete(s.live, run_id), paused: unpause(s.paused, run_id)}
 
-  defp track_run(run_id, %{type: type}, s) when type != "delta", do: %{s | paused: unpause(s.paused, run_id)}
+  # Streamed pieces (model tokens, a command's output) can arrive after the run paused on the
+  # result they belong to: they do not mean it moved on.
+  defp track_run(run_id, %{type: type}, s) when type not in ~w(delta output), do: %{s | paused: unpause(s.paused, run_id)}
   defp track_run(_run_id, _event, s), do: s
 
   defp stopped?(%{status: :halted}), do: true

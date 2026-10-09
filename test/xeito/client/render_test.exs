@@ -158,6 +158,8 @@ defmodule Xeito.Client.RenderTest do
       assert line("error", %{"text" => "boom"}) == "✗ boom\n"
       assert Render.line(%{"event" => "closed"}) =~ "session closed while idle"
       assert line("tick", %{}) == ""
+      # A running command's output is not transcript: the result shows it once it ends.
+      assert line("output", %{"effect_id" => "ses-1/t1/e1", "text" => "compiling\n"}) == ""
     end
   end
 end

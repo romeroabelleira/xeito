@@ -13,6 +13,9 @@ defmodule Xeito.Effects.OsCommand do
       the command is linked to it, and
     * when the daemon's VM dies: erlexec's port program stops what it started.
 
+  `:on_output` (`fun(binary)`) is called with each piece of output as it arrives, besides it
+  being returned at the end.
+
   A command that leaves its group (`setsid`, a daemonising double fork) is not stopped.
   """
 
@@ -40,29 +43,35 @@ defmodule Xeito.Effects.OsCommand do
     # are trapped while it runs.
     trapping = Process.flag(:trap_exit, true)
     {:ok, pid, os_pid} = :exec.run_link(Enum.map([path | args], &to_charlist/1), options)
-    result = finish(pid, collect(os_pid, pid, now() + Keyword.get(opts, :timeout, 60_000), []), grace)
+    on_output = Keyword.get(opts, :on_output, fn _chunk -> :ok end)
+    collected = collect({os_pid, pid, on_output}, now() + Keyword.get(opts, :timeout, 60_000), [])
+    result = finish(pid, collected, on_output, grace)
     unlink(pid)
     Process.flag(:trap_exit, trapping)
     result
   end
 
-  defp collect(os_pid, pid, deadline, acc) do
+  defp collect({os_pid, pid, on_output} = command, deadline, acc) do
     receive do
-      {:stdout, ^os_pid, data} -> collect(os_pid, pid, deadline, [acc | data])
-      {:EXIT, ^pid, reason} -> {:exited, status(reason), IO.iodata_to_binary(acc)}
+      {:stdout, ^os_pid, data} ->
+        on_output.(data)
+        collect(command, deadline, [acc | data])
+
+      {:EXIT, ^pid, reason} ->
+        {:exited, status(reason), IO.iodata_to_binary(acc)}
     after
       max(deadline - now(), 0) -> {:timeout, os_pid, IO.iodata_to_binary(acc)}
     end
   end
 
   # A timeout: what the group prints while it stops is part of the output.
-  defp finish(pid, {:timeout, os_pid, output}, grace) do
+  defp finish(pid, {:timeout, os_pid, output}, on_output, grace) do
     :exec.stop(pid)
-    {_how, _status, rest} = collect(os_pid, pid, now() + grace + 2_000, [])
+    {_how, _status, rest} = collect({os_pid, pid, on_output}, now() + grace + 2_000, [])
     {:timeout, output <> rest}
   end
 
-  defp finish(_pid, exited, _grace), do: exited
+  defp finish(_pid, exited, _on_output, _grace), do: exited
 
   # A command that did not end even after SIGKILL must not reach this process later.
   defp unlink(pid) do

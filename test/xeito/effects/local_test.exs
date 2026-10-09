@@ -27,6 +27,18 @@ defmodule Xeito.Effects.LocalTest do
     assert output == "started\n[timed out after 200 ms; the command and its children were stopped]\n"
   end
 
+  test "a command's output is published as it runs, for the run that asked for it", %{ws: ws} do
+    Xeito.Events.subscribe("run-live")
+    effect = %{Effect.bash("echo hello", cwd: ws) | id: "run-live/e1"}
+
+    Local.run(effect, run_id: "run-live", undo: false)
+    assert_received {:xeito, "run-live", %{type: "output", attrs: %{"effect_id" => "run-live/e1", "text" => "hello\n"}}}
+
+    # Without a run, nobody follows it.
+    Local.run(Effect.bash("echo quiet", cwd: ws), [])
+    refute_received {:xeito, _, %{type: "output"}}
+  end
+
   test "write and read stay inside the workspace", %{ws: ws} do
     assert %{ok: true} = Local.run(Effect.write("sub/a.txt", "hello", cwd: ws), [])
     assert %{ok: true, content: "hello"} = Local.run(Effect.read("sub/a.txt", cwd: ws), [])
