@@ -45,6 +45,9 @@ defmodule Xeito.MixProject do
       {:req, "~> 0.7"},
       # Run events for handlers in the daemon (Xeito.Telemetry); already a dependency of Req.
       {:telemetry, "~> 1.4"},
+      # Runs shell commands so a timeout or a halt stops them with their process group
+      # (Xeito.Effects.OsCommand); a C++ port program, built with the dependencies.
+      {:erlexec, "~> 2.5"},
       # The TUI client only; not started with the daemon (mix xeito.tui starts it).
       {:term_ui, "~> 1.0", runtime: false},
       {:plug, "~> 1.20", only: :test},

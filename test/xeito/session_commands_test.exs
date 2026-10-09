@@ -301,6 +301,17 @@ defmodule Xeito.SessionCommandsTest do
     assert {:error, "nothing is running"} = reply(id, "/halt")
   end
 
+  test "/halt stops the command and the processes it started", %{id: id, ws: ws} do
+    :ok = Session.prompt(id, "/run sleep 30 & echo $! > child.pid; wait")
+    path = Path.join(ws, "child.pid")
+    eventually(fn -> File.exists?(path) and File.read!(path) =~ ~r/\d+\n/ end)
+    child = path |> File.read!() |> String.trim()
+
+    :ok = Session.prompt(id, "/halt")
+    assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :halted}}}, 2_000
+    eventually(fn -> not match?({_, 0}, System.cmd("kill", ["-0", child], stderr_to_stdout: true)) end, 5_000)
+  end
+
   test "stepping needs a paused run", %{id: id} do
     assert {:error, "no run is paused"} = reply(id, "/next")
     assert {:error, "no run is paused"} = reply(id, "/decide safe")

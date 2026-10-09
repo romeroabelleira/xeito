@@ -4,7 +4,8 @@ defmodule Xeito.Effects.Local do
 
     * `bash` runs `sh -c` in the workspace. Output is merged (stderr into stdout) and
       truncated to `opts[:max_output]` bytes (default 64 KiB). On timeout the result is
-      `exit_status: 124`.
+      `exit_status: 124`, with the output so far. A timeout or a halt stops the command and every
+      process it started (`Xeito.Effects.OsCommand`).
     * `read` / `write` / `edit` resolve paths relative to the workspace and refuse anything
       outside it. `edit` replaces exactly one occurrence of the old text, or fails.
     * `chat` runs one chat-model turn with the core tools (`Xeito.Chat`) and streams its output
@@ -29,6 +30,7 @@ defmodule Xeito.Effects.Local do
   alias Xeito.Decision
   alias Xeito.Effect
   alias Xeito.Effects.MiseEnv
+  alias Xeito.Effects.OsCommand
   alias Xeito.Escalation
   alias Xeito.Log
   alias Xeito.Policy
@@ -257,11 +259,14 @@ defmodule Xeito.Effects.Local do
   # With the workspace's own tool versions, when it pins them with mise (`Xeito.Effects.MiseEnv`).
   defp run_bash(cwd, args, opts) do
     {exe, argv} = MiseEnv.command(cwd, args.cmd)
-    task = Task.async(fn -> System.cmd(exe, argv, cd: cwd, stderr_to_stdout: true) end)
 
-    case Task.yield(task, args.timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {output, status}} -> %{exit_status: status, output: truncate(MiseEnv.explain(output, status, cwd), opts)}
-      nil -> %{exit_status: 124, output: "timed out after #{args.timeout} ms"}
+    case OsCommand.run(exe, argv, cd: cwd, timeout: args.timeout) do
+      {:exited, status, output} ->
+        %{exit_status: status, output: truncate(MiseEnv.explain(output, status, cwd), opts)}
+
+      {:timeout, output} ->
+        stopped = "[timed out after #{args.timeout} ms; the command and its children were stopped]\n"
+        %{exit_status: 124, output: truncate(output <> stopped, opts)}
     end
   end
 

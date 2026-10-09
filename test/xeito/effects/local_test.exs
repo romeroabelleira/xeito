@@ -19,8 +19,11 @@ defmodule Xeito.Effects.LocalTest do
     assert %{exit_status: 3} = Local.run(Effect.bash("exit 3", cwd: ws), [])
   end
 
-  test "bash times out", %{ws: ws} do
-    assert %{exit_status: 124} = Local.run(Effect.bash("sleep 5", cwd: ws, timeout: 50), [])
+  test "bash times out, with the output so far and how long it was given", %{ws: ws} do
+    assert %{exit_status: 124, output: output} =
+             Local.run(Effect.bash("echo started; sleep 5", cwd: ws, timeout: 200), [])
+
+    assert output == "started\n[timed out after 200 ms; the command and its children were stopped]\n"
   end
 
   test "write and read stay inside the workspace", %{ws: ws} do
