@@ -83,4 +83,6 @@ Work test-first, at three levels:
 2. **Steps** with `Xeito.Machine.Engine.handle(Xeito.Machine.fetch!(Module), state, ctx, event, data)`, which returns the next state, context and effects without running anything.
 3. **Runs** with a scripted runner (`scripted_runner/2` in `test/support/xeito_case.ex`; examples in `test/xeito/run_test.exs`); sessions and routing with the scripted model in `test/xeito/harness_test.exs`.
 
+`test/xeito/architecture_test.exs` fails if a machine, or the engine, calls IO, processes, configuration or the runner side directly: return an effect instead.
+
 A machine whose guards decide something that matters (limits, safety, when to stop) belongs in `test/mutate.exs`, by itself or one `# --- section ---`; see the `xeito-quality-gate` skill.

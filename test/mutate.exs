@@ -28,5 +28,7 @@
   ],
   "lib/xeito/undo/branch.ex" => ["test/xeito/undo_test.exs", "test/xeito/undo_env_test.exs"],
   "lib/xeito/undo/outside.ex" => [tests: ["test/xeito/undo_test.exs"], only_when_changed: true],
+  # What leaves a run for telemetry handlers, which may send it off the machine.
+  "lib/xeito/telemetry.ex" => ["test/xeito/telemetry_test.exs"],
   "lib/xeito/tui.ex" => [tests: ["test/xeito/tui_test.exs"], section: "the prompt line"]
 }

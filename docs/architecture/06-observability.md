@@ -6,8 +6,9 @@ Being able to *see* the underlying state machine is the point of Xeito. Observab
 
 ## 1. Trace
 
-- **Live.** Every transition emits a `:telemetry` event (`[:xeito, :run, :transition]`, `[:xeito, :decision, :stop]`, …). The TUI's status line and the web inspector subscribe to these through Phoenix.PubSub.
-- **Persisted.** The same events land in the OCEL log ([05](05-event-log-and-process-mining.md)). Telemetry is a projection of the log, never a separate truth.
+- **Persisted.** Every transition, effect and decision lands in the OCEL log ([05](05-event-log-and-process-mining.md)), the source of truth.
+- **Live, for clients.** What a run appends to the log is also published on `Xeito.Events`, an in-process feed the daemon forwards to clients over its socket. The TUI's transcript and status line follow it, and a client that reconnects reads the log first.
+- **Live, for handlers in the daemon.** `Xeito.Telemetry` emits a `:telemetry` event for each logged run event, right after the log write: `[:xeito, :run, :start]`, `[:xeito, :run, :transition]`, `[:xeito, :effect, :stop]`, `[:xeito, :decision, :stop]` (with confidence, latency, tokens, cost and energy as measurements) and `[:xeito, :run, :stop]`. Metrics and the exporter below attach to these. Telemetry is a projection of the log, never a separate truth. A run's input and an effect's result are left out, since a handler may send what it gets off the machine.
 - **Interop.** An optional exporter maps runs to OpenTelemetry traces: run = trace, state = span, and model calls follow the OTel GenAI semantic conventions. Existing tools (Langfuse, Arize Phoenix, Jaeger) can then show Xeito runs next to other systems, without Xeito depending on any of them.
 
 ## 2. Step

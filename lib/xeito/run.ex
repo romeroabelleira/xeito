@@ -625,6 +625,7 @@ defmodule Xeito.Run do
 
   defp log!(data, events) do
     {:ok, _seqs} = Log.append(data.log, data.run_id, events)
+    Xeito.Telemetry.emit(data.run_id, events)
     Xeito.Events.publish(data.run_id, events)
     :ok
   end

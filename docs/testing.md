@@ -37,6 +37,7 @@ Where the tests are:
 - `test/xeito/` holds unit tests: machine guards and actions, decisions, the TUI's `update/2`, the renderer and the log store. They are fast and mostly `async`.
 - `test/xeito/harness_test.exs` drives whole sessions against a scripted model: a `Req.Test` stub speaking Ollama's API. It is the integration test of routing, the chat loop and the client API.
 - `test/mix/tasks/` holds the mix tasks, run against real temporary workspaces and logs.
+- `test/xeito/architecture_test.exs` checks the dependency rules between the client, the edges, the core and the machines on the compiled code ([08](architecture/08-tech-stack.md#code-style)).
 - `test/support/` holds the helpers (`Xeito.Case`: `start_log!/0`, `scripted_runner/2`, `eventually/2`) and the CRAP and mutation tools.
 
 Tests never touch your real configuration. Logs and workspaces go to temporary directories, and the TUI's preferences file is passed into `Xeito.Tui.new/1`.

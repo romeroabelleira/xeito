@@ -25,7 +25,7 @@ flowchart TB
     DEC[Decision runner<br/>typed decisions · 03]
     DEL[Delegation machine<br/>rules→local_decision→local→remote/human · 04]
     EFF[Effect runner<br/>read · write · edit · bash · policy · 10]
-    TEL[Telemetry + PubSub · 06]
+    TEL[Telemetry + live feed · 06]
     LOG[(OCEL 2.0 log<br/>SQLite · 05)]
     META[Meta machine<br/>mine→propose→review→release · 05]
   end

@@ -43,6 +43,8 @@ defmodule Xeito.MixProject do
     [
       {:exqlite, "~> 0.41"},
       {:req, "~> 0.7"},
+      # Run events for handlers in the daemon (Xeito.Telemetry); already a dependency of Req.
+      {:telemetry, "~> 1.4"},
       # The TUI client only; not started with the daemon (mix xeito.tui starts it).
       {:term_ui, "~> 1.0", runtime: false},
       {:plug, "~> 1.20", only: :test},
