@@ -32,6 +32,21 @@ defmodule Xeito.LogTest do
            ] = Log.read_run(log, "r1")
   end
 
+  test "keeps the log in WAL mode and syncs every commit to disk" do
+    log = start_log!()
+
+    assert [["wal"]] = Log.query(log, "PRAGMA journal_mode")
+    # 2 is FULL: a commit survives a power cut, not only a crash.
+    assert [[2]] = Log.query(log, "PRAGMA synchronous")
+  end
+
+  test "refuses to start when the log cannot use WAL mode" do
+    Process.flag(:trap_exit, true)
+
+    # An in-memory database stays in "memory" journal mode whatever is asked for.
+    assert {:error, {{:badmatch, [["memory"]]}, _}} = Log.start_link(path: ":memory:")
+  end
+
   test "writes the OCEL 2.0 relational layout" do
     log = start_log!()
 

@@ -3,7 +3,7 @@ defmodule Xeito.Log do
   Append-only OCEL 2.0 event log in SQLite. It is the single source of truth for runs.
 
   One process owns the connection (a single writer, WAL mode). `append/3` is synchronous:
-  it returns only after the events are committed. A run acknowledges a state change only after
+  it returns only after the events are committed and synced to disk (`synchronous=FULL`). A run acknowledges a state change only after
   the change is logged (invariant 1 in `docs/architecture/02-state-machine-core.md`).
 
   Every event gets a per-run sequence number, an OCEL id `"<run_id>:<seq>"`, a UTC timestamp,
@@ -114,8 +114,10 @@ defmodule Xeito.Log do
   def init({path, opts}) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
-    :ok = Sqlite3.execute(db, "PRAGMA journal_mode=WAL")
-    :ok = Sqlite3.execute(db, "PRAGMA synchronous=NORMAL")
+    # SQLite answers with the mode it ended up in, which is not WAL where WAL is unsupported.
+    [["wal"]] = select(db, "PRAGMA journal_mode=WAL", [])
+    # FULL, not NORMAL: an acknowledged event must survive a power cut, not only a crash.
+    :ok = Sqlite3.execute(db, "PRAGMA synchronous=FULL")
     :ok = Sqlite3.set_busy_timeout(db, 5_000)
     Enum.each(Schema.statements(), &(:ok = Sqlite3.execute(db, &1)))
     :ok = Store.prepare(db)
