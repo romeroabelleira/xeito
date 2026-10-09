@@ -30,6 +30,10 @@ defmodule Mix.Tasks.Xeito.Mutate do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     case Mutate.mode(System.get_env("XEITO_MUTATE")) do
       :off -> Mix.shell().info("mutation testing is off (XEITO_MUTATE=off)")
       mode -> mutate(args, mode)

@@ -20,6 +20,10 @@ defmodule Mix.Tasks.Xeito.Chat do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     {opts, _, _} =
       OptionParser.parse(args, strict: [cwd: :string, socket: :string, session: :string])
 

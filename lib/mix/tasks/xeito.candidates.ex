@@ -27,6 +27,10 @@ defmodule Mix.Tasks.Xeito.Candidates do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     {opts, _, _} = OptionParser.parse(args, strict: @switches)
     Mix.Task.run("compile")
     path = Path.join([Path.expand(opts[:cwd] || "."), ".xeito", "log.sqlite"])

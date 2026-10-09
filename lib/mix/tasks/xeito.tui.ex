@@ -17,6 +17,10 @@ defmodule Mix.Tasks.Xeito.Tui do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     Application.put_env(:xeito, :tui, config(args))
     {:ok, _} = Application.ensure_all_started(:term_ui)
     with_bracketed_paste(fn -> TermUI.Runtime.run(root: Xeito.Tui) end)

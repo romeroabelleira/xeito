@@ -14,6 +14,10 @@ defmodule Mix.Tasks.Xeito.Export do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     {opts, [module_name], _} = OptionParser.parse(args, strict: [format: :string])
     Mix.Task.run("compile")
 

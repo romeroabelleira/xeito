@@ -38,6 +38,7 @@ Pre-release, in active development (September 2026), in Elixir/OTP ([08-tech-sta
 - See the [implementation plan](docs/implementation-plan.md) and the [benchmarks](bench/).
 
 ```bash
+mix xeito                   # the tasks, with a line on each; any of them takes --help
 mix xeito.daemon            # runs, logs, and the client socket (tier endpoints from the environment)
 mix xeito.tui --cwd PROJECT # terminal UI on a session in PROJECT (or: mix xeito.chat, line mode)
 ```

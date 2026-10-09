@@ -22,6 +22,10 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     {opts, rest, _invalid} = OptionParser.parse(args, strict: @switches)
     Mix.Task.run("compile")
     {set, default_dirs} = set(rest)

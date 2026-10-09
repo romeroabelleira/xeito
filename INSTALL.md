@@ -137,6 +137,8 @@ Run the daemon in a terminal. If you write a launchd agent for it, make sure a s
 
 ## 6. Check that it works
 
+`mix xeito` lists Xeito's tasks with a line on each, and every task explains itself with `--help`. Then open a session on a project:
+
 ```bash
 mix xeito.tui --cwd ~/some/project      # or: mix xeito.chat --cwd ~/some/project (line mode)
 ```

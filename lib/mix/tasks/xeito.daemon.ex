@@ -15,6 +15,10 @@ defmodule Mix.Tasks.Xeito.Daemon do
 
   @impl true
   def run(args) do
+    if Mix.Tasks.Xeito.help?(args), do: Mix.Tasks.Xeito.help(__MODULE__), else: run_task(args)
+  end
+
+  defp run_task(args) do
     {opts, _, _} = OptionParser.parse(args, strict: [socket: :string])
     if socket = opts[:socket], do: System.put_env("XEITO_SOCKET", socket)
 
