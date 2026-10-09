@@ -27,6 +27,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4d · Tier names | tiers named by kind and place (`local_decision`, `local`, `remote_decision`, `remote`, `remote_frontier`); backends separate; remote through OpenRouter | — | steps 1–2 done 2026-10-03; step 3 deferred | [P4d](#p4d--tier-names) |
 | P4e · Skills per turn | the chat prompt lists the project's skills only; a typed decision picks at most one of the user's skills per turn | — | built 2026-10-04 | [P4e](#p4e--skills-chosen-per-turn) |
 | P4g · One-shot mode (planned) | `mix xeito.run`: a skill or machine on stdin, free prose out, streaming and pipes; per-skill tier, variables, named contexts, strategies as machines (ideas from Fabric) | — | after P4f | [P4g](#p4g--one-shot-mode-and-composable-skills) |
+| P4h · Scripts (planned) | a `script` tool: the model hands busywork to an Elixir script whose every call is a logged, gated effect; typed decisions and log objects from scripts; the MCP client with exposure levels (answer to pi's Codemode) | — | after P4g, before P5 | [P4h](#p4h--scripts) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
@@ -479,6 +480,30 @@ Added 2026-10-08, from a survey of [Fabric](https://github.com/danielmiessler/fa
 - `--dry-run` prints the exact prompt a real call would send.
 - With tools off, a one-shot call never issues an effect.
 
+## P4h · Scripts
+
+Added 2026-10-09, from pi's built-in MCP and Codemode (2026-09-29). The concept, with pi's design and the reasons for each choice, is [concepts/scripts.md](concepts/scripts.md). In short: the model writes a script that does many calls and returns only what matters, as in pi; unlike pi, every call is an effect in the log, behind the same gates as a direct call, and scripts that recur are mined into decision types, saved scripts and machines (P5, P7). The case is stronger for a local model than for pi's frontier ones: one script turn replaces dozens of tool turns, each of which costs seconds of prompt processing.
+
+**Decision.** Scripts are Elixir, evaluated with Dune (an allow-list sandbox with reduction, heap, time and atom limits), in a separate small Erlang VM started through erlexec: no credentials, not a distributed node, JSON Lines over stdio to the runner. The benchmark in step 6 checks that the local model writes Elixir scripts well enough; if not, the fallback is JavaScript in QuickJS, in an external process in the same way.
+
+1. **The sandbox VM.** One warm process per session, started on a session's first script and stopped with the session. It evaluates a script with Dune and asks the runner for every outside call; nothing else reaches it. Limits: reductions, heap, wall time (the call's `timeout_s`, as for `bash`). A runaway script is killed with its process group (`Xeito.Effects.OsCommand`). **Test-first**: the protocol codec and the allow-list are pure functions with unit tests; one test shows that `File`, `System`, `Process`, `:os`, `Code` and the clock are refused.
+2. **The `script` tool and effect, read-only first.** The chat machine offers `script` beside the core tools (`Xeito.Tools`); its argument is the program. Inside, `read/1`, `bash/1` (only commands Risk rates safe; one it would send to review fails with an error saying so), `parallel/3` (at most four at a time) and `text/1`. Each call is a child effect of the script's effect, logged with the script's effect id as its parent. The script's output, shaped by `Xeito.Tools.Shape`, is the tool result; inner results reach the model only through it. The chat machine's `executing` state outlasts a script as it outlasts a command (P4 step 2's invariant test).
+3. **Replay.** `now/0` and `random/0` come from the runner and are logged, so a replay re-runs the program and feeds it the logged results. `mix xeito.log verify` covers scripts; a desync names the call that came back differently. Step mode pauses before each inner result.
+4. **Writing, decisions and objects.**
+   - `write/2` and `edit/3`; a script's workspace changes are one `/undo` step, labelled by the script.
+   - `decide(Type, input)` runs a registered decision type through the escalation ladder.
+   - `classify(questions, state)` takes pi's question shapes (`choice`, `score`, `bool`, with criteria) and runs them as an ad-hoc decision type on the `local_decision` tier, or `local` without it. Policy and budgets apply per call.
+   - `remember(object, attrs)` writes an object to the run's OCEL log, related to the decisions about it, so a later question is a query, not a refetch.
+5. **The MCP client, with exposure levels** (brought forward from P9). Servers from `.xeito/mcp.json` and the user's configuration, stdio and streamable HTTP. A tool's exposure is `script` (default: reachable from scripts only), `deferred`, `direct` or `hidden`, per server and per tool, as in pi. Scripts find tools with `search_tools/1`, which reuses the skills' BM25 index (P4f). Each call is an effect. The tool annotations feed Risk's rules: read-only and closed-world is safe by rule, destructive goes to review. An open-world server counts as off-box for the data-locality policy.
+6. **Benchmark** (`bench/`): busywork requests on real repositories (classify the TODO comments by urgency; group the failures of the last CI logs by cause; rate each issue of a tracker export), run with plain tools, with Elixir scripts, with JavaScript scripts, and with pi's Codemode on the same local model. Measured: success, model turns, tokens, wall time, the share of calls decided by rules.
+
+**Exit:**
+- On the benchmark set, scripts take at least five times fewer model turns than plain tools, at equal or better success.
+- Elixir scripts succeed within ten percentage points of JavaScript ones on the same model; otherwise the language decision is reopened before step 5.
+- A script that tries a forbidden command, a file outside the workspace or the clock is stopped, and the log shows why.
+- `/undo` reverses a script's writes as one step, and `mix xeito.log verify` replays a script run exactly.
+- An MCP tool with `script` exposure is called from a script, gated and logged, without appearing in the model's tool list.
+
 ## P5 · OCEL export and process mining (≈4 weeks)
 
 1. Validate the SQLite layout against the OCEL 2.0 spec, and add JSON export.
@@ -528,7 +553,7 @@ Added 2026-10-08, from a survey of [Fabric](https://github.com/danielmiessler/fa
    - **A prompt-build fingerprint:** log a hash of the tool specs and prompt templates with each chat call, so a replay can tell "the machine is unchanged, but the prompt code changed" apart from a real desync.
    - **Speculative decisions:** let a cheap tier predict the next decision, start acting on it, and reconcile when the confirmed decision arrives, as rollback does with predicted inputs. Only confirmed decisions are logged. This is for latency, and needs read-only effects or effects that can be undone.
 7. Implement **promotion** as a Xeito machine. Two additions from reviewing outside work (2026-10-02):
-   - A fourth `PromotionTarget` value, **script**: a request whose runs come down to the same commands becomes a fixed command the runner executes, without a model. The idea is from Anthropic's "code execution with MCP" article.
+   - A fourth `PromotionTarget` value, **script**: a request whose runs come down to the same commands becomes a fixed command the runner executes, without a model. The idea is from Anthropic's "code execution with MCP" article. With [P4h](#p4h--scripts), the logged scripts are the main source: a recurring script becomes a saved, parameterised one, and a recurring `classify` question a decision type ([concept](concepts/scripts.md#5-from-ad-hoc-to-promoted)).
    - The **review step**, for promotion and the meta machine alike, after Microsoft's review-loop skill:
      - each review pass runs as a fresh child machine, so nothing carries over between passes;
      - findings are a typed decision on a closed severity scale (critical, high, medium, low), and critical and high ones are verified before a human sees them;
@@ -555,7 +580,7 @@ Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 
 1. **Standard protocols first** (added 2026-09-30), so one implementation reaches many harnesses:
    - An [MCP](https://modelcontextprotocol.io/) **server**: Xeito's machines and typed decisions become tools for Claude Code, pi, Cursor and other MCP clients. `xeito_decide` is one of them.
-   - An MCP **client**: tools of configured MCP servers become effects, logged and gated by Risk and policy like `bash`.
+   - An MCP **client**: tools of configured MCP servers become effects, logged and gated by Risk and policy like `bash`. Moved to [P4h](#p4h--scripts) step 5 (2026-10-09), where scripts are its main caller.
    - An [ACP](https://agentclientprotocol.com/) (Agent Client Protocol) **agent**: editors that speak ACP, such as Zed, can drive `xeitod` directly. The TUI becomes one client among several.
    - API errors take the [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details shape, so bridges handle them uniformly.
 2. **`pi-xeito`**, the original P4.7 ([07](architecture/07-harness-frontend.md#pi-bridge-optional)): a small pi extension that registers `/xeito <machine>` and an `xeito_decide` tool, talking to the daemon's JSON Lines socket. It would be the only TypeScript in the project.

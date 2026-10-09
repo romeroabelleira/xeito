@@ -1,6 +1,6 @@
 # Concept · Scripts: busywork the model hands off, logged and promotable
 
-Status: concept, 2026-10-09. Not planned yet; the last section proposes where it fits.
+Status: concept, 2026-10-09. Planned as [P4h](../implementation-plan.md#p4h--scripts), after P4g and before P5; the MCP client moves there from P9.
 
 ## The question
 
