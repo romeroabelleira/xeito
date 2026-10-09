@@ -46,6 +46,7 @@ defmodule Xeito.Session do
   alias Xeito.Machines.Commit
   alias Xeito.Machines.FixFailingTest
   alias Xeito.Machines.RunTests
+  alias Xeito.Machines.Shell
   alias Xeito.Policy
   alias Xeito.Run
   alias Xeito.RunSupervisor
@@ -494,13 +495,13 @@ defmodule Xeito.Session do
   # Commands that start a turn.
   defp start_command("machine", rest, _raw, s), do: machine_command(rest, s)
   defp start_command("skill:" <> name, rest, _raw, s), do: skill_command(name, rest, s)
-  defp start_command("run", "", raw, s), do: unknown_command(raw, s)
+  defp start_command("run", "", _raw, s), do: error(s, "/run <command>: a shell command to run in the workspace")
 
   defp start_command("steer", "", _raw, s),
     do: error(s, "/steer <text>: a line for the running chat turn, taken at its next model call")
 
   defp start_command("steer", text, _raw, s), do: steer(text, s)
-  defp start_command("run", cmd, _raw, s), do: start_machine(RunTests, %{cwd: s.cwd, test_cmd: cmd}, "/run", s)
+  defp start_command("run", cmd, _raw, s), do: start_machine(Shell, input_for(Shell, cmd, s), "/run", s)
 
   # Commands for the turn that is running.
   defp turn_command("approve", arg, s), do: approve_command(arg, s)
@@ -789,7 +790,19 @@ defmodule Xeito.Session do
 
   # --- step mode -----------------------------------------------------------------------------
   # Skills are discovered on every turn, so a new or edited SKILL.md applies at once.
-  defp input_for(Chat, text, s) do
+  defp input_for(Chat, text, s), do: chat_input(text, s)
+
+  defp input_for(Commit, text, s), do: %{cwd: s.cwd, request: text}
+
+  defp input_for(Check, _text, s), do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
+
+  defp input_for(FixFailingTest, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
+
+  defp input_for(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
+
+  defp input_for(Shell, cmd, s), do: %{cwd: s.cwd, cmd: cmd}
+
+  defp chat_input(text, s) do
     skills = Skills.discover(s.cwd)
     # Their example requests are written in the background, for later turns (the daemon's worker;
     # outside the daemon there is none, and the cast goes nowhere).
@@ -813,14 +826,6 @@ defmodule Xeito.Session do
       &if(s.max_steps, do: Map.put(&1, :max_steps, s.max_steps), else: &1)
     )
   end
-
-  defp input_for(Commit, text, s), do: %{cwd: s.cwd, request: text}
-
-  defp input_for(Check, _text, s), do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
-
-  defp input_for(FixFailingTest, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
-
-  defp input_for(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
 
   # Built each turn (tens of milliseconds): its text changes only when modules or public
   # functions do, so the model's prompt cache survives ordinary edits.
@@ -1086,8 +1091,12 @@ defmodule Xeito.Session do
   defp answer(Chat, %{ctx: ctx}), do: Map.get(ctx, :answer) || ctx |> Map.get(:error) |> to_text()
 
   defp answer(FixFailingTest, result), do: fix_failing_answer(result)
+  defp answer(Shell, %{ctx: %{cmd: cmd, exit_status: status}}), do: "`#{cmd}` exited #{status}"
 
-  defp answer(machine, %{state: state} = result) do
+  defp answer(machine, result), do: ended(machine, result)
+
+  # Any other machine: its answer or error, else the state it ended in.
+  defp ended(machine, %{state: state} = result) do
     ctx = Map.get(result, :ctx, %{})
 
     Map.get(ctx, :answer) ||
@@ -1139,9 +1148,17 @@ defmodule Xeito.Session do
 
   defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer), do: trim_history(messages)
 
+  # A command the user ran is something they did, not an exchange: a note in their voice, as for
+  # /undo, with what a model would have read of its output.
+  defp remember(%{machine: Shell} = s, %{ctx: ctx}, _answer),
+    do: trim_history(s.history ++ [%{role: "user", content: shell_note(ctx)}])
+
   defp remember(s, _result, answer) do
     trim_history(s.history ++ [%{role: "user", content: s.prompt || ""}, %{role: "assistant", content: answer}])
   end
+
+  defp shell_note(%{cmd: cmd, report: report}), do: "(I ran `#{cmd}` in the workspace:\n```\n#{report}\n```)"
+  defp shell_note(%{cmd: cmd}), do: "(I ran `#{cmd}` in the workspace and stopped it before it finished.)"
 
   @doc false
   def settled(messages) do
@@ -1250,7 +1267,8 @@ defmodule Xeito.Session do
     /machines                 list the machines: what they do, how they are routed, usage
     /machine <name> [prompt]  start a machine directly (#{Enum.join(Map.keys(Router.machines()), ", ")})
     /skill:<name> [request]   run a skill (pi / Agent Skills format)
-    /run <command>            run a command once
+    /run <command>            run a shell command in the workspace, without a model or review;
+                              its output joins the conversation for the next turn
     /approve · /deny          answer a command waiting for review (or type what to do instead)
     /approve session|always   approve it and do not ask about this exact command again: for the
                               rest of this session, or ever in this workspace (.xeito/allowed.json)

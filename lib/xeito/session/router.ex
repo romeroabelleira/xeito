@@ -20,6 +20,7 @@ defmodule Xeito.Session.Router do
   alias Xeito.Machines.Commit
   alias Xeito.Machines.FixFailingTest
   alias Xeito.Machines.RunTests
+  alias Xeito.Machines.Shell
   alias Xeito.Session.TaskRunner
 
   # The registry: name, module, what it does, and how requests reach it (besides /machine).
@@ -30,6 +31,8 @@ defmodule Xeito.Session.Router do
      "intent run/edit + lint, format, warnings, CI or checks"},
     {"commit", Commit, "draft a commit message, ask for approval, commit", "intent run/edit + commit"},
     {"run_tests", RunTests, "run the test command once", "intent run + tests"},
+    {"shell", Shell, "run one shell command, without a model or review; its output joins the conversation",
+     "/run <command>"},
     {"chat", Chat, "free chat: read/write/edit/bash as effects, bash behind Risk", "anything else"}
   ]
 

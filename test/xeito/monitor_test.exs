@@ -266,7 +266,7 @@ defmodule Xeito.MonitorTest do
     end
 
     rows = Router.describe(ws, log)
-    assert Enum.map(rows, & &1.name) == ~w(fix_failing_test check commit run_tests chat)
+    assert Enum.map(rows, & &1.name) == ~w(fix_failing_test check commit run_tests shell chat)
 
     assert %{usage: %{runs: 2, done: 1, failed: 1}, version: "0.1.0", states: 1} =
              Enum.find(rows, &(&1.name == "run_tests"))

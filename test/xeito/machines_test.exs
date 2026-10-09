@@ -273,6 +273,19 @@ defmodule Xeito.MachinesTest do
     assert Xeito.Session.turn_answer(FixFailingTest, fixed) == "fix_failing_test ended in done: Fixed the rounding."
   end
 
+  test "a turn's answer: a shell command's exit, or a machine's error or final state" do
+    answer = &Xeito.Session.turn_answer/2
+    shell = %{status: :failed, state: :failed, ctx: %{cmd: "make", exit_status: 2}}
+    assert answer.(Xeito.Machines.Shell, shell) == "`make` exited 2"
+
+    assert answer.(RunTests, %{status: :done, state: :done, ctx: %{}}) == "Xeito.Machines.RunTests ended in done"
+    assert answer.(RunTests, %{status: :failed, state: :failed, ctx: %{error: "no tests"}}) == "no tests"
+    assert answer.(RunTests, %{status: :failed, state: :failed, ctx: %{error: :timeout}}) == ":timeout"
+    assert answer.(Chat, %{status: :done, state: :answered, ctx: %{answer: "Hi."}}) == "Hi."
+    assert answer.(Chat, %{status: :done, state: :failed, ctx: %{error: {:http, 500}}}) == "{:http, 500}"
+    assert answer.(RunTests, %{status: :halted, state: :running, ctx: %{}}) == "Halted by the user."
+  end
+
   test "routing rules pick the structured machines", %{ws: ws} do
     assert {FixFailingTest, _} = Router.route(:edit, "the login test is red")
     assert {Commit, _} = Router.route(:run, "commit my changes")

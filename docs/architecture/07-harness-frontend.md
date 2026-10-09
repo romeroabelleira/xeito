@@ -77,6 +77,7 @@ flowchart LR
 |---|---|
 | Types a free-form request | An `Intent` decision ([03](03-typed-decisions.md)) either selects a registered machine or falls back to the **free chat machine** |
 | `/machine fix_failing_test` | Starts that machine directly (no intent decision) |
+| `/run <command>` | Runs the command in the workspace through the `shell` machine, with no model or review. Its exit status and output (shaped as for the model's `bash` tool) join the conversation as a note from the user, so the next turn can refer to them |
 | `/step` or `s` | Toggles step mode ([06](06-observability.md#2-step)) |
 | Answers a `human` state prompt | The answer is a typed decision with `actor: :human`, logged as a label |
 | `/why` | Shows the last decisions with their confidence, tier and rationale |

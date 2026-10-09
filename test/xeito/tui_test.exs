@@ -186,7 +186,7 @@ defmodule Xeito.TuiTest do
       assert lines == [
                "Enter sends · \\ Enter new line · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
                "try: fix the failing test · run the checks · commit these changes · explain this code",
-               "machines: chat · check · commit · fix_failing_test · run_tests",
+               "machines: chat · check · commit · fix_failing_test · run_tests · shell",
                "no AGENTS.md in /w",
                "no skills in /w",
                ""

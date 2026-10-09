@@ -211,9 +211,60 @@ defmodule Xeito.SessionCommandsTest do
 
   test "unknown commands, machines and skills are errors", %{id: id} do
     assert {:error, "unknown command /frobnicate; try /help"} = reply(id, "/frobnicate")
-    assert {:error, "unknown command /run; try /help"} = reply(id, "/run")
+    assert {:error, "/run <command>: a shell command to run in the workspace"} = reply(id, "/run")
     assert {:error, "unknown machine \"nope\"; available: " <> _} = reply(id, "/machine nope")
     assert {:error, "no skill named \"nope\""} = reply(id, "/skill:nope")
+  end
+
+  describe "/run <command>" do
+    test "runs a shell command; its output joins the conversation for the next turn", %{id: id} do
+      :ok = Session.prompt(id, "/run echo hello")
+
+      assert_receive {:xeito, _, %{type: "run_selected", attrs: %{"machine" => "Xeito.Machines.Shell"}}}, 2_000
+
+      assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :done, "answer" => answer}}}, 5_000
+      assert answer == "`echo hello` exited 0"
+
+      assert [%{role: "user", content: note}] = Session.history(id)
+      assert note == "(I ran `echo hello` in the workspace:\n```\nexit status 0\nhello\n```)"
+    end
+
+    test "a failing command ends the turn failed, and says so", %{id: id} do
+      :ok = Session.prompt(id, "/run echo nope >&2; exit 3")
+
+      assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :failed, "answer" => answer}}}, 5_000
+      assert answer == "`echo nope >&2; exit 3` exited 3"
+
+      assert [%{content: "(I ran `echo nope >&2; exit 3` in the workspace:\n```\nexit status 3\nnope\n```)"}] =
+               Session.history(id)
+    end
+
+    test "a halted command leaves a note that it did not finish", %{id: id} do
+      :ok = Session.prompt(id, "/run sleep 5")
+      assert_receive {:xeito, _, %{type: "effect_requested"}}, 2_000
+      :ok = Session.prompt(id, "/halt")
+      assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :halted}}}, 2_000
+
+      assert [%{role: "user", content: "(I ran `sleep 5` in the workspace and stopped it before it finished.)"}] =
+               Session.history(id)
+    end
+
+    test "a rebuilt session has the same note", %{id: id, log: log, ws: ws} do
+      :ok = Session.prompt(id, "/run echo again")
+      assert_receive {:xeito, _, %{type: "turn_finished"}}, 5_000
+      history = Session.history(id)
+
+      [{pid, _}] = Registry.lookup(Xeito.SessionRegistry, id)
+      DynamicSupervisor.terminate_child(Xeito.SessionSupervisor, pid)
+      {:ok, ^id} = Session.start(cwd: ws, log: log, id: id)
+
+      assert Session.history(id) == history
+    end
+
+    test "/machine shell <command> is the same machine", %{id: id} do
+      :ok = Session.prompt(id, "/machine shell echo hi")
+      assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"answer" => "`echo hi` exited 0"}}}, 5_000
+    end
   end
 
   test "a review answer with nothing waiting is an error", %{id: id} do
