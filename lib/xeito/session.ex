@@ -57,6 +57,7 @@ defmodule Xeito.Session do
   alias Xeito.Skills.Examples.Worker
   alias Xeito.Source.RepoMap
   alias Xeito.Tiers
+  alias Xeito.Tools
   alias Xeito.Undo
 
   # The history window trims with slack: past 80 messages it drops back to 60, so its first
@@ -1073,9 +1074,16 @@ defmodule Xeito.Session do
   defp confidence_breakpoint({f, ""}), do: {:ok, {:confidence_below, f}}
   defp confidence_breakpoint(_parsed), do: :error
 
+  # A command the model gave a time of its own: how long it will get (`Xeito.Tools`), so a client
+  # shows that and not what was asked.
+  defp runs_for(%{"tool" => "bash", "arguments" => %{"timeout_s" => asked}} = call),
+    do: Map.put(call, "runs_for_s", div(Tools.bash_timeout_ms(asked), 1_000))
+
+  defp runs_for(call), do: call
+
   defp pending_call(run_id) do
     case Run.whereis(run_id) && Run.snapshot(run_id) do
-      %{ctx: %{current: %{name: name, arguments: args}}} -> %{"tool" => name, "arguments" => args}
+      %{ctx: %{current: %{name: name, arguments: args}}} -> runs_for(%{"tool" => name, "arguments" => args})
       %{ctx: %{review: summary}} -> %{"tool" => "review", "summary" => summary}
       _ -> nil
     end

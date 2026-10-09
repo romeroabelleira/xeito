@@ -10,6 +10,8 @@ defmodule Xeito.Tools do
     (`.xeito/`). Dependencies are not rebuilt from edited sources and are replaced on the next
     fetch, so such an edit looks done but never takes; the model is told why and what to do.
   * `bash` commands pass the `Xeito.Decisions.Risk` decision first (see `Xeito.Machines.Chat`).
+    A command may run for `timeout_s` seconds (default 60, at most `max_bash_timeout_s/0`); one
+    stopped at its timeout tells the model how to give it longer.
   * `skill` (offered only when skills are available, `Xeito.Skills`) reads a file of a skill,
     confined to that skill's directory; `SKILL.md` by default.
   * An unknown tool name or malformed arguments become an error result for the model, not a
@@ -19,6 +21,31 @@ defmodule Xeito.Tools do
   alias Xeito.Effect
 
   @names ~w(read write edit bash)
+
+  # How long a model's command may run, in seconds. The chat machine's `executing` state must
+  # outlast the longest, and its stop (`Xeito.Machines.Chat`).
+  @default_bash_timeout_s 60
+  @max_bash_timeout_s 600
+
+  @doc "The longest a model may ask a `bash` command to run, in seconds."
+  @spec max_bash_timeout_s() :: pos_integer()
+  def max_bash_timeout_s, do: @max_bash_timeout_s
+
+  @doc """
+  The timeout, in milliseconds, of a `bash` call whose `timeout_s` argument is `seconds`, capped
+  at the maximum. One that is not a positive number gets the default: a model's slip is not
+  worth a failed call. Small models often send numbers as strings, so those are read too.
+  """
+  @spec bash_timeout_ms(term()) :: pos_integer()
+  def bash_timeout_ms(seconds) when is_binary(seconds), do: seconds |> Float.parse() |> parsed_seconds()
+
+  def bash_timeout_ms(seconds) when is_number(seconds) and seconds > 0,
+    do: round(min(seconds, @max_bash_timeout_s) * 1_000)
+
+  def bash_timeout_ms(_other), do: @default_bash_timeout_s * 1_000
+
+  defp parsed_seconds({seconds, ""}), do: bash_timeout_ms(seconds)
+  defp parsed_seconds(_not_a_number), do: bash_timeout_ms(nil)
 
   @doc "The core tool names."
   @spec names() :: [String.t()]
@@ -76,9 +103,20 @@ defmodule Xeito.Tools do
           new_text: %{type: "string", description: "replacement text"}
         }
       ),
-      spec("bash", "Run a shell command in the workspace root and return its output.", %{
-        command: %{type: "string", description: "the command line to run with sh -c"}
-      }),
+      spec(
+        "bash",
+        "Run a shell command in the workspace root and return its output.",
+        %{
+          command: %{type: "string", description: "the command line to run with sh -c"},
+          timeout_s: %{
+            type: "integer",
+            description:
+              "seconds it may run (default #{@default_bash_timeout_s}, at most #{@max_bash_timeout_s}); " <>
+                "set it for builds, test suites and installs"
+          }
+        },
+        ["command"]
+      ),
       spec(
         "skill",
         "Load a skill's instructions (SKILL.md), or another file inside that skill's directory.",
@@ -141,7 +179,10 @@ defmodule Xeito.Tools do
   defp tool_effect("read", args, opts), do: read_effect(args, opts)
   defp tool_effect("write", args, opts), do: write_effect(args, opts)
   defp tool_effect("edit", args, opts), do: edit_effect(args, opts)
-  defp tool_effect("bash", %{"command" => c}, opts) when is_binary(c), do: Effect.bash(c, opts)
+
+  defp tool_effect("bash", %{"command" => c} = args, opts) when is_binary(c),
+    do: Effect.bash(c, [timeout: bash_timeout_ms(args["timeout_s"])] ++ opts)
+
   defp tool_effect(_name, _args, _opts), do: nil
 
   defp read_effect(%{"result" => r}, opts) when is_binary(r) and r != "", do: Effect.read("", [result: r] ++ opts)
@@ -202,13 +243,18 @@ defmodule Xeito.Tools do
 
   @doc "The text a tool result is reported to the model as."
   @spec result_text(map()) :: String.t()
-  def result_text(%{shaped: text}) when is_binary(text), do: text
+  def result_text(result), do: text(result) <> timeout_hint(result)
 
-  def result_text(%{exit_status: status, output: output}), do: "exit status #{status}\n#{output}"
+  defp text(%{shaped: text}) when is_binary(text), do: text
+  defp text(%{exit_status: status, output: output}), do: "exit status #{status}\n#{output}"
+  defp text(%{ok: true} = result), do: ok_text(result)
+  defp text(%{ok: false, error: error}), do: "error: #{format_error(error)}"
+  defp text(other), do: inspect(other)
 
-  def result_text(%{ok: true} = result), do: ok_text(result)
-  def result_text(%{ok: false, error: error}), do: "error: #{format_error(error)}"
-  def result_text(other), do: inspect(other)
+  defp timeout_hint(%{timed_out: true}),
+    do: "\nIf it needs longer, run it again with timeout_s (seconds, at most #{@max_bash_timeout_s})."
+
+  defp timeout_hint(_result), do: ""
 
   defp ok_text(%{content: content}), do: content
 

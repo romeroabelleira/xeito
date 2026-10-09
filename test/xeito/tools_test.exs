@@ -27,6 +27,28 @@ defmodule Xeito.ToolsTest do
                effect("edit", %{"path" => ".git/config", "old_text" => "a", "new_text" => "b"})
     end
 
+    test "bash takes the timeout the model asks for, in seconds, up to the maximum" do
+      timeout = fn args ->
+        {:ok, %Effect{args: %{timeout: ms}}} = effect("bash", Map.put(args, "command", "mix test"))
+        ms
+      end
+
+      assert timeout.(%{}) == 60_000
+      assert timeout.(%{"timeout_s" => 300}) == 300_000
+      assert timeout.(%{"timeout_s" => 1.5}) == 1_500
+      # Small models often send numbers as strings.
+      assert timeout.(%{"timeout_s" => "120"}) == 120_000
+      assert timeout.(%{"timeout_s" => Tools.max_bash_timeout_s() + 1}) == Tools.max_bash_timeout_s() * 1_000
+      # Nonsense is not an error: the default applies.
+      for bad <- [0, -5, "soon", nil, true], do: assert(timeout.(%{"timeout_s" => bad}) == 60_000)
+    end
+
+    test "the bash tool offers the timeout, and only the command is required" do
+      bash = Enum.find(Tools.specs(), &(&1.function.name == "bash"))
+      assert bash.function.parameters.required == ["command"]
+      assert bash.function.parameters.properties.timeout_s.description =~ "at most #{Tools.max_bash_timeout_s()}"
+    end
+
     test "the skill tool reads files of a skill the run offers, and only then" do
       ctx = %{cwd: "/w", skills: [%{name: "deploy", dir: "/skills/deploy"}]}
 
@@ -53,6 +75,15 @@ defmodule Xeito.ToolsTest do
   test "result_text/1: what the model is told about each kind of result" do
     assert Tools.result_text(%{shaped: "short", exit_status: 0, output: "long"}) == "short"
     assert Tools.result_text(%{exit_status: 1, output: "boom"}) == "exit status 1\nboom"
+
+    # A command stopped at its timeout says how to give it longer.
+    assert Tools.result_text(%{exit_status: 124, output: "half", timed_out: true}) ==
+             "exit status 124\nhalf\nIf it needs longer, run it again with timeout_s " <>
+               "(seconds, at most #{Tools.max_bash_timeout_s()})."
+
+    assert Tools.result_text(%{shaped: "short", exit_status: 124, output: "long", timed_out: true}) =~
+             ~r/\Ashort\nIf it needs longer/
+
     assert Tools.result_text(%{ok: true, content: "text"}) == "text"
     assert Tools.result_text(%{ok: true, syntax_error: "line 3"}) =~ "the file no longer parses: line 3"
     assert Tools.result_text(%{ok: true}) == "ok"

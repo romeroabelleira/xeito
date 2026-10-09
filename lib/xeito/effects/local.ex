@@ -4,7 +4,7 @@ defmodule Xeito.Effects.Local do
 
     * `bash` runs `sh -c` in the workspace. Output is merged (stderr into stdout) and
       truncated to `opts[:max_output]` bytes (default 64 KiB). On timeout the result is
-      `exit_status: 124`, with the output so far. A timeout or a halt stops the command and every
+      `exit_status: 124` and `timed_out: true`, with the output so far. A timeout or a halt stops the command and every
       process it started (`Xeito.Effects.OsCommand`).
     * `read` / `write` / `edit` resolve paths relative to the workspace and refuse anything
       outside it. `edit` replaces exactly one occurrence of the old text, or fails.
@@ -266,7 +266,7 @@ defmodule Xeito.Effects.Local do
 
       {:timeout, output} ->
         stopped = "[timed out after #{args.timeout} ms; the command and its children were stopped]\n"
-        %{exit_status: 124, output: truncate(output <> stopped, opts)}
+        %{exit_status: 124, output: truncate(output <> stopped, opts), timed_out: true}
     end
   end
 

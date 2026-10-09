@@ -110,6 +110,14 @@ defmodule Xeito.Client.RenderTest do
       assert review.(%{"tool" => "bash", "arguments" => %{"command" => "rm x"}}) ==
                "? review: run `rm x` — y approves (s for this session, a always), n denies, or say what to do instead\n"
 
+      # A command the model gave a time of its own says how long it will get (the daemon's figure).
+      assert review.(%{
+               "tool" => "bash",
+               "arguments" => %{"command" => "make", "timeout_s" => 9_999},
+               "runs_for_s" => 600
+             }) =~
+               "review: run `make` (up to 600 s) —"
+
       assert review.(%{"summary" => "write a.ex"}) =~ "review: write a.ex —"
       assert review.(%{"tool" => "edit"}) =~ "review: edit —"
       assert review.(%{}) =~ "review: continue —"

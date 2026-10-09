@@ -670,6 +670,22 @@ defmodule Xeito.HarnessTest do
     assert {Chat, _} = Router.route(:edit, "rename this function")
   end
 
+  test "session: a review says how long the command will get, when the model set it", %{ws: ws} do
+    log = start_log!()
+    call = {"", [{"bash", %{"command" => "sh -c 'touch slow.txt'", "timeout_s" => 9_999}}]}
+
+    cfg =
+      ollama(self(), [call, {"ok", []}], %{"What does the user want" => "edit", "Is this shell command safe" => "review"})
+
+    id = session(ws, log, cfg)
+
+    :ok = Session.prompt(id, "please do something unusual")
+    max = Xeito.Tools.max_bash_timeout_s()
+    assert %{attrs: %{"call" => %{"runs_for_s" => ^max}}} = next_event("human_needed")
+    :ok = Session.prompt(id, "/deny")
+    next_event("turn_finished")
+  end
+
   test "session: a command allowed for the session or always is not asked about again", %{ws: ws} do
     log = start_log!()
     touch = fn name -> {"", [{"bash", %{"command" => "sh -c 'touch #{name}'"}}]} end

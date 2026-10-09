@@ -49,6 +49,12 @@ defmodule Xeito.Session.AllowedTest do
       assert Allowed.scope(cwd, session, bash("mix ci ")) == nil
       assert Allowed.scope(cwd, session, bash("MIX CI")) == nil
     end
+
+    test "how long the command may run is not part of it", %{tmp_dir: cwd} do
+      {:ok, session} = Allowed.remember(:session, "mix ci", cwd, Allowed.new())
+      call = put_in(bash("mix ci"), ["arguments", "timeout_s"], 600)
+      assert Allowed.scope(cwd, session, call) == :session
+    end
   end
 
   describe "remembering a command" do

@@ -94,6 +94,9 @@ defmodule Xeito.Client.Render do
 
   defp completed(_kind, _result, _pad), do: ""
 
+  defp review_what(%{"tool" => "bash", "arguments" => %{"command" => cmd}, "runs_for_s" => s}),
+    do: "run `#{cmd}` (up to #{s} s)"
+
   defp review_what(%{"tool" => "bash", "arguments" => %{"command" => cmd}}), do: "run `#{cmd}`"
   defp review_what(%{"summary" => summary}), do: summary
   defp review_what(%{"tool" => tool}), do: tool

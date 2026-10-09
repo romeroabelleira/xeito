@@ -122,6 +122,7 @@ Process mining of free chat runs is how **new skills and machines are discovered
 ## Tools (pi parity)
 
 The core tools are the same four as pi: `read`, `write`, `edit`, `bash`. They are implemented as **effects** ([02](02-state-machine-core.md#effects-are-commands-not-calls)), so they are replayable and policy-checked.
+A `bash` call runs for 60 s unless the model sets `timeout_s`, up to 600 s (`Xeito.Tools`). A command stopped at its timeout returns its output so far and tells the model how to give it longer, and a review shows the time the command will get. Each command runs in its own process group, which a timeout or a halt stops as a whole ([10](10-security-and-sandboxing.md)).
 Additional tools come from extensions. An extension is an Elixir module that implements `Xeito.Tool` and ships its own decision types and machines.
 
 ## Context and configuration

@@ -16,11 +16,12 @@ defmodule Xeito.Effects.LocalTest do
     # `pwd` prints the physical path; on macOS the temp directory is behind a symlink (/var -> /private/var).
     {physical, 0} = System.cmd("pwd", ["-P"], cd: ws)
     assert String.trim(output) == String.trim(physical)
-    assert %{exit_status: 3} = Local.run(Effect.bash("exit 3", cwd: ws), [])
+    assert %{exit_status: 3} = result = Local.run(Effect.bash("exit 3", cwd: ws), [])
+    refute Map.has_key?(result, :timed_out)
   end
 
   test "bash times out, with the output so far and how long it was given", %{ws: ws} do
-    assert %{exit_status: 124, output: output} =
+    assert %{exit_status: 124, output: output, timed_out: true} =
              Local.run(Effect.bash("echo started; sleep 5", cwd: ws, timeout: 200), [])
 
     assert output == "started\n[timed out after 200 ms; the command and its children were stopped]\n"

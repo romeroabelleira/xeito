@@ -405,4 +405,10 @@ defmodule Xeito.ChatMachineTest do
       assert :ignored = Engine.handle(machine, :answered, asked(), :steered, %{text: "t"})
     end
   end
+
+  test "a tool call's state outlasts the longest command a model may ask for, and its stop" do
+    {state_ms, _event} = Machine.timeout(Machine.fetch!(Chat), :executing)
+    # Xeito.Effects.OsCommand: SIGTERM, a grace period, SIGKILL, then the group's last output.
+    assert state_ms > Xeito.Tools.max_bash_timeout_s() * 1_000 + 10_000
+  end
 end
