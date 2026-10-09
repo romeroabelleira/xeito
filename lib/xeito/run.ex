@@ -206,6 +206,15 @@ defmodule Xeito.Run do
   @impl :gen_statem
   def callback_mode, do: :handle_event_function
 
+  # A run whose log cannot be read has nothing to start or recover from. It is not started (a
+  # restart would fail the same way, until the supervisor gave up on every run): a test's log
+  # stopped under a run still going, or a log server given by pid that ended.
+  defp logged(log, run_id) do
+    Log.read_run(log, run_id)
+  catch
+    :exit, _reason -> :unreadable
+  end
+
   @impl :gen_statem
   def init(opts) do
     run_id = Keyword.fetch!(opts, :run_id)
@@ -226,7 +235,8 @@ defmodule Xeito.Run do
       tasks: %{}
     }
 
-    case Log.read_run(data.log, run_id) do
+    case logged(data.log, run_id) do
+      :unreadable -> :ignore
       [] -> fresh(data, Keyword.get(opts, :input, %{}))
       entries -> recover(data, entries)
     end

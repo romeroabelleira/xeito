@@ -226,6 +226,35 @@ defmodule Xeito.RunTest do
        end}
     end
 
+    test "a run whose log is gone is not restarted, so it cannot take other runs down" do
+      sup = start_supervised!({RunSupervisor, name: :"runs-#{System.unique_integer([:positive])}"}, id: make_ref())
+      path = Path.join(System.tmp_dir!(), "xeito-gone-#{System.unique_integer([:positive])}/log.sqlite")
+      on_exit(fn -> File.rm_rf(Path.dirname(path)) end)
+      gone = start_supervised!({Log, path: path}, id: :gone)
+      other_log = start_log!()
+
+      started = fn log ->
+        {:ok, id} =
+          RunSupervisor.start_run(RunTests, @ctx, run_id: run_id(), log: log, runner: hanging(self()), supervisor: sup)
+
+        id
+      end
+
+      doomed = for _ <- 1..2, do: started.(gone)
+      other = started.(other_log)
+      wait_for_leaf(other, :running)
+
+      stop_supervised!(:gone)
+      ref = Process.monitor(sup)
+      for id <- doomed, do: Process.exit(Run.whereis(id), :crashed)
+
+      # Restarted runs that cannot read their log would crash again at once, until the
+      # supervisor gives up on all its runs.
+      refute_receive {:DOWN, ^ref, :process, _, _}, 500
+      assert Enum.all?(doomed, &(Run.whereis(&1) == nil))
+      assert Run.whereis(other)
+    end
+
     test "stops a run where it is: its effect is killed and it is logged as halted, for good" do
       log = start_log!()
       id = start(RunTests, hanging(self()), log)
