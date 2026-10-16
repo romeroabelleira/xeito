@@ -165,7 +165,11 @@ defmodule Xeito.Chat.OpenRouterTest do
   describe "complete/4" do
     setup do
       name = :"or_#{System.unique_integer([:positive])}"
-      {:ok, cfg: [url: "http://or.test/api", model: "m/x", api_key: "k", plug: {Req.Test, name}], name: name}
+      parent = self()
+      sleep = fn ms -> send(parent, {:slept, ms}) end
+
+      {:ok,
+       cfg: [url: "http://or.test/api", model: "m/x", api_key: "k", plug: {Req.Test, name}, sleep: sleep], name: name}
     end
 
     test "a streamed answer with its cost; what was sent", %{cfg: cfg, name: name} do
@@ -195,15 +199,52 @@ defmodule Xeito.Chat.OpenRouterTest do
     end
 
     test "an HTTP error is returned with its body", %{cfg: cfg, name: name} do
-      Req.Test.stub(name, fn conn -> Plug.Conn.send_resp(conn, 402, ~s({"error":{"message":"credits"}})) end)
-
-      assert {:error, {:http, 402, ~s({"error":{"message":"credits"}})}} =
-               OpenRouter.complete([], [], cfg, fn _ -> :ok end)
+      Req.Test.stub(name, fn conn -> Plug.Conn.send_resp(conn, 400, ~s({"error":{"message":"bad"}})) end)
+      assert {:error, {:http, 400, ~s({"error":{"message":"bad"}})}} = OpenRouter.complete([], [], cfg, fn _ -> :ok end)
     end
 
-    test "a transport error is returned", %{cfg: cfg, name: name} do
+    test "a rate limit is waited out and tried again, as the server asks", %{cfg: cfg, name: name} do
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+      Req.Test.stub(name, fn conn ->
+        if Agent.get_and_update(calls, &{&1, &1 + 1}) == 0 do
+          conn |> Plug.Conn.put_resp_header("retry-after", "3") |> Plug.Conn.send_resp(429, "rate limited")
+        else
+          body = "data: " <> JSON.encode!(%{choices: [%{delta: %{content: "ok"}}]}) <> "\n\n"
+          conn |> Plug.Conn.put_resp_content_type("text/event-stream") |> Plug.Conn.send_resp(200, body)
+        end
+      end)
+
+      assert {:ok, %{content: "ok"}} = OpenRouter.complete([], [], cfg, fn _ -> :ok end)
+      assert_received {:slept, 3_000}
+    end
+
+    test "a quota refusal is not retried, and says what to do", %{cfg: cfg, name: name} do
+      Req.Test.stub(name, &Plug.Conn.send_resp(&1, 402, ~s({"error":{"message":"This request requires more credits"}})))
+      assert {:error, {:quota, text}} = OpenRouter.complete([], [], cfg, fn _ -> :ok end)
+      assert text =~ "add credit"
+      refute_received {:slept, _}
+    end
+
+    test "a request too long for the model is an overflow", %{cfg: cfg, name: name} do
+      Req.Test.stub(name, &Plug.Conn.send_resp(&1, 400, "This endpoint's maximum context length is 131072 tokens"))
+      assert {:error, {:context_overflow, _}} = OpenRouter.complete([], [], cfg, fn _ -> :ok end)
+    end
+
+    test "so is a stream that stops for length before writing anything", %{cfg: cfg, name: name} do
+      Req.Test.stub(name, fn conn ->
+        body = "data: " <> JSON.encode!(%{choices: [%{delta: %{}, finish_reason: "length"}]}) <> "\n\n"
+        conn |> Plug.Conn.put_resp_content_type("text/event-stream") |> Plug.Conn.send_resp(200, body)
+      end)
+
+      assert {:error, {:context_overflow, _}} = OpenRouter.complete([], [], cfg, fn _ -> :ok end)
+    end
+
+    test "a transport error is retried, then returned", %{cfg: cfg, name: name} do
       Req.Test.stub(name, &Req.Test.transport_error(&1, :econnrefused))
       assert {:error, %Req.TransportError{reason: :econnrefused}} = OpenRouter.complete([], [], cfg, fn _ -> :ok end)
+      assert_received {:slept, 1_000}
+      assert_received {:slept, 2_000}
     end
   end
 end

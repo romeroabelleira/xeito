@@ -21,6 +21,7 @@ defmodule Xeito.Backends.OpenRouter do
   @behaviour Xeito.Backends
 
   alias Xeito.Backends
+  alias Xeito.Backends.Failure
   alias Xeito.Backends.Ollama
   alias Xeito.Decision.Prompt
   alias Xeito.Decision.Type
@@ -39,15 +40,22 @@ defmodule Xeito.Backends.OpenRouter do
       ] ++
         Backends.req_options(Keyword.put_new(cfg, :timeout, 60_000))
 
+    case Failure.run(fn -> request(opts) end, Keyword.take(cfg, [:sleep, :attempts])) do
+      {:ok, %{"choices" => [choice | _]} = resp} -> parse(type, choice, resp, model, started)
+      {:ok, %{"error" => error}} -> {:error, {:openrouter, error}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # One request: its body on success, else what `Xeito.Backends.Failure` needs to judge it.
+  defp request(opts) do
     case Req.request(opts) do
-      {:ok, %{status: 200, body: %{"choices" => [choice | _]} = resp}} ->
-        parse(type, choice, resp, model, started)
+      {:ok, %{status: 200, body: body}} ->
+        {:ok, body}
 
-      {:ok, %{status: 200, body: %{"error" => error}}} ->
-        {:error, {:openrouter, error}}
-
-      {:ok, %{status: status, body: body}} ->
-        {:error, {:http, status, body}}
+      {:ok, %{status: status, body: body} = resp} ->
+        {:failed, status, if(is_binary(body), do: body, else: JSON.encode!(body)),
+         for({name, values} <- resp.headers, value <- List.wrap(values), do: {name, value})}
 
       {:error, reason} ->
         {:error, reason}

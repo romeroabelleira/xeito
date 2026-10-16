@@ -46,7 +46,7 @@ defmodule Xeito.Machines.Chat do
   calls run, repeats), `Chat.Limits` (steps, fixes, stopping), `Chat.Checks` and `Chat.Steering`.
   """
 
-  use Xeito.Machine, version: "0.12.0"
+  use Xeito.Machine, version: "0.13.0"
 
   alias Xeito.Chat.Window
   alias Xeito.Effect
@@ -85,6 +85,10 @@ defmodule Xeito.Machines.Chat do
   end
 
   state :thinking, entry: :ask_model, timeout: 900_000 do
+    # The model's window is smaller than the context said: a smaller window, a summary if one is
+    # due before the turn starts, and one more try.
+    on :chatted, to: :summarising, guard: :overflow_summary?, action: :shrink_window
+    on :chatted, to: :thinking, guard: :overflow?, action: :shrink_window
     on :chatted, to: :failed, guard: :chat_error?, action: :record_error
     on :chatted, to: :verifying, guard: :calls_at_limit_edited?, action: :record_calls_and_stop
     on :chatted, to: :wrapping_up, guard: :calls_at_limit?, action: :record_calls_and_stop
@@ -191,6 +195,13 @@ defmodule Xeito.Machines.Chat do
 
   @doc false
   def chat_error?(_ctx, message), do: Map.has_key?(message, :error)
+
+  @doc false
+  def overflow?(ctx, message), do: match?({:context_overflow, _}, message[:error]) and not Map.get(ctx, :shrunk, false)
+
+  @doc false
+  def overflow_summary?(ctx, message),
+    do: overflow?(ctx, message) and not match?([_ | _], ctx[:turn]) and summary_due?(Request.shrink(ctx), nil)
 
   @doc false
   def summary_due?(ctx, _decision), do: Window.summary_split(Map.get(ctx, :messages, []), Request.window(ctx)) != :keep
@@ -325,6 +336,9 @@ defmodule Xeito.Machines.Chat do
     |> advance([])
     |> Limits.stop()
   end
+
+  @doc false
+  def shrink_window(ctx, _message), do: Request.shrink(ctx)
 
   @doc false
   def record_error(ctx, message), do: Map.put(ctx, :error, message.error)

@@ -160,6 +160,52 @@ defmodule Xeito.Machines.ChatTest do
     end
   end
 
+  describe "a request longer than the model's window" do
+    defp overflowed, do: %{error: {:context_overflow, "too long"}}
+
+    defp history(turns, chars),
+      do:
+        Enum.flat_map(1..turns, fn n ->
+          [%{role: "user", content: "request #{n}"}, %{role: "assistant", content: String.duplicate("a", chars)}]
+        end)
+
+    test "the first overflow is tried again in a smaller window; another error, or a second overflow, is not" do
+      assert Chat.overflow?(ctx(), overflowed())
+      refute Chat.overflow?(ctx(%{shrunk: true}), overflowed())
+      refute Chat.overflow?(ctx(), %{error: {:http, 500, "x"}})
+      refute Chat.overflow?(ctx(), message("fine"))
+    end
+
+    test "the smaller window is three quarters of the request that overflowed, plus the reply's share" do
+      before = ctx(%{context: 200_000, messages: history(4, 30_000), chars_per_token: 3.0})
+      shrunk = Chat.shrink_window(before, overflowed())
+      assert shrunk.shrunk
+      sent = Xeito.Chat.Window.estimate(Xeito.Machines.Chat.Request.outgoing(before), 3.0)
+      assert shrunk.context == div(sent * 3, 4) + 8_192
+      assert shrunk.context < before.context
+    end
+
+    test "before the turn has started, a summary of earlier turns comes first when the smaller window makes one due" do
+      long = ctx(%{context: 200_000, messages: history(6, 30_000), chars_per_token: 3.0})
+      assert Chat.overflow_summary?(long, overflowed())
+      refute Chat.overflow_summary?(Map.put(long, :turn, [%{role: "system", content: "S"}]), overflowed())
+      refute Chat.overflow_summary?(Map.put(long, :shrunk, true), overflowed())
+      refute Chat.overflow_summary?(ctx(%{messages: history(1, 10)}), overflowed())
+    end
+
+    test "the machine: a summary, or another try, then a failed turn on a second overflow" do
+      machine = Machine.fetch!(Chat)
+      long = ctx(%{context: 200_000, messages: history(6, 30_000), chars_per_token: 3.0})
+
+      assert {:ok, %{to: :summarising, ctx: %{shrunk: true}}} =
+               Engine.handle(machine, :thinking, long, :chatted, overflowed())
+
+      started = ctx(%{turn: [%{role: "system", content: "S"}, %{role: "user", content: "p"}]})
+      assert {:ok, %{to: :thinking, ctx: shrunk}} = Engine.handle(machine, :thinking, started, :chatted, overflowed())
+      assert {:ok, %{to: :failed}} = Engine.handle(machine, :thinking, shrunk, :chatted, overflowed())
+    end
+  end
+
   describe "guards on a model message" do
     defp bad, do: message("", [call("no_such_tool", %{})])
     defp good, do: message("", [call("bash", %{"command" => "ls"})])

@@ -13,7 +13,7 @@ defmodule Xeito.Chat.OpenRouter.Stream do
 
   @doc "An empty stream."
   @spec new() :: t()
-  def new, do: %{buffer: "", content: [], calls: %{}, usage: %{}, model: nil, provider: nil, error: nil}
+  def new, do: %{buffer: "", content: [], calls: %{}, usage: %{}, model: nil, provider: nil, finish: nil, error: nil}
 
   @doc "Adds a chunk of the response body."
   @spec feed(t(), binary(), (String.t() -> any())) :: t()
@@ -40,7 +40,8 @@ defmodule Xeito.Chat.OpenRouter.Stream do
        tokens_out: usage["completion_tokens"] || 0,
        cached_tokens: get_in(usage, ["prompt_tokens_details", "cached_tokens"]) || 0,
        usd: (usage["cost"] || 0) * 1.0,
-       served_by: served_by(acc.model, acc.provider)
+       served_by: served_by(acc.model, acc.provider),
+       finish_reason: acc.finish
      }}
   end
 
@@ -58,7 +59,15 @@ defmodule Xeito.Chat.OpenRouter.Stream do
     |> text(delta["content"], on_delta)
     |> Map.update!(:calls, &Enum.reduce(delta["tool_calls"] || [], &1, fn call, calls -> fragment(call, calls) end))
     |> Map.merge(
-      for {k, v} <- [usage: chunk["usage"], model: chunk["model"], provider: chunk["provider"]], v, into: %{}, do: {k, v}
+      for {k, v} <- [
+            usage: chunk["usage"],
+            model: chunk["model"],
+            provider: chunk["provider"],
+            finish: get_in(chunk, ["choices", Access.at(0), "finish_reason"])
+          ],
+          v,
+          into: %{},
+          do: {k, v}
     )
   end
 

@@ -22,6 +22,7 @@ defmodule Xeito.Chat.OpenRouter do
   """
 
   alias Xeito.Backends
+  alias Xeito.Backends.Failure
   alias Xeito.Chat.Message
   alias Xeito.Chat.OpenRouter.Stream
 
@@ -42,14 +43,34 @@ defmodule Xeito.Chat.OpenRouter do
         into: &into(&1, &2, on_delta)
       ] ++ Backends.req_options(Keyword.put_new(cfg, :timeout, 600_000))
 
-    case Req.request(opts) do
-      {:ok, %{status: 200} = resp} -> resp.private.stream |> Stream.finish() |> done(cfg, started)
-      {:ok, %{status: status} = resp} -> {:error, {:http, status, Map.get(resp.private, :raw, "")}}
-      {:error, reason} -> {:error, reason}
-    end
+    with {:ok, message} <- Failure.run(fn -> attempt(opts) end, Keyword.take(cfg, [:sleep, :attempts])),
+         do: done(message, cfg, started)
   end
 
+  # One request. A failure after output was streamed is final: a retry would repeat it.
+  defp attempt(opts) do
+    Process.put(:xeito_streamed, false)
+
+    case Req.request(opts) do
+      {:ok, %{status: 200} = resp} -> resp.private.stream |> Stream.finish() |> answer()
+      {:ok, %{status: status} = resp} -> {:failed, status, Map.get(resp.private, :raw, ""), headers(resp)}
+      {:error, reason} -> if Process.get(:xeito_streamed), do: {:final, reason}, else: {:error, reason}
+    end
+  after
+    Process.delete(:xeito_streamed)
+  end
+
+  # A stream that stops for length before writing anything ran out of window, not of answer.
+  defp answer({:ok, %{finish_reason: "length", content: "", tool_calls: []}}),
+    do: {:final, Failure.overflow("the model stopped for length before writing anything")}
+
+  defp answer({:ok, message}), do: {:ok, message}
+  defp answer(error), do: {:final, elem(error, 1)}
+
+  defp headers(resp), do: for({name, values} <- resp.headers, value <- List.wrap(values), do: {name, value})
+
   defp into({:data, data}, {req, %{status: 200} = resp}, on_delta) do
+    Process.put(:xeito_streamed, true)
     stream = Map.get(resp.private, :stream, Stream.new())
     {:cont, {req, Req.Response.put_private(resp, :stream, Stream.feed(stream, data, on_delta))}}
   end
@@ -58,7 +79,7 @@ defmodule Xeito.Chat.OpenRouter do
   defp into({:data, data}, {req, resp}, _on_delta),
     do: {:cont, {req, Req.Response.put_private(resp, :raw, Map.get(resp.private, :raw, "") <> data)}}
 
-  defp done({:ok, message}, cfg, started) do
+  defp done(message, cfg, started) do
     model = Keyword.fetch!(cfg, :model)
 
     {:ok,
@@ -69,8 +90,6 @@ defmodule Xeito.Chat.OpenRouter do
        first_token_ms: nil
      })}
   end
-
-  defp done(error, _cfg, _started), do: error
 
   @doc false
   def body(messages, tools, cfg) do

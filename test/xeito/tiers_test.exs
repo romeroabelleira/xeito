@@ -307,6 +307,29 @@ defmodule Xeito.TiersTest do
       assert {:error, %Req.TransportError{}} = SystemOne.decide(type(), @input, failing(:s1_down, :down))
     end
 
+    test "OpenRouter decisions: a rate limit is retried, a quota refusal and an HTTP error are errors" do
+      parent = self()
+      sleep = fn ms -> send(parent, {:slept, ms}) end
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+      Req.Test.stub(:or_429, fn conn ->
+        if Agent.get_and_update(calls, &{&1, &1 + 1}) == 0,
+          do: conn |> Plug.Conn.put_status(429) |> Req.Test.json(%{"error" => "rate limited"}),
+          else: Req.Test.json(conn, %{"error" => %{"message" => "refused"}})
+      end)
+
+      assert {:error, {:openrouter, %{"message" => "refused"}}} =
+               OpenRouter.decide(type(), @input, cfg(:or_429, model: "m", sleep: sleep))
+
+      assert_received {:slept, 1_000}
+
+      assert {:error, {:quota, _}} =
+               OpenRouter.decide(type(), @input, failing(:or_402, {:status, 402}) ++ [sleep: sleep])
+
+      assert {:error, {:http, 400, ~s({"error":"no"})}} =
+               OpenRouter.decide(type(), @input, failing(:or_400, {:status, 400}) ++ [sleep: sleep])
+    end
+
     test "OpenRouter's key check: the key's data, an HTTP error, or a transport error" do
       Req.Test.stub(:or_key, fn conn -> Req.Test.json(conn, %{"data" => %{"limit" => 10, "usage" => 1.5}}) end)
       assert {:ok, %{"limit" => 10}} = OpenRouter.key_info(cfg(:or_key))

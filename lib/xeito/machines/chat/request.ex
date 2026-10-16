@@ -69,6 +69,17 @@ defmodule Xeito.Machines.Chat.Request do
       chars_per_token: Map.get(ctx, :chars_per_token, Window.default_chars_per_token())
     ]
 
+  @doc """
+  `ctx` with a window three quarters the size of the request just sent (as fitted), plus the
+  reply's share, and `shrunk: true`: the model said the request was longer than its window.
+  """
+  @spec shrink(map()) :: map()
+  def shrink(ctx) do
+    [budget: budget, chars_per_token: cpt] = window(ctx)
+    sent = min(Window.estimate(Elision.elide(outgoing(ctx)), cpt), budget)
+    ctx |> Map.put(:context, div(sent * 3, 4) + @output_reserve) |> Map.put(:shrunk, true)
+  end
+
   @doc "The user message that asks a stopped turn for its report, without tools, saying why it stopped."
   @spec wrap_up(map()) :: map()
   def wrap_up(ctx) do

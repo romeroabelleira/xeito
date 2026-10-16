@@ -108,8 +108,7 @@ defmodule Xeito.Session.History do
   defp to_text(nil), do: ""
   defp to_text(text) when is_binary(text), do: text
   # Reasons from `Xeito.Allowance` are written for the user.
-  defp to_text({:budget, text}), do: text
-  defp to_text({:allowance, text}), do: text
+  defp to_text({kind, text}) when kind in [:budget, :allowance, :quota, :context_overflow] and is_binary(text), do: text
   defp to_text(other), do: inspect(other)
 
   @doc "Whether a run stopped short: halted, or at its step limit."
