@@ -91,6 +91,14 @@ defmodule Xeito.Api.ConnectionTest do
              req(client, "transcript", %{"cwd" => ws})
   end
 
+  test "a prompt repeated with its request id is admitted once", %{client: client, ws: ws} do
+    id = start(client, ws)
+    prompt = %{"session" => id, "text" => "/help", "request_id" => "r-1"}
+    assert %{"ok" => true} = req(client, "prompt", prompt)
+    assert %{"ok" => true} = req(client, "prompt", prompt)
+    assert %{"ok" => true, "prompts" => ["/help"]} = req(client, "prompts", %{"cwd" => ws})
+  end
+
   test "unknown or incomplete commands", %{client: client} do
     assert %{"ok" => false, "error" => "unknown or incomplete command fly"} = req(client, "fly")
     assert %{"ok" => false, "error" => "unknown or incomplete command prompt"} = req(client, "prompt")

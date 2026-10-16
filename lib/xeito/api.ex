@@ -8,6 +8,8 @@ defmodule Xeito.Api do
       {"id": 1, "cmd": "open", "cwd": "/path/to/project"}   (the directory's last updated session,
                                     live or rebuilt from the log, or a new one; "continued" says which)
       {"id": 2, "cmd": "prompt", "session": "ses-…", "text": "the checkout test is red"}
+                                    (optional "request_id": a repeat of an admitted one, as a client
+                                     retrying after a daemon restart, is answered and ignored)
       {"id": 3, "cmd": "approve", "session": "ses-…"}       (also "deny"; "allow": "session" or "always"
                                     approves and does not ask about this command again)
       {"id": 4, "cmd": "attach", "session": "ses-…", "cwd": "/path"}

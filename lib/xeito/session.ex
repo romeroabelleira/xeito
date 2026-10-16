@@ -83,9 +83,13 @@ defmodule Xeito.Session do
   @spec subscribe(String.t()) :: :ok
   def subscribe(id), do: Events.subscribe(topic(id))
 
-  @doc "Submits a prompt or slash command; while a turn runs, a prompt is queued (see `/send`). Returns `:ok`."
-  @spec prompt(String.t(), String.t()) :: :ok | {:error, term()}
-  def prompt(id, text), do: GenServer.call(via(id), {:prompt, text})
+  @doc """
+  Submits a prompt or slash command; while a turn runs, a prompt is queued (see `/send`). With a
+  `request_id`, a repeat of an admitted one (a client retrying, also after a daemon restart) gets
+  the same `:ok` and does nothing.
+  """
+  @spec prompt(String.t(), String.t(), String.t() | nil) :: :ok | {:error, term()}
+  def prompt(id, text, request_id \\ nil), do: GenServer.call(via(id), {:prompt, text, request_id})
 
   @doc """
   Approves the command a run is waiting on; with scope `"session"` or `"always"`, also remembers it.
@@ -163,6 +167,8 @@ defmodule Xeito.Session do
       prompt: nil,
       waiting: nil,
       allowed: Allowed.new(),
+      # Request ids of admitted prompts (`prompt/3`), from the log after a restart.
+      requests: %{},
       idle_timeout:
         Keyword.get_lazy(opts, :idle_timeout, fn ->
           Application.get_env(:xeito, :session_idle_timeout, 7_200_000)
@@ -184,8 +190,8 @@ defmodule Xeito.Session do
   @impl true
   def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
 
-  defp handle_request({:prompt, text}, _from, s) do
-    {reply, s} = prompt(String.trim(text), text, warn_if_stale(s))
+  defp handle_request({:prompt, text, request_id}, _from, s) do
+    {reply, s} = admit(text, request_id, s)
     {:reply, reply, s}
   end
 
@@ -216,9 +222,17 @@ defmodule Xeito.Session do
     {:reply, attrs, s}
   end
 
+  # A prompt whose request id was admitted before is answered and ignored.
+  defp admit(_text, request_id, s) when is_map_key(s.requests, request_id), do: {:ok, s}
+
+  defp admit(text, request_id, s) do
+    s = if request_id, do: %{s | requests: Map.put(s.requests, request_id, true)}, else: s
+    prompt(String.trim(text), text, request_id, warn_if_stale(s))
+  end
+
   # While a review waits, plain text is its answer: what to do instead of the call.
-  defp prompt(trimmed, text, s) do
-    log_prompt(trimmed, text, s)
+  defp prompt(trimmed, text, request_id, s) do
+    log_prompt(trimmed, text, request_id, s)
 
     cond do
       Regex.match?(
@@ -242,9 +256,11 @@ defmodule Xeito.Session do
   # Typed lines are logged for input history; lines clients send for keys are not.
   @key_lines ~w(/send /drop /halt /next /approve /deny)
 
-  defp log_prompt(trimmed, _text, _s) when trimmed in ["" | @key_lines], do: :ok
-  defp log_prompt("/approve " <> _scope, _text, _s), do: :ok
-  defp log_prompt(_trimmed, text, s), do: Notify.log_event(s, "prompt_entered", %{"text" => text})
+  defp log_prompt(trimmed, _text, _request_id, _s) when trimmed in ["" | @key_lines], do: :ok
+  defp log_prompt("/approve " <> _scope, _text, _request_id, _s), do: :ok
+
+  defp log_prompt(_trimmed, text, request_id, s),
+    do: Notify.log_event(s, "prompt_entered", %{"text" => text, "request_id" => request_id})
 
   @doc false
   @spec start_turn(String.t(), String.t(), state()) :: state()
@@ -439,7 +455,7 @@ defmodule Xeito.Session do
   def send_queued(s) do
     text = hd(s.queue)
     s = Queue.dequeue(s, "sent")
-    {_reply, s} = prompt(String.trim(text), text, s)
+    {_reply, s} = prompt(String.trim(text), text, nil, s)
     s
   end
 

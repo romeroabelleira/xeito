@@ -44,8 +44,15 @@ defmodule Xeito.Session.History do
       end)
       |> Enum.sort()
 
-    Enum.reduce(turns, s, &restore_turn/2)
+    turns |> Enum.reduce(s, &restore_turn/2) |> restore_requests()
   end
+
+  @requests """
+  SELECT p.request_id FROM event_prompt_entered p JOIN event_object o ON o.ocel_event_id = p.ocel_id
+  WHERE o.ocel_object_id = ?1 AND p.request_id IS NOT NULL
+  """
+
+  defp restore_requests(s), do: %{s | requests: Map.new(Log.query(s.log, @requests, [s.id]), fn [id] -> {id, true} end)}
 
   defp restore_turn({n, run}, s) do
     s = %{s | turn: max(s.turn, n)}

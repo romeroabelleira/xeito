@@ -25,7 +25,7 @@ defmodule Xeito.Log.Schema do
     "step_redone" => ~w(effect_id label),
     # `Xeito.Session`: lines typed while a turn ran.
     "prompt_queued" => ~w(text),
-    "prompt_entered" => ~w(text),
+    "prompt_entered" => ~w(text request_id),
     "prompt_dequeued" => ~w(text outcome),
     # `Xeito.Skills.Examples`, in the user's log, stream `skills/examples`.
     "skill_examples_generated" => ~w(skill skill_hash model digest count tokens_in tokens_out latency_ms)

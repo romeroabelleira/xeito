@@ -186,7 +186,7 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  defp session_cmd("prompt", id, req), do: result(Session.prompt(id, req["text"] || ""))
+  defp session_cmd("prompt", id, req), do: result(Session.prompt(id, req["text"] || "", req["request_id"]))
   defp session_cmd(cmd, id, req) when cmd in ~w(approve deny), do: result(answer(cmd, id, req))
   defp session_cmd(cmd, id, _req), do: query(cmd, id)
 
