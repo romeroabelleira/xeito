@@ -13,6 +13,8 @@ mix ci
 
 | Step | What it catches |
 |---|---|
+| `deps.unlock --check-unused` | a `mix.lock` entry no dependency needs any more. Fix with `mix deps.unlock --unused` |
+| `hex.audit` | a dependency that is retired or has a published security advisory. Update it; if that is not possible yet, acknowledge it under `hex:` in `mix.exs` with the reason |
 | `format --check-formatted` | formatting, including Styler's rewrites. Fix with `mix format` |
 | `compile --warnings-as-errors` | warnings and the compiler's type checker |
 | `credo --strict` | design and complexity findings Styler cannot fix |

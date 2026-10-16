@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-10-08 (P0–P3b done; P4 built, dogfooding; P4b–P4f built; P4g planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-10-09 (P0–P3b done; P4 built, dogfooding; P4b–P4f built; P4g, P4h and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -33,6 +33,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
 | P8 · Packaging and v0.1 | Burrito binary, install script or setup machine, guides, benchmark write-up | 2027-05-10 → 05-31 | ≈ 2027-01-11 → 02-01 | — |
 | P9 · Bridges (added) | MCP server and client, ACP agent, `pi-xeito`, surveying and bridging other harnesses | — | after P4, alongside P5 (≈ 2 weeks) | — |
+| PX · Libraries for the ecosystem (added) | typed decisions as a Hex package on req_llm; contributions to req_llm and ex_crap; a mutation-testing spike; libraries adopted instead of own code | — | after P4h, alongside P5 | [PX](#px--libraries-for-the-ecosystem) |
 
 The original dates of P5–P8 follow the original chain of durations. The re-based dates assume part-time pace, and P9 runs alongside P5 rather than after P8, since it needs only the daemon's socket.
 
@@ -62,6 +63,7 @@ gantt
   P8 Packaging & v0.1            :p8, after p7, 3w
   section Reach
   P9 Bridges (pi, others)        :p9, after p4d, 2w
+  PX Libraries for the ecosystem :px, after p4g, 3w
 ```
 
 ---
@@ -484,7 +486,7 @@ Added 2026-10-08, from a survey of [Fabric](https://github.com/danielmiessler/fa
 
 Added 2026-10-09, from pi's built-in MCP and Codemode (2026-09-29). The concept, with pi's design and the reasons for each choice, is [concepts/scripts.md](concepts/scripts.md). In short: the model writes a script that does many calls and returns only what matters, as in pi; unlike pi, every call is an effect in the log, behind the same gates as a direct call, and scripts that recur are mined into decision types, saved scripts and machines (P5, P7). The case is stronger for a local model than for pi's frontier ones: one script turn replaces dozens of tool turns, each of which costs seconds of prompt processing.
 
-**Decision.** Scripts are Elixir, evaluated with Dune (an allow-list sandbox with reduction, heap, time and atom limits), in a separate small Erlang VM started through erlexec: no credentials, not a distributed node, JSON Lines over stdio to the runner. The benchmark in step 6 checks that the local model writes Elixir scripts well enough; if not, the fallback is JavaScript in QuickJS, in an external process in the same way.
+**Decision.** Scripts are Elixir, evaluated with Dune (an allow-list sandbox with reduction, heap, time and atom limits), in a separate small Erlang VM started through erlexec: no credentials, not a distributed node, JSON Lines over stdio to the runner. The benchmark in step 6 checks that the local model writes Elixir scripts well enough; if not, the fallback is JavaScript in QuickJS, in an external process in the same way (or, checked 2026-10-09, the quickjs or quickbeam package inside the sandbox VM; [PX](#adopting-existing-libraries)).
 
 1. **The sandbox VM.** One warm process per session, started on a session's first script and stopped with the session. It evaluates a script with Dune and asks the runner for every outside call; nothing else reaches it. Limits: reductions, heap, wall time (the call's `timeout_s`, as for `bash`). A runaway script is killed with its process group (`Xeito.Effects.OsCommand`). **Test-first**: the protocol codec and the allow-list are pure functions with unit tests; one test shows that `File`, `System`, `Process`, `:os`, `Code` and the clock are refused.
 2. **The `script` tool and effect, read-only first.** The chat machine offers `script` beside the core tools (`Xeito.Tools`); its argument is the program. Inside, `read/1`, `bash/1` (only commands Risk rates safe; one it would send to review fails with an error saying so), `parallel/3` (at most four at a time) and `text/1`. Each call is a child effect of the script's effect, logged with the script's effect id as its parent. The script's output, shaped by `Xeito.Tools.Shape`, is the tool result; inner results reach the model only through it. The chat machine's `executing` state outlasts a script as it outlasts a command (P4 step 2's invariant test).
@@ -494,7 +496,7 @@ Added 2026-10-09, from pi's built-in MCP and Codemode (2026-09-29). The concept,
    - `decide(Type, input)` runs a registered decision type through the escalation ladder.
    - `classify(questions, state)` takes pi's question shapes (`choice`, `score`, `bool`, with criteria) and runs them as an ad-hoc decision type on the `local_decision` tier, or `local` without it. Policy and budgets apply per call.
    - `remember(object, attrs)` writes an object to the run's OCEL log, related to the decisions about it, so a later question is a query, not a refetch.
-5. **The MCP client, with exposure levels** (brought forward from P9). Servers from `.xeito/mcp.json` and the user's configuration, stdio and streamable HTTP. A tool's exposure is `script` (default: reachable from scripts only), `deferred`, `direct` or `hidden`, per server and per tool, as in pi. Scripts find tools with `search_tools/1`, which reuses the skills' BM25 index (P4f). Each call is an effect. The tool annotations feed Risk's rules: read-only and closed-world is safe by rule, destructive goes to review. An open-world server counts as off-box for the data-locality policy.
+5. **The MCP client, with exposure levels** (brought forward from P9). Servers from `.xeito/mcp.json` and the user's configuration, stdio and streamable HTTP. A tool's exposure is `script` (default: reachable from scripts only), `deferred`, `direct` or `hidden`, per server and per tool, as in pi. Scripts find tools with `search_tools/1`, which reuses the skills' BM25 index (P4f). Each call is an effect. The tool annotations feed Risk's rules: read-only and closed-world is safe by rule, destructive goes to review. An open-world server counts as off-box for the data-locality policy. The protocol comes from a library, not Xeito's own code: anubis_mcp or arbor_mcp, tried side by side ([PX](#adopting-existing-libraries)).
 6. **Benchmark** (`bench/`): busywork requests on real repositories (classify the TODO comments by urgency; group the failures of the last CI logs by cause; rate each issue of a tracker export), run with plain tools, with Elixir scripts, with JavaScript scripts, and with pi's Codemode on the same local model. Measured: success, model turns, tokens, wall time, the share of calls decided by rules.
 
 **Exit:**
@@ -526,6 +528,7 @@ Added 2026-10-09, from pi's built-in MCP and Codemode (2026-09-29). The concept,
      - Events in the daemon's stream and in exports use the [CloudEvents](https://cloudevents.io/) envelope (`id`, `source`, `type`, `time`, `subject`, `data`).
      - Exported hashes use [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON Canonicalization Scheme) with SHA-256, so any language can verify them: decision inputs, message chains, replay checks. The log's own ids stay as they are.
      - Optionally, new ids become time-ordered [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562) UUIDv7.
+     - Libraries (checked 2026-10-09, [PX](#adopting-existing-libraries)): jcs for RFC 8785, uuidv7 or uniq for the ids, OpenTelemetry's exporter for OTLP; the CloudEvents envelope and the PNML export are written by hand.
    - **Provenance:** a [W3C PROV](https://www.w3.org/TR/prov-overview/) export (entities, activities, agents) that answers which run, decision, model or human produced a change. It is useful for audits, and PROV is a standard model that other tools read.
 7. ✅ **Promotion candidates** (added and built 2026-10-02, `Xeito.Promotion`, prompts grouped by shared words for now; the first half of [promotion](architecture/05-event-log-and-process-mining.md#promotion-from-free-chat-to-skills-and-machines)): trace signatures for free-chat runs, prompt clusters, variants per cluster, and `mix xeito.candidates`, a report of the frequent requests with their dominant variant, success, cost and a rule-based `PromotionTarget`. No drafting yet: the report is reviewed by hand, and the first skills and machines are written from it.
 
@@ -591,6 +594,58 @@ Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 
 **Exit:** at least one bridge drives a Xeito machine end to end from the other harness, and the run is logged like any other. The MCP server passes the protocol's own conformance checks (its inspector tool), and a decision is requested from another agent through it.
 
+## PX · Libraries for the ecosystem
+
+Added 2026-10-09, after a review of which parts of Xeito would fill a gap in the Elixir ecosystem, checked against Hex the same day (package metadata, and the sources or READMEs of the closest competitors). The review asked two questions: what Xeito could give the ecosystem, and where an existing library would serve Xeito better than its own code ([below](#adopting-existing-libraries)).
+
+### Extraction candidates
+
+| Candidate | Modules | On Hex (2026-10-09) | Verdict |
+|---|---|---|---|
+| Typed decisions | `Xeito.Decision`, `Decision.Scoring`, `Decision.Prompt`, `Decision.Eval`, the tier cascade | instructor, instructor_lite, req_llm, jido_ai and ash_ai do structured output and orchestration. None has closed value sets with rules before any model, confidence from token log-probabilities, thresholds that escalate, or an eval with a gate test. jido_ai 2.4.0's only confidence is in its TRM strategy: a number the model writes, or a heuristic over certainty phrases. | **Extract.** The one real gap found. |
+| Change-risk gate | `Xeito.Crap`, `Xeito.Mutate` (`test/support`) | Mutation testing: muex (active since 2026-01, swaps modules in the running VM), mutare (since 2026-09, compiles once, runs only the tests that cover a mutant) and kalku_elixir; Exavier and Muzak are no longer maintained. CRAP: ex_crap (since 2026-06, `mix crap`, default maximum 30, reads exported coverage data). | **Contribute, don't publish.** ex_crap lacks two things Xeito's gate has: running as the `test_coverage` tool, and a baseline that may not get worse. |
+| Statecharts | `Xeito.Machine`, its DSL, `Validator`, `Engine`, `Export` | statifier (2.12, active): a W3C SCXML interpreter with a pure core that returns effects as data, checked against 287 SCION and W3C tests. Finitomata (flat machines) is active; Protean is not. | **Don't extract.** What remains (an Elixir DSL checked at compile time, recovery from the log) is a thin case next to statifier. Reuse its conformance tests instead (Conformance track). |
+| Skill discovery and selection | `Xeito.Skills`, `Skills.Index`, `Skills.Examples`, `Skills.Bench` | jido_ai covers agentskills.io discovery, project-over-user precedence, activation and bundled resources; usage_rules ships skills inside dependencies. Nothing ranks skills for a request (BM25, generated example requests, a shortlist that skips the model when nothing matches). | **Selection only**, offered to jido_ai; otherwise nothing. |
+| OCEL 2.0 log | `Xeito.Log.Schema`, `Codec`, `Event` | ex4pm and ash_ex4pm (since 2026-09, one author, on Ash, Broadway and Wasm) ingest and emit OCEL. | **Wait.** Reconsider after P5 has validated the layout against the specification. |
+| The rest | `Effects.OsCommand`, `Tiers.Queue`, `Monitor.Host`, `Undo` | erlexec and MuonTrap; sbroker, jobs and Poolex | **Keep inside.** Thin wrappers, or specific to Xeito. |
+
+### Steps
+
+1. **Typed decisions as a package** (after P4h, alongside P5). Built on req_llm, the most used model client, rather than as one more client.
+   - First a contribution to req_llm: its Ollama provider does not request log-probabilities (its OpenAI, Azure, OpenRouter and Anthropic providers do), and the local tiers need them. If it is declined, the package keeps its own Ollama backend.
+   - Contents: the decision DSL with its compile-time checks, rendering to chat messages and JSON Schema, scoring from log-probabilities, a cascade over tiers by threshold, and the eval with the gate test. Not in it: the escalation machine, policy and budgets, which stay in Xeito and call the package.
+   - The README is written first, and fixes the name and the API.
+   - Xeito depends on the package like any other dependency; its decision types do not change.
+2. **ex_crap contributions:** a mode that runs as the `test_coverage` tool (no separate coverage export) and a baseline file. If both are accepted, `Xeito.Crap` is replaced by ex_crap with the maximum at 6.
+3. **A mutation-testing spike:** muex and mutare on the sources in `test/mutate.exs`, compared with `Xeito.Mutate` for mutants killed, survivors and wall time. Switch if a tool kills at least the same mutants and can fail `mix ci` on a survivor; mutare's test selection may also shorten `mix ci`.
+4. **Skill selection for jido_ai:** an issue describing the shortlist and its numbers (P4f, `mix xeito.skills.bench`). Build only if the maintainers want it.
+
+**Exit:** the typed-decisions package is published on Hex, and Xeito uses it with `mix ci` green and the [bench 2](../bench/2-decisions.md) results unchanged. The req_llm and ex_crap contributions are merged or declined, and Xeito's code follows the outcome.
+
+### Adopting existing libraries
+
+For each planned or hand-written part, whether a library on Hex would serve better (checked 2026-10-09).
+
+| Part | Library | Decision |
+|---|---|---|
+| Skill frontmatter (`Xeito.Skills.frontmatter/1`, a YAML subset with one nested level) | yaml_elixir (over yamerl) | **Adopt.** Skills from other authors use full YAML (lists, deeper `metadata`), which a subset reads wrongly without an error. |
+| MCP client ([P4h](#p4h--scripts) step 5) | anubis_mcp (the most used; continues hermes_mcp; LGPL-3.0); arbor_mcp, formerly ex_mcp (MIT; 2.0 is a release candidate and its transport needs a C compiler) | **Use one; don't write one.** Try both in step 5. Check what LGPL means for the single binary of P8 before choosing anubis_mcp. |
+| ACP agent ([P9](#p9--bridges-to-other-harnesses-after-p4-2-weeks)) | arbor_acp (beside arbor_mcp); agent_client_protocol (0.1, little used) | Decide in P9, together with the MCP library. |
+| Script sandbox (P4h) | dune (0.3.18, active) | Already the plan. |
+| JavaScript fallback (P4h) | quickjs (quickjs-ng bindings), quickbeam | If the fallback is needed, run one inside the sandbox VM rather than a separate QuickJS process. |
+| RFC 8785 hashes (P5 item 6) | jcs | Adopt. |
+| UUIDv7 ids (P5 item 6) | uuidv7, uniq | Adopt one if new ids become UUIDv7. |
+| CloudEvents envelope (P5 item 6) | cloudevents (last release 2022) | Write it: the envelope is six fields. |
+| OTLP traces (P5 item 6) | opentelemetry with its OTLP exporter; langfuse (community SDK) | OpenTelemetry's; Langfuse reads OTLP too. |
+| Process mining (P5) | ex4pm | Not adopted: broad, very new, heavy dependencies. The PM4Py sidecar stays, and so do the native DFG and variants. |
+| PNML export (P5 item 6) | petrex (since 2026-09, little used) | Write the export; look again if petrex matures. |
+| Secrets in tool output (Secrets track) | secret_scan (by the Hex team; gitleaks' rules in Elixir) | Evaluate its rules as the detector before writing patterns. |
+| Statechart conformance (Conformance track) | statifier's SCION and W3C tests (MIT) | Reuse its translations where the data model allows. |
+| Architecture rules (`test/xeito/architecture_test.exs`) | boundary | Keep the test: its exceptions name functions, and boundary works per module. |
+| Token counts (`Xeito.Chat.Window`) | tokenizers | Keep the calibrated estimate: a tokenizer per model and a Rust NIF, while the server reports the real count anyway. |
+| Host readings (`Xeito.Monitor.Host`) | `:os_mon` (OTP) | Keep: os_mon has no GPU readings, and the CPU and RAM ones are a few lines of `/proc`. |
+| Mutation testing, CRAP | muex, mutare, ex_crap | Steps 2 and 3 above. |
+
 ---
 
 ## Cross-cutting tracks (parallel)
@@ -600,10 +655,11 @@ Added on 2026-09-28: bridges wait until the harness itself has been dogfooded.
 | Eval data | P2 → | Keep growing the labelled decisions. Every human override is a label. |
 | Benchmarks | P0 → | Nightly `bench/` run on the reference workstation: hardware, models, decisions, machines. |
 | Writing | P1 → | One short post per phase. It feeds the grant narratives and talks. Includes a mapping of Xeito's record-keeping and human oversight (the log, reviews, step mode, human decisions) to the EU AI Act (articles 12 and 14) and ISO/IEC 42001, for public-sector users. |
-| Change risk | P4 → | Added 2026-10-01: a CRAP gate (max 30) on every test run, the pre-commit hook and CI. 16 older functions started in `test/crap_baseline.exs`, mostly untested TUI, API and rendering dispatch. Worked down to empty the same day, test-first (unit tests for the TUI, renderer, API connection, session commands, deciders' evaluation and log tasks; large dispatch functions split). The baseline stays as the mechanism, empty. Mutation testing (`mix xeito.mutate`) added the same day, starting with Risk: its first run left 49 of 140 mutants alive (among them, nothing pinned that a newline separates commands, without which a command after a safe one would pass as safe, nor the secret-file exclusions); after the new tests, none. Policy, Budget and the chat machine's guards followed (first runs: 67%, 44% and 35% killed; now all 100%, and one equivalent mutant was dead code in Policy, removed). The maximum went down to 6 on 2026-10-02, tests first: 72 functions were over 6; the 48 not fully covered got tests (which found that `mix xeito.chat` crashed instead of reporting a missing daemon), then the 37 still too complex were split, mostly dispatchers grouped by theme, with mutation testing at 100% throughout. |
+| Change risk | P4 → | Added 2026-10-01: a CRAP gate (max 30) on every test run, the pre-commit hook and CI. 16 older functions started in `test/crap_baseline.exs`, mostly untested TUI, API and rendering dispatch. Worked down to empty the same day, test-first (unit tests for the TUI, renderer, API connection, session commands, deciders' evaluation and log tasks; large dispatch functions split). The baseline stays as the mechanism, empty. Mutation testing (`mix xeito.mutate`) added the same day, starting with Risk: its first run left 49 of 140 mutants alive (among them, nothing pinned that a newline separates commands, without which a command after a safe one would pass as safe, nor the secret-file exclusions); after the new tests, none. Policy, Budget and the chat machine's guards followed (first runs: 67%, 44% and 35% killed; now all 100%, and one equivalent mutant was dead code in Policy, removed). The maximum went down to 6 on 2026-10-02, tests first: 72 functions were over 6; the 48 not fully covered got tests (which found that `mix xeito.chat` crashed instead of reporting a missing daemon), then the 37 still too complex were split, mostly dispatchers grouped by theme, with mutation testing at 100% throughout. Since 2026-10-09, [PX](#px--libraries-for-the-ecosystem) weighs moving both tools to Hex packages: contributions to ex_crap, and a spike comparing muex and mutare with `Xeito.Mutate`. |
 | Architecture rules | P4 → | Added 2026-10-07, from a review of the project's practices against a 2026 curriculum: dependency rules nothing checked before, now enforced by `test/xeito/architecture_test.exs`, which reads the calls compiled modules make. The client reaches the daemon only through its socket, apart from six library calls listed with their reasons; the core never calls the edges; machines and their engine perform no effects. All three already held, and a planted violation of each fails the test. The same review found that [06](architecture/06-observability.md) promised `:telemetry` events that nothing emitted: `Xeito.Telemetry` now emits them, as a projection of each logged run event. |
-| Secrets and personal data | P5 → | Added 2026-10-02, from Anthropic's "code execution with MCP" article: the effects runner replaces secrets and personal data in tool output with placeholders before it reaches a model, and puts the real values back when a command runs. Then a model can work with a value without seeing it. It matters most for the off-box tiers, alongside their policy gate ([10](architecture/10-security-and-sandboxing.md)). |
-| Conformance | P5 → | Execution semantics against [W3C SCXML](https://www.w3.org/TR/scxml/) (added 2026-09-30). Xeito exports SCXML; its engine should also behave like SCXML where their features overlap: event processing, entry and exit order, eventless transitions, and history and parallel states if the engine supports them. Translate the applicable tests of the W3C SCXML test suite into machines and run them in CI. Most tests assume an ECMAScript data model, so only a subset applies. Document every deviation in [02](architecture/02-state-machine-core.md). |
+| Dependencies | P4 → | Added 2026-10-09, the third recommendation of the same review: `mix ci` starts with `mix deps.unlock --check-unused` and `mix hex.audit`. Hex's audit covers retired packages and published security advisories, so no extra audit tool was added. Dependabot opens a weekly pull request per mix dependency and GitHub Action (`.github/dependabot.yml`). Patch updates, and minor updates of packages at 1.0 or later, merge by themselves once CI passes (`.github/workflows/dependabot-auto-merge.yml`, squashed); majors, and minor updates before 1.0, wait for review. |
+| Secrets and personal data | P5 → | Added 2026-10-02, from Anthropic's "code execution with MCP" article: the effects runner replaces secrets and personal data in tool output with placeholders before it reaches a model, and puts the real values back when a command runs. Then a model can work with a value without seeing it. It matters most for the off-box tiers, alongside their policy gate ([10](architecture/10-security-and-sandboxing.md)). Before writing detection patterns, evaluate secret_scan's (gitleaks' rules in Elixir; [PX](#adopting-existing-libraries)). |
+| Conformance | P5 → | Execution semantics against [W3C SCXML](https://www.w3.org/TR/scxml/) (added 2026-09-30). Xeito exports SCXML; its engine should also behave like SCXML where their features overlap: event processing, entry and exit order, eventless transitions, and history and parallel states if the engine supports them. Translate the applicable tests of the W3C SCXML test suite into machines and run them in CI. Most tests assume an ECMAScript data model, so only a subset applies. statifier has already translated the SCION and W3C tests for Elixir (MIT; [PX](#adopting-existing-libraries)): start from its translations. Document every deviation in [02](architecture/02-state-machine-core.md). |
 
 ## Risks and mitigations
 

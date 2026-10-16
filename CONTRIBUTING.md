@@ -9,7 +9,7 @@ Xeito is at the design and early implementation stage. See [docs/implementation-
 
   ```bash
   mix deps.get
-  mix ci          # format, warnings as errors, credo, dialyzer, tests with the CRAP gate, mutation testing
+  mix ci          # dependency audit, format, warnings as errors, credo, dialyzer, tests with the CRAP gate, mutation testing
   ```
 
   [docs/testing.md](docs/testing.md) describes each check, how to work test-first, and how to try a change by hand against a throwaway daemon (`scripts/try-local.sh`).

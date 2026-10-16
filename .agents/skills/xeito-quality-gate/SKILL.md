@@ -5,7 +5,7 @@ description: Get a change in this repository through its quality gates, the CRAP
 
 # Quality gates
 
-`mix ci` must pass before every commit: format, warnings as errors, Credo, Dialyzer, the tests with the CRAP gate, and mutation testing. The pre-commit hook (`scripts/check-crap.sh`) runs the CRAP gate again. Never get around a gate (no `--no-verify`, no baseline entry, no skipped test): a gate that fails is pointing at real risk. `docs/testing.md` describes the whole local procedure.
+`mix ci` must pass before every commit: unused and audited dependencies, format, warnings as errors, Credo, Dialyzer, the tests with the CRAP gate, and mutation testing. The pre-commit hook (`scripts/check-crap.sh`) runs the CRAP gate again. Never get around a gate (no `--no-verify`, no baseline entry, no skipped test): a gate that fails is pointing at real risk. `docs/testing.md` describes the whole local procedure.
 
 ## CRAP: complexity times untested-ness
 

@@ -63,6 +63,12 @@ defmodule Xeito.MixProject do
   defp aliases do
     [
       ci: [
+        # Dependencies first, in seconds: nothing locked that no dependency needs, and no
+        # dependency retired or with a published security advisory (Hex's own advisory data;
+        # from the cached registry when offline). Acknowledged exceptions go under `hex:` in
+        # project/0, each with its reason.
+        "deps.unlock --check-unused",
+        "hex.audit",
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --strict",

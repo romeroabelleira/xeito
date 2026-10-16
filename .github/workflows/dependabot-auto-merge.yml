@@ -1,0 +1,31 @@
+name: Dependabot auto-merge
+
+# Turns on auto-merge (squash) for Dependabot's pull requests that are a patch update, or a minor
+# update of a package at 1.0 or later; before 1.0 a minor version may break the API. Majors wait
+# for review. GitHub merges only once the checks required on main pass, so the repository needs
+# "Allow auto-merge" and a rule requiring the CI job `test` on main.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-24.04
+    # Opened and last pushed by Dependabot, not a branch someone else pushed to.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Enable auto-merge
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' &&
+           !startsWith(steps.meta.outputs.previous-version, '0.'))
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
