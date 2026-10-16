@@ -17,6 +17,11 @@ if ! command -v mix > /dev/null 2>&1; then
   exit 1
 fi
 
+# The tests run git in repositories of their own. Give them none of this commit's repository
+# variables (git sets GIT_INDEX_FILE for the hook; in a linked worktree it is an absolute path,
+# which those git commands would follow).
+unset $(git rev-parse --local-env-vars)
+
 if out=$(MIX_ENV=test mix test --cover 2>&1); then
   echo "✓ CRAP gate"
 else
