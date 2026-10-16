@@ -2,6 +2,12 @@
 
 These are the project's instructions for any coding agent: Xeito itself reads this file into its chat turns, and so do other harnesses; Claude Code reads it through `CLAUDE.md`, which only imports it.
 
+## Finding your way
+
+Understand the code from the code. Start with [GLOSSARY.md](GLOSSARY.md) (the terms, each with its module), then `mix xeito.map` (every module in one line; `mix xeito.map Xeito.Chat` adds the public functions with their specs), then the module you need and its test. The tests name the behaviour each module guarantees.
+
+`docs/` and `bench/` hold reasons, history and measurements, not the interface; they are kept out of searches (`.ignore`). Open one only when a task is about it, such as the plan (`docs/implementation-plan.md`).
+
 ## Hard rule: this repository is public
 
 Never commit deployment- or operator-specific details. This covers:
@@ -22,7 +28,9 @@ Guard hooks (pre-commit, commit-msg, pre-push) scan for such content. Do not byp
 
 Run `mix format` after editing. It includes Styler, which also rewrites code (aliases, pipes, directive order), so don't hand-format against it. `mix ci` is the check to pass before committing: unused and audited dependencies, format, warnings as errors, `credo --strict`, Dialyzer, tests with the CRAP gate, and mutation testing.
 
-Work test-first: write a failing unit test, then the code, then refactor. Every function must stay at or below a CRAP score of 6, computed from complexity and coverage (`test/support/xeito/crap.ex`): fully tested, a function may be as complex as 6; untested, it fails from complexity 3. Functions listed in `test/crap_baseline.exs` are older debt: they may not get worse, and an entry must be removed once its function is at or under 6. Never add new code to the baseline. The pre-commit hook (`scripts/check-crap.sh`) refuses a commit that fails the gate. Sources listed in `test/mutate.exs` must have no surviving mutants (`mix xeito.mutate`, part of `mix ci`): when one survives, add the test that kills it. See [docs/architecture/08-tech-stack.md](docs/architecture/08-tech-stack.md#code-style), and [docs/testing.md](docs/testing.md) for the whole local procedure; `scripts/try-local.sh` tries a change by hand against a throwaway daemon.
+Work test-first: write a failing unit test, then the code, then refactor. Every function must stay at or below a CRAP score of 6, computed from complexity and coverage (`test/support/xeito/crap.ex`): fully tested, a function may be as complex as 6; untested, it fails from complexity 3. Functions listed in `test/crap_baseline.exs` are older debt: they may not get worse, and an entry must be removed once its function is at or under 6. Never add new code to the baseline. The pre-commit hook (`scripts/check-crap.sh`) refuses a commit that fails the gate. Sources listed in `test/mutate.exs` must have no surviving mutants (`mix xeito.mutate`, part of `mix ci`): when one survives, add the test that kills it. `scripts/try-local.sh` tries a change by hand against a throwaway daemon.
+
+Write moduledocs as contracts: a first sentence that says what the module is (`mix xeito.map` shows it), then what it guarantees, its inputs and outputs. Give every public function a `@spec`. Reasons and history go in the commit message, not the code; keep a one-line comment only where the code would otherwise look wrong.
 
 ## Skills
 

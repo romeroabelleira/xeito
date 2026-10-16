@@ -19,8 +19,8 @@ defmodule Mix.Tasks.XeitoTest do
     end
   end
 
-  @tasks ~w(xeito.candidates xeito.chat xeito.daemon xeito.eval xeito.export xeito.log xeito.skills.bench
-            xeito.skills.examples xeito.tui)
+  @tasks ~w(xeito.candidates xeito.chat xeito.context xeito.daemon xeito.eval xeito.export xeito.log xeito.map
+            xeito.skills.bench xeito.skills.examples xeito.tui)
 
   test "mix xeito, with --help, -h or help, says what Xeito is and lists every xeito task" do
     for args <- [[], ["--help"], ["-h"], ["help"]] do

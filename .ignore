@@ -1,0 +1,4 @@
+# Kept out of ripgrep, and so out of agents' searches (P4i): prose they would otherwise read
+# while looking for code. Open these by path when a task is about them.
+docs/
+bench/

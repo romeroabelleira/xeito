@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-10-16 (P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included; P4g, P4h and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-10-16 (P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included; P4g, P4h and PX planned; P4i under way) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -28,6 +28,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4e · Skills per turn | the chat prompt lists the project's skills only; a typed decision picks at most one of the user's skills per turn | — | built 2026-10-04 | [P4e](#p4e--skills-chosen-per-turn) |
 | P4g · One-shot mode (planned) | `mix xeito.run`: a skill or machine on stdin, free prose out, streaming and pipes; per-skill tier, variables, named contexts, strategies as machines (ideas from Fabric) | — | after P4f | [P4g](#p4g--one-shot-mode-and-composable-skills) |
 | P4h · Scripts (planned) | a `script` tool: the model hands busywork to an Elixir script whose every call is a logged, gated effect; typed decisions and log objects from scripts; the MCP client with exposure levels (answer to pi's Codemode) | — | after P4g, before P5 | [P4h](#p4h--scripts) |
+| P4i · Code over docs (added) | a glossary, a generated module map, moduledocs as contracts, types for the data that crosses modules, tests mirrored to modules, smaller modules; the docs repository decided by measurement | — | steps 1–5 done 2026-10-16; step 6 next | [P4i](#p4i--code-over-docs) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
@@ -510,6 +511,32 @@ Added 2026-10-09, from pi's built-in MCP and Codemode (2026-09-29). The concept,
 - A script that tries a forbidden command, a file outside the workspace or the clock is stopped, and the log shows why.
 - `/undo` reverses a script's writes as one step, and `mix xeito.log verify` replays a script run exactly.
 - An MCP tool with `script` exposure is called from a script, gated and logged, without appearing in the model's tool list.
+
+## P4i · Code over docs
+
+Added 2026-10-16. Agents working on Xeito, Xeito's own chat included, should understand the code from the code: interfaces, types and tests, with as little prose as possible to read first. A count the same day (about 4 characters a token):
+
+| Surface | Size | Paid |
+|---|---|---|
+| `docs/` (architecture, concepts, plan, testing) | ~67k tokens, the plan ~26k | when an agent greps into it or follows a link; `lib/` held 110 references to docs, plan phases or bench reports |
+| `USAGE.md`, `INSTALL.md`, `bench/` | ~13k, ~11k | the same |
+| `@moduledoc`/`@doc` prose in `lib/` | ~32k, 20% of `lib/` | every time a file is opened |
+| comments in `lib/` | ~13k, 8% | the same |
+| `session.ex` (1,374 lines), `tui.ex` (1,089), `machines/chat.ex` (750) | ~14k, 12k, 8k a read | every task that touches them |
+
+A document nobody opens costs nothing; the steady cost is the prose inside the code and the files read whole. Hence the order below: what every task pays first, the move of the documents last and only if measurement shows it is worth it.
+
+1. **Ignore and measure.** `.ignore` keeps `docs/` and `bench/` out of ripgrep (and so out of agents' searches) without moving them. A benchmark of typical tasks on this repository (`mix xeito.context`) reports for each the tokens an agent must read to do it: the always-read surface (`AGENTS.md`, the glossary) and the files the task touches, with their tests. The baseline is taken before steps 2–6.
+2. **A glossary** (`GLOSSARY.md`, under ~2k tokens): one line per term, naming the module that defines it. A test keeps it true: every module it names exists.
+3. **A generated map** (`mix xeito.map`): every module with its summary line and its public functions with their specs, from the same code as the chat's repository map (`Xeito.Source.RepoMap`). `AGENTS.md` points to the glossary and the map instead of the documents.
+4. **Moduledocs as contracts.** A summary line, then what the module guarantees, its inputs and outputs. History, measurements and reasons move out (to the documents, or the commit that made the change); a one-line comment stays where the code would otherwise look wrong. References to plan phases and bench reports go.
+5. **Types for the data that crosses modules.** `@type`s for chat messages, effect results by kind, a tier's configuration and a decision's result, used in the specs that now describe them in words; every public function has a `@spec`. Types rather than structs: messages and results are stored in the log as maps, and a struct would change what old runs decode to.
+6. **Tests mirrored to modules, and smaller modules.** `test/xeito/<path>_test.exs` for `lib/xeito/<path>.ex`. `Session`, `Tui` and the chat machine are split by responsibility, to at most about 400 lines a module.
+7. **Measure again, then decide on a documents repository.** If the measurement shows the documents still cost reads, the architecture, concepts, plan and bench reports move to a public `xeito-docs` repository (the content is public, unlike `xeito-local`), with a short `ROADMAP.md` left here, and `sync-repos.sh` and the guard hooks extended to it. The cost is that code and its documents no longer change in one commit; after steps 2–5, the code is the reference and the documents hold the reasons.
+
+**Status** (2026-10-16): steps 1–5 done. `.ignore`, `mix xeito.context` with its baseline (`bench/context/`), `GLOSSARY.md` with a test that every module it names exists and every top-level module is named, `mix xeito.map` (`Xeito.Source.ModuleMap`, from compiled docs and typespecs), `AGENTS.md` pointing to both. Moduledocs and comments across `lib/` rewritten as contracts, with no reference to a plan phase, bench report or document left (checked by comparing every file's syntax tree with the docs removed: no code changed). Types: `Xeito.Chat.Message` (messages and replies), `Xeito.Effect`'s results by kind, `Xeito.Tiers.config/0`; every public function has a spec. Dialyzer found one real mismatch on the way (a message without a role in `Xeito.Chat.Window`). Measured: prose per task down 38%, code and tests read down 6%; the total up 8%, the glossary being read for every task ([bench/context](../bench/context/README.md)).
+
+**Exit:** the always-read surface is under ~4k tokens; no module in `lib/` refers to a plan phase or a bench report; every public function has a spec; the benchmark shows fewer tokens per task than the baseline, and step 7's decision is recorded with its numbers.
 
 ## P5 · OCEL export and process mining (≈4 weeks)
 
