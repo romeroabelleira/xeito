@@ -199,7 +199,7 @@ defmodule Xeito.Client.StatusBar do
 
   defp workspace_segment(:git, %{"missing" => true}), do: "⚠ workspace missing"
   defp workspace_segment(:git, w), do: git(w && w["git"])
-  defp workspace_segment(:budget, w), do: budget(w && w["budget"])
+  defp workspace_segment(:budget, w), do: join([budget(w && w["budget"]), chat(w && w["chat"])])
 
   # From the session's usage.
   defp usage_segment(:calls, u, _m), do: calls(u)
@@ -250,6 +250,15 @@ defmodule Xeito.Client.StatusBar do
 
     "git #{branch} #{state}#{ab}"
   end
+
+  # A remote chat: its model, and what the key has left once known.
+  defp chat(%{"off_box" => true, "model" => model} = chat),
+    do: "chat #{model |> to_string() |> String.split("/") |> List.last()}" <> key_left(chat["left_usd"])
+
+  defp chat(_chat), do: ""
+
+  defp key_left(left) when is_number(left), do: " · key $#{:erlang.float_to_binary(left * 1.0, decimals: 2)}"
+  defp key_left(_left), do: ""
 
   defp budget(nil), do: ""
   defp budget(%{"off_box" => false}), do: "off-box off"

@@ -16,7 +16,8 @@ defmodule Xeito.Session do
   `"always"`), the command is not asked about again (`Xeito.Session.Allowed`).
 
   Slash commands: `/machine <name> [prompt]`, `/run <command>`, `/approve`, `/deny`, `/why`,
-  `/budget <usd>`, `/help`, and for step mode (`docs/architecture/06-observability.md#2-step`):
+  `/budget <usd>`, `/model [tier]` (`Xeito.Session.ChatModel`), `/help`, and for step mode
+  (`docs/architecture/06-observability.md#2-step`):
   `/step` (toggle), `/next`, `/decide <value>`, `/continue`, `/break state:<s> | decision:<Type> |
   conf<<x> | clear`. Debug settings apply to the session's live runs and to every run it starts;
   escalation runs never pause. See `docs/architecture/07-harness-frontend.md#interaction-model`.
@@ -34,6 +35,7 @@ defmodule Xeito.Session do
 
   use GenServer
 
+  alias Xeito.Allowance
   alias Xeito.Budget
   alias Xeito.Chat.Window
   alias Xeito.Decisions.Intent
@@ -51,8 +53,10 @@ defmodule Xeito.Session do
   alias Xeito.Run
   alias Xeito.RunSupervisor
   alias Xeito.Session.Allowed
+  alias Xeito.Session.ChatModel
   alias Xeito.Session.Git
   alias Xeito.Session.Router
+  # --- server --------------------------------------------------------------------------------
   alias Xeito.Skills
   alias Xeito.Skills.Examples.Worker
   alias Xeito.Source.RepoMap
@@ -76,8 +80,6 @@ defmodule Xeito.Session do
   `:idle_timeout` (ms).
   """
 
-  # --- server --------------------------------------------------------------------------------
-
   @spec start(keyword()) :: {:ok, String.t()} | {:error, term()}
   def start(opts) do
     id = Keyword.get_lazy(opts, :id, &new_id/0)
@@ -99,7 +101,7 @@ defmodule Xeito.Session do
   # The slash commands, by what they act on (command/3). `skill:` takes the skill's name.
   @start_commands ~w(machine run skill: steer)
   @turn_commands ~w(approve deny halt send drop)
-  @info_commands ~w(why budget help machines)
+  @info_commands ~w(why budget model help machines)
   @debug_commands ~w(step continue next decide break)
   @undo_commands ~w(undo redo)
 
@@ -306,7 +308,7 @@ defmodule Xeito.Session do
 
     cond do
       Regex.match?(
-        ~r{^/(approve|deny|halt|send|drop|steer|why|budget|help|machines|step|next|continue|break|decide)\b},
+        ~r{^/(approve|deny|halt|send|drop|steer|why|budget|model|help|machines|step|next|continue|break|decide)\b},
         trimmed
       ) ->
         "/" <> command = trimmed
@@ -542,6 +544,7 @@ defmodule Xeito.Session do
 
   defp info_command("why", _arg, s), do: why(s)
   defp info_command("budget", usd, s), do: budget(usd, s)
+  defp info_command("model", name, s), do: chat_model(name, s)
   defp info_command("help", _arg, s), do: notice(s, help())
   defp info_command("machines", _arg, s), do: notice(s, machines_text(s))
 
@@ -820,7 +823,7 @@ defmodule Xeito.Session do
         messages: s.history,
         verify: Router.quick_check_command(s.cwd),
         system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(listed),
-        context: local_context(),
+        context: ChatModel.context(ChatModel.current(s.chat), chat_config(s)),
         skills: Enum.map(skills, &Map.take(&1, [:name, :dir])),
         skill_candidates: Enum.map(candidates, &Map.take(&1, [:name, :description]))
       },
@@ -998,17 +1001,25 @@ defmodule Xeito.Session do
 
   defp workspace_attrs(s) do
     policy = Policy.effective(Keyword.take(s.decider, [:policy]))
+    tier = ChatModel.current(s.chat)
     spent = if is_binary(s.root), do: Budget.get(s.root, :usd), else: 0
 
     %{
       "missing" => not File.dir?(s.cwd),
       "git" => Git.status(s.cwd),
       "budget" => %{
-        "off_box" => policy.remote == :allowed and policy.locality == :public,
+        "off_box" => (policy.remote == :allowed and policy.locality == :public) or ChatModel.off_box?(tier),
         "max_usd_per_run" => policy.max_usd_per_run,
         "spent_usd" => spent
-      }
+      },
+      "chat" => chat_attrs(tier, chat_config(s))
     }
+  end
+
+  # The chat tier for the status bar; a remote one with what its key has left (no request made).
+  defp chat_attrs(tier, cfg) do
+    left = if ChatModel.off_box?(tier) and cfg[:url], do: Allowance.last(cfg)
+    %{"tier" => tier, "model" => cfg[:model], "off_box" => ChatModel.off_box?(tier), "left_usd" => left}
   end
 
   defp internal?(run_id), do: String.ends_with?(run_id, "/esc") or String.ends_with?(run_id, "/intent")
@@ -1133,6 +1144,9 @@ defmodule Xeito.Session do
 
   defp to_text(nil), do: ""
   defp to_text(text) when is_binary(text), do: text
+  # A remote chat call that was not made: its reason is written for the user (`Xeito.Allowance`).
+  defp to_text({:budget, text}), do: text
+  defp to_text({:allowance, text}), do: text
   defp to_text(other), do: inspect(other)
 
   # Chat turns keep their full message list; other machines leave a short exchange.
@@ -1150,8 +1164,32 @@ defmodule Xeito.Session do
 
   defp warn_truncated(s, _result), do: s
 
-  # The local tier's context window, for the chat machine's budget (its own default when unset).
-  defp local_context, do: (Tiers.config(:local) || [])[:context]
+  # The chat tier's configuration (`[]` if it is not configured).
+  defp chat_config(s), do: Tiers.config(ChatModel.current(s.chat)) || []
+
+  # /model: show the chat tiers, or switch this session's chat to one.
+  defp chat_model("", s) do
+    cfg = chat_config(s)
+    notice(s, ChatModel.describe(ChatModel.current(s.chat), chat_configs(), cfg[:url] && Allowance.last(cfg)))
+  end
+
+  defp chat_model(name, s) do
+    case ChatModel.choose(name, chat_configs()) do
+      {:ok, tier} ->
+        s = %{s | chat: Keyword.put(s.chat, :tier, tier)}
+        emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
+
+        notice(
+          s,
+          ChatModel.switched(tier, chat_config(s), Policy.effective(Keyword.take(s.decider, [:policy])).max_usd_per_run)
+        )
+
+      {:error, text} ->
+        error(s, text)
+    end
+  end
+
+  defp chat_configs, do: Map.new(ChatModel.tiers(), &{&1, Tiers.config(&1)})
 
   defp remember(%{machine: Chat}, %{status: :halted, ctx: %{turn: [_system | messages]}}, answer),
     do: trim_history(settled(messages) ++ [%{role: "assistant", content: "(#{answer})"}])
@@ -1289,7 +1327,8 @@ defmodule Xeito.Session do
                               the turn ended halted, failed, stopped, or with a question)
     /halt                     stop the turn where it is (Esc in the TUI); "go ahead" continues it
     /why                      the last decisions, with tier and confidence
-    /budget <usd>             off-box spend limit per run
+    /budget <usd>             off-box spend limit per run (a remote chat turn included)
+    /model [tier]             the chat tiers; switch this session's chat (local, remote, remote_frontier)
     /quit                     close the client (the session keeps running; attach with --session)
     /statusbar …              TUI only: on|off|reset|segments|show|hide <segment>
     /legend                   TUI only: what the coloured dots beside commands mean

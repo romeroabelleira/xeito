@@ -140,10 +140,16 @@ defmodule Xeito.Effects.Local do
   defp chat(%Effect{args: args} = effect, opts) do
     on_delta = &Xeito.Events.delta(streamed_to(args, opts), effect.id, &1)
 
-    case Chat.complete(args.messages, specs(args.tools), Keyword.get(opts, :chat, []), on_delta) do
+    case Chat.complete(args.messages, specs(args.tools), chat_options(opts), on_delta) do
       {:ok, message} -> message
       {:error, reason} -> %{error: reason}
     end
+  end
+
+  # The session's chat settings, and the run whose off-box budget a remote chat draws on.
+  defp chat_options(opts) do
+    policy = Policy.effective(Keyword.take(Keyword.get(opts, :decider, []), [:policy]))
+    Keyword.merge([run: opts[:run_id], max_usd: policy.max_usd_per_run], Keyword.get(opts, :chat, []))
   end
 
   defp specs(names) when is_list(names), do: Tools.specs(names)

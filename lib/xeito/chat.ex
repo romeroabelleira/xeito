@@ -1,11 +1,20 @@
 defmodule Xeito.Chat do
   @moduledoc """
-  The chat model client used by the free chat machine and delegated sub-tasks: Ollama
-  `/api/chat` with native tool calling, streamed.
+  The chat model client used by the free chat machine and delegated sub-tasks, streamed, with
+  native tool calling.
 
-  The model is the local tier's (`config :xeito, :tiers, local: [...]`), or `cfg[:chat_model]`
-  when a different chat model is configured. Calls go through the local tier's capacity queue,
-  so a streaming answer and a local-tier decision never compete for the GPU.
+  **The chat tier** (`tier/1`) is the session's choice (`/model`, passed as `tier:`), else
+  `config :xeito, :chat_tier` (`XEITO_CHAT_TIER`), else `:local`. Its backend decides the API:
+    * `:ollama` (the local tier): Ollama `/api/chat`. The model is the tier's, or
+      `cfg[:chat_model]` when a different chat model is configured.
+    * `:openrouter` (`:remote`, `:remote_frontier`): `Xeito.Chat.OpenRouter`. The conversation
+      leaves the machine, so only a tier someone chose gets it. Each call is planned against the
+      money left (`Xeito.Allowance.verdict/1`): it is not made once the run's off-box budget
+      (`max_usd:`, from the policy) is spent, nor when its worst case would not fit in what the
+      key may still spend. Its cost is charged to the run (`run:`, `Xeito.Budget`) and the key.
+
+  Calls go through the tier's capacity queue, so a streaming answer and a local-tier decision
+  never compete for the GPU.
 
   Each streamed chunk of content is passed to `on_delta` (the effect runner forwards it to
   `Xeito.Events`), and the call returns the complete assistant message:
@@ -18,7 +27,12 @@ defmodule Xeito.Chat do
   statechart, not a long hidden monologue, carries the plan.
   """
 
+  alias Xeito.Allowance
   alias Xeito.Backends
+  alias Xeito.Budget
+  alias Xeito.Chat.OpenRouter
+  alias Xeito.Chat.Window
+  alias Xeito.Policy
   alias Xeito.Tiers
   alias Xeito.Tiers.Queue
 
@@ -28,11 +42,50 @@ defmodule Xeito.Chat do
   @spec complete([message()], [map()], keyword(), (String.t() -> any())) ::
           {:ok, map()} | {:error, term()}
   def complete(messages, tools, overrides \\ [], on_delta \\ fn _ -> :ok end) do
-    case Tiers.config(:local, overrides) do
+    tier = tier(overrides)
+
+    case Tiers.config(tier, Keyword.delete(overrides, :tier)) do
       nil -> {:error, :chat_model_unavailable}
-      cfg -> Queue.run(:local, fn -> request(messages, tools, cfg, on_delta) end)
+      cfg -> chat(Tiers.backend(tier, cfg), tier, {messages, tools}, cfg, on_delta)
     end
   end
+
+  @doc "The chat tier: the session's choice (`tier:`), else the configured one, else `:local`."
+  @spec tier(keyword()) :: atom()
+  def tier(overrides), do: Keyword.get_lazy(overrides, :tier, fn -> Application.get_env(:xeito, :chat_tier, :local) end)
+
+  defp chat(:ollama, tier, {messages, tools}, cfg, on_delta),
+    do: Queue.run(tier, fn -> request(messages, tools, cfg, on_delta) end)
+
+  defp chat(:openrouter, tier, {messages, tools}, cfg, on_delta) do
+    with :ok <- plan(messages, tools, cfg) do
+      tier
+      |> Queue.run(fn -> OpenRouter.complete(messages, tools, cfg, on_delta) end)
+      |> charge(tier, cfg)
+    end
+  end
+
+  defp chat(backend, _tier, _request, _cfg, _on_delta), do: {:error, {:no_chat_backend, backend}}
+
+  # Whether the call may be made: the run's budget, and its worst case against the key's allowance.
+  defp plan(messages, tools, cfg) do
+    tokens = Window.estimate(messages, Window.default_chars_per_token()) + div(byte_size(JSON.encode!(tools)), 3)
+
+    Allowance.verdict(%{
+      run_spent: if(cfg[:run], do: Budget.get(cfg[:run], :usd), else: 0),
+      run_max: Keyword.get_lazy(cfg, :max_usd, fn -> Policy.effective().max_usd_per_run end),
+      left: Allowance.remaining(cfg),
+      worst: Allowance.worst_case(Allowance.model_price(cfg), tokens, Keyword.get(cfg, :max_tokens, 8192))
+    })
+  end
+
+  defp charge({:ok, message}, tier, cfg) do
+    Allowance.spent(cfg, message.usd)
+    if cfg[:run], do: Budget.add(cfg[:run], :usd, message.usd)
+    {:ok, Map.put(message, :tier, tier)}
+  end
+
+  defp charge(error, _tier, _cfg), do: error
 
   defp request(messages, tools, cfg, on_delta) do
     started = System.monotonic_time(:millisecond)

@@ -346,11 +346,27 @@ Delegated sub-runs (the chat run inside `fix_failing_test`) inherit the settings
 > /budget 0.10
 ```
 
-This sets the most a single run may spend on off-box tiers, in USD (default 0.50). Once the budget is used up, off-box tiers are skipped.
+This sets the most a single run may spend on off-box tiers, in USD (default 0.50, or `XEITO_MAX_USD_PER_RUN`). Once the budget is used up, off-box tiers are skipped, and a remote chat turn stops and says so: raise the budget and ask it to go on.
+
+### Remote chat
+
+Chat runs on the `local` tier unless a session chooses another:
+
+```
+> /model                        the chat tiers, and what the OpenRouter key has left
+> /model remote_frontier        this session's chat goes to OpenRouter
+> /model local                  and back
+```
+
+A remote chat tier sends the conversation, and every file the model reads, to OpenRouter (zero data retention, no training). Only someone typing `/model`, or `XEITO_CHAT_TIER` for every session, chooses it; the model never does. Decisions (intent, skill, Risk) stay on their own tiers.
+
+Every remote call is planned against the money left. Before a call, Xeito reads the key's allowance from OpenRouter (`GET /api/v1/key` and `/api/v1/credits`, both free, at most once a minute) and the model's price, and makes the call only if its worst case fits: every input token at full price, and the answer at its limit (8192 tokens). After it, OpenRouter's reported cost is charged to the run's budget and subtracted from the allowance. The status bar's budget segment shows the chat model and what the key has left.
+
+Prompt caching is on for Anthropic models: from the third call of a turn on, the conversation's prefix is read from the cache at a tenth of the input price. Short prompts (a few thousand tokens) are written but not read back, so caching pays off once the system prompt carries a project's `AGENTS.md` and map.
 
 ## 7. Where the data goes
 
-**Everything stays on the machine by default.** OpenRouter and the Claude API are *off-box tiers*: switched off unless configured, never used for inputs tagged local-only, and never used for the Risk decision. To use them for public or synthetic data, enable them in the application config:
+**Everything stays on the machine by default.** OpenRouter and the Claude API are *off-box tiers*: switched off unless configured, never used for inputs tagged local-only, and never used for the Risk decision. Chat leaves the machine only after `/model` (or `XEITO_CHAT_TIER`) chooses a remote tier ([remote chat](#remote-chat)). To use them for public or synthetic data, enable them in the application config:
 
 ```elixir
 # config/config.exs (or a deployment-specific config)

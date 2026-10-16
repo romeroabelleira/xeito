@@ -96,6 +96,7 @@ A typed decision is prompt-heavy and output-light. The **target is p50 below 400
 - Both go through OpenRouter. `remote` is a hosted language model with logprobs, so its answers carry a calibrated confidence ([04](04-delegation.md#openrouter)): useful for models too large for the local GPU, and for trying a model before downloading it. `remote_frontier` is the strongest hosted model (Claude, for example); it returns no logprobs, so its answer is terminal.
 - Opt-in: each is configured only when its model and key file are set (`XEITO_REMOTE_MODEL`, `XEITO_REMOTE_KEY_FILE`, and the same for `XEITO_REMOTE_FRONTIER_*`; see [INSTALL](../../INSTALL.md#model-tiers)). The key's limits can be checked for free (`GET /api/v1/key`).
 - Governed by policy ([04](04-delegation.md#guards-on-escalation)): `Risk` never goes remote, `:local_only` inputs never go remote, and each run has a budget.
+- Chat on `remote_frontier` (or `remote`) is chosen per session with `/model`, or for all sessions with `XEITO_CHAT_TIER`. Each call must fit, at worst, in what the key has left (`Xeito.Allowance`); a monthly guardrail on the key in OpenRouter's settings bounds the total.
 
 ### Thread budget
 

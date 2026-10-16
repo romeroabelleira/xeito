@@ -116,6 +116,23 @@ defmodule Xeito.Effects.LocalTest do
       assert %{error: {:context_window, {:over_budget, 9, 5}}} = Local.run(effect, [])
     end
 
+    test "a remote chat draws on the run's off-box budget, from the session's policy" do
+      Req.Test.stub(:local_remote_chat, &Plug.Conn.send_resp(&1, 500, "down"))
+
+      chat = [
+        tier: :remote,
+        url: "http://remote-chat.test/api",
+        model: "m/r",
+        api_key: "k",
+        plug: {Req.Test, :local_remote_chat}
+      ]
+
+      opts = [run_id: "r-#{System.unique_integer([:positive])}", chat: chat, decider: [policy: [max_usd_per_run: 0]]]
+
+      assert %{error: {:budget, text}} = Local.run(Effect.chat([%{role: "user", content: "hi"}]), opts)
+      assert text =~ "$0.00"
+    end
+
     test "an ordinary request carries no error" do
       refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
     end

@@ -82,7 +82,8 @@ flowchart LR
 | Answers a `human` state prompt | The answer is a typed decision with `actor: :human`, logged as a label |
 | `/why` | Shows the last decisions with their confidence, tier and rationale |
 | `/replay <run>` | Replays in the TUI; `/inspect` opens the web inspector at that run |
-| `/budget 0.50` | Sets the run's remote-tier budget ([04](04-delegation.md#guards-on-escalation)) |
+| `/budget 0.50` | Sets the run's remote-tier budget ([04](04-delegation.md#guards-on-escalation)), which a remote chat turn draws on too |
+| `/model [tier]` | Lists the chat tiers, or switches the session's chat to one (`local`, `remote`, `remote_frontier`). A remote tier speaks OpenRouter's API (`Xeito.Chat.OpenRouter`), and each call is planned against the key's allowance (`Xeito.Allowance`); P4d step 4 |
 | `/step`, `/next`, `/decide <value>`, `/continue`, `/break …` | Step mode and breakpoints ([06](06-observability.md#2-step)); implemented in P4 |
 | `y` / `n` | Approve or deny a command waiting in review (the TUI's shortcut for `/approve`, `/deny`) |
 | `s` / `a` | Approve it and do not ask about this exact command again: for the rest of the session, or always in this workspace (`/approve session`, `/approve always`; `Xeito.Session.Allowed`, `.xeito/allowed.json`) |

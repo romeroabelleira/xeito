@@ -1,0 +1,81 @@
+defmodule Xeito.Session.ChatModel do
+  @moduledoc """
+  The session's chat tier (`/model`): which tiers can chat, what each holds, and what switching
+  to a remote one means. `Xeito.Session` keeps the choice in its chat options (`tier:`), which
+  `Xeito.Chat` reads.
+
+  A remote chat tier sends the conversation, and every file the model reads, to OpenRouter. The
+  choice is made per session, by someone typing it (or for every session, by setting
+  `XEITO_CHAT_TIER`); the model never chooses it.
+  """
+
+  alias Xeito.Tiers
+
+  @chat_tiers [:local, :remote, :remote_frontier]
+  # A remote tier's window when none is configured (`XEITO_<TIER>_CONTEXT`): enough for long
+  # turns, while bounding what each call costs.
+  @remote_context 131_072
+
+  @doc "The session's chat tier, from its chat options (`Xeito.Chat.tier/1`)."
+  @spec current(keyword()) :: atom()
+  def current(chat_opts), do: Xeito.Chat.tier(chat_opts)
+
+  @doc "The tiers chat can run on."
+  @spec tiers() :: [atom()]
+  def tiers, do: @chat_tiers
+
+  @doc "Whether chat on `tier` leaves the machine."
+  @spec off_box?(atom()) :: boolean()
+  def off_box?(tier), do: tier in Tiers.off_box()
+
+  @doc "The tier named by `/model <name>`, if it can chat and is configured (`configs`: tier → config or nil)."
+  @spec choose(String.t(), %{atom() => keyword() | nil}) :: {:ok, atom()} | {:error, String.t()}
+  def choose(name, configs) do
+    name = String.trim(name)
+
+    case Enum.find(@chat_tiers, &(Atom.to_string(&1) == name)) do
+      nil -> {:error, "#{name} is not a chat tier (one of: #{Enum.join(@chat_tiers, ", ")})"}
+      tier -> configured(tier, configs[tier])
+    end
+  end
+
+  defp configured(tier, nil) do
+    env = "XEITO_" <> String.upcase(Atom.to_string(tier))
+    {:error, "#{tier} is not configured: set #{env}_MODEL and #{env}_KEY_FILE for the daemon"}
+  end
+
+  defp configured(tier, _cfg), do: {:ok, tier}
+
+  @doc "The context window the chat machine fits its requests into on `tier`."
+  @spec context(atom(), keyword()) :: pos_integer() | nil
+  def context(:local, cfg), do: cfg[:context]
+  def context(_remote, cfg), do: Keyword.get(cfg, :context, @remote_context)
+
+  @doc "The answer to `/model`: the current tier, then every chat tier."
+  @spec describe(atom(), %{atom() => keyword() | nil}, number() | nil) :: String.t()
+  def describe(current, configs, left) do
+    rows = Enum.map_join(@chat_tiers, "\n", &"  #{String.pad_trailing(Atom.to_string(&1), 17)} #{holds(&1, configs[&1])}")
+    "#{line(current, configs[current], left)}\n#{rows}\n/model <tier> switches this session's chat"
+  end
+
+  @doc "The notice after a switch to `tier`."
+  @spec switched(atom(), keyword(), number()) :: String.t()
+  def switched(tier, cfg, max_usd) do
+    if off_box?(tier),
+      do:
+        line(tier, cfg, nil) <>
+          "\nThe conversation, and every file the model reads, now leave this machine (OpenRouter, zero data " <>
+          "retention). Spend: up to #{usd(max_usd)} per turn (/budget <usd>); /model local switches back.",
+      else: line(tier, cfg, nil)
+  end
+
+  defp line(tier, cfg, left), do: "chat: #{tier} · #{holds(tier, cfg)}" <> left(left)
+
+  defp holds(_tier, nil), do: "not configured"
+  defp holds(tier, cfg), do: "#{cfg[:model]}" <> if(off_box?(tier), do: " · off-box", else: "")
+
+  defp left(nil), do: ""
+  defp left(usd), do: " · OpenRouter key: #{usd(usd)} left"
+
+  defp usd(amount), do: "$" <> :erlang.float_to_binary(amount * 1.0, decimals: 2)
+end

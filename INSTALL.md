@@ -57,8 +57,17 @@ Each tier reads the same variables under its own prefix, `XEITO_<TIER>_`, when t
 | `XEITO_LOCAL_CONTEXT` | Ollama: the context window in tokens, sent as `num_ctx` with every request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
 | `XEITO_LOCAL_KEEP_ALIVE` | Ollama: how long the model stays in VRAM after the last request | `5m` (default `10m`) |
 | `XEITO_REMOTE_PROVIDERS`, `XEITO_REMOTE_ZDR` | OpenRouter: providers to pin (comma list); `false` to allow endpoints that retain prompts | `Parasail`; default on |
+| `XEITO_REMOTE_FRONTIER_REASONING` | OpenRouter chat: a reasoning effort (`low`, `medium`, `high`) | (the model's default) |
+| `XEITO_REMOTE_FRONTIER_CONTEXT` | a remote chat tier's window: the chat machine fits its requests into it | `131072` (the default) |
 
-**Remote tiers are opt-in.** A remote tier is configured only when its model and its key file are both set; an OpenRouter tier's URL defaults to OpenRouter's. One OpenRouter key file can serve both `remote` and `remote_frontier`, but each needs its own `…_MODEL` and `…_KEY_FILE`. Even configured, a remote tier is reached only where the decision's policy allows off-box tiers ([guards on escalation](docs/architecture/04-delegation.md#guards-on-escalation); [spend limits](USAGE.md#spend-limits)). `remote_decision` has no default URL, since no hosted System One model is reachable through OpenRouter.
+Two settings are not per tier:
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `XEITO_CHAT_TIER` | the tier chat runs on in every session, unless the session chooses another with `/model` | `local` |
+| `XEITO_MAX_USD_PER_RUN` | the most one run (a chat turn, with its decisions) may spend off-box, in USD; `/budget` changes it per session | `0.50` |
+
+**Remote tiers are opt-in.** A remote tier is configured only when its model and its key file are both set; an OpenRouter tier's URL defaults to OpenRouter's. One OpenRouter key file can serve both `remote` and `remote_frontier`, but each needs its own `…_MODEL` and `…_KEY_FILE`. Even configured, a remote tier is reached by a decision only where the decision's policy allows off-box tiers, and by chat only once someone chooses it (`/model remote_frontier`, or `XEITO_CHAT_TIER`; [remote chat](USAGE.md#remote-chat)) ([guards on escalation](docs/architecture/04-delegation.md#guards-on-escalation); [spend limits](USAGE.md#spend-limits)). `remote_decision` has no default URL, since no hosted System One model is reachable through OpenRouter.
 
 **Keys are never put in variables.** The `*_KEY_FILE` variables name a file that contains only the key, with mode 0600. For example, with the 1Password CLI:
 

@@ -11,7 +11,12 @@ defmodule Xeito.Tiers.Settings do
     * `MODEL`, `KEY_FILE` (a file holding the API key)
     * `CONTEXT` (Ollama: the context window, sent as `num_ctx`), `KEEP_ALIVE` (Ollama)
     * `PROVIDERS` (OpenRouter: a comma list to pin), `ZDR` (OpenRouter: `false` to allow
-      endpoints that retain prompts; default on)
+      endpoints that retain prompts; default on), `REASONING` (OpenRouter chat: an effort such as
+      `low` or `high`; default: the model's own)
+
+  Two settings are not per tier (`app_env/1`): `XEITO_CHAT_TIER`, the tier chat runs on unless a
+  session chooses another with `/model` (default `local`), and `XEITO_MAX_USD_PER_RUN`, the
+  off-box spend limit per run (`Xeito.Policy`, default 0.50; `/budget` changes it per session).
 
   A local tier is configured by its URL. A remote tier is opt-in: it is configured only when its
   URL, its model and its key file are all set, so one OpenRouter key does not switch on both
@@ -48,7 +53,8 @@ defmodule Xeito.Tiers.Settings do
           context: context(get.("CONTEXT")),
           keep_alive: value(get.("KEEP_ALIVE")),
           providers: providers(value(get.("PROVIDERS"))),
-          zdr: zdr(value(get.("ZDR")))
+          zdr: zdr(value(get.("ZDR"))),
+          reasoning: value(get.("REASONING"))
         ],
         fn {_key, v} -> v == nil end
       )
@@ -56,6 +62,39 @@ defmodule Xeito.Tiers.Settings do
   end
 
   defp value({_name, value}), do: value
+
+  @doc "Settings that are not per tier, as `config :xeito` keys; only those set."
+  @spec app_env(%{String.t() => String.t()}) :: keyword()
+  def app_env(env) do
+    Enum.reject(
+      [
+        chat_tier: chat_tier(env["XEITO_CHAT_TIER"]),
+        policy: max_usd(env["XEITO_MAX_USD_PER_RUN"])
+      ],
+      fn {_key, v} -> v == nil end
+    )
+  end
+
+  defp chat_tier(nil), do: nil
+
+  defp chat_tier(name) do
+    case Enum.find(Tiers.all(), &(Atom.to_string(&1) == name)) do
+      nil ->
+        raise ArgumentError, "XEITO_CHAT_TIER: unknown tier #{inspect(name)} (one of: #{Enum.join(Tiers.all(), ", ")})"
+
+      tier ->
+        tier
+    end
+  end
+
+  defp max_usd(nil), do: nil
+
+  defp max_usd(value) do
+    case Float.parse(value) do
+      {usd, ""} when usd >= 0 -> [max_usd_per_run: usd]
+      _ -> raise ArgumentError, "XEITO_MAX_USD_PER_RUN: not an amount in USD: #{inspect(value)}"
+    end
+  end
 
   defp configured?(tier, url, model, key_file) do
     if tier in Tiers.off_box(), do: url != nil and model != nil and key_file != nil, else: url != nil

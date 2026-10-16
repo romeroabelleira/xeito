@@ -37,4 +37,18 @@ defmodule Xeito.Client.StatusBarTest do
   test "a missing workspace is flagged in the git segment" do
     assert only(~w(git), nil, %{"missing" => true}) == "⚠ workspace missing"
   end
+
+  test "a remote chat shows its model and what the key has left, beside the budget" do
+    budget = %{"off_box" => true, "max_usd_per_run" => 0.5, "spent_usd" => 0.1}
+    chat = %{"tier" => "remote_frontier", "model" => "anthropic/claude-x", "off_box" => true, "left_usd" => 29.984}
+
+    assert only(~w(budget), nil, %{"budget" => budget, "chat" => chat}) ==
+             "budget $0.40/0.50 │ chat claude-x · key $29.98"
+
+    assert only(~w(budget), nil, %{"budget" => budget, "chat" => %{chat | "left_usd" => nil}}) ==
+             "budget $0.40/0.50 │ chat claude-x"
+
+    assert only(~w(budget), nil, %{"budget" => budget, "chat" => %{"off_box" => false, "model" => "q"}}) ==
+             "budget $0.40/0.50"
+  end
 end

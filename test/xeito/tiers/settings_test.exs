@@ -106,4 +106,38 @@ defmodule Xeito.Tiers.SettingsTest do
       tiers(%{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_CONTEXT" => "80k"})
     end
   end
+
+  describe "app_env/1" do
+    test "the chat tier and the spend limit per run, when set" do
+      assert Settings.app_env(%{}) == []
+
+      assert Settings.app_env(%{"XEITO_CHAT_TIER" => "remote_frontier", "XEITO_MAX_USD_PER_RUN" => "2"}) == [
+               chat_tier: :remote_frontier,
+               policy: [max_usd_per_run: 2.0]
+             ]
+    end
+
+    test "an unknown tier or an amount that is not one is refused at start" do
+      assert_raise ArgumentError, ~r/XEITO_CHAT_TIER: unknown tier "big"/, fn ->
+        Settings.app_env(%{"XEITO_CHAT_TIER" => "big"})
+      end
+
+      for bad <- ["lots", "-1", "2 usd"] do
+        assert_raise ArgumentError, ~r/XEITO_MAX_USD_PER_RUN/, fn ->
+          Settings.app_env(%{"XEITO_MAX_USD_PER_RUN" => bad})
+        end
+      end
+    end
+  end
+
+  test "a remote tier's reasoning effort" do
+    env = %{
+      "XEITO_REMOTE_FRONTIER_MODEL" => "a/b",
+      "XEITO_REMOTE_FRONTIER_KEY_FILE" => "k",
+      "XEITO_REMOTE_FRONTIER_REASONING" => "high"
+    }
+
+    assert [remote_frontier: cfg] = tiers(env)
+    assert cfg[:reasoning] == "high"
+  end
 end

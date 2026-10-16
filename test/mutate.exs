@@ -2,6 +2,12 @@
 # that cover them; `section:` limits a source to the lines under a `# --- name ---` comment.
 # Security and decision logic first: a surviving mutant there is a rule no test pins down.
 %{
+  # Whether a remote chat call may spend money. Only the pure part: a mutant of the cache's server
+  # crashes the supervised process until the application stops, which fails the next source's tests.
+  "lib/xeito/allowance.ex" => [
+    tests: ["test/xeito/allowance_test.exs", "test/xeito/chat_client_test.exs"],
+    section: "pure"
+  ],
   "lib/xeito/budget.ex" => ["test/xeito/budget_test.exs"],
   # What the model gets to see: the system prompt must never be cut.
   "lib/xeito/chat/window.ex" => ["test/xeito/chat_window_test.exs"],

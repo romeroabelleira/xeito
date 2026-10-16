@@ -278,6 +278,56 @@ defmodule Xeito.SessionCommandsTest do
     assert {:error, "usage: /budget <usd>"} = reply(id, "/budget -1")
   end
 
+  test "/model lists the chat tiers and switches this session's chat", %{id: id} do
+    tiers = Application.get_env(:xeito, :tiers, [])
+    frontier = [backend: :openrouter, url: "http://or.test/api", model: "anthropic/claude-x", api_key: "k"]
+    Application.put_env(:xeito, :tiers, Keyword.put(tiers, :remote_frontier, frontier))
+    on_exit(fn -> Application.put_env(:xeito, :tiers, tiers) end)
+
+    assert {:notice, "chat: local · " <> listing} = reply(id, "/model")
+    assert listing =~ "remote_frontier   anthropic/claude-x · off-box"
+
+    assert {:error, "remote is not configured" <> _} = reply(id, "/model remote")
+
+    :ok = Session.prompt(id, "/model remote_frontier")
+
+    assert_receive {:xeito, _,
+                    %{type: "workspace", attrs: %{"chat" => %{"tier" => :remote_frontier, "off_box" => true}}}},
+                   2_000
+
+    assert_receive {:xeito, _,
+                    %{type: "notice", attrs: %{"text" => "chat: remote_frontier · anthropic/claude-x" <> text}}},
+                   2_000
+
+    assert text =~ "leave this machine"
+    assert {:notice, "chat: remote_frontier" <> _} = reply(id, "/model")
+  end
+
+  test "a remote chat turn stops at the run's off-box budget, and says how to raise it", %{id: id} do
+    Req.Test.set_req_test_to_shared(%{})
+    Req.Test.stub(:session_remote_chat, &Plug.Conn.send_resp(&1, 500, "down"))
+    tiers = Application.get_env(:xeito, :tiers, [])
+
+    frontier = [
+      backend: :openrouter,
+      url: "http://session-or.test/api",
+      model: "anthropic/claude-x",
+      api_key: "k",
+      plug: {Req.Test, :session_remote_chat}
+    ]
+
+    Application.put_env(:xeito, :tiers, Keyword.put(tiers, :remote_frontier, frontier))
+    on_exit(fn -> Application.put_env(:xeito, :tiers, tiers) end)
+
+    {:notice, _} = reply(id, "/budget 0")
+    :ok = Session.prompt(id, "/model remote_frontier")
+    assert_receive {:xeito, _, %{type: "notice", attrs: %{"text" => "chat: remote_frontier" <> _}}}, 2_000
+
+    :ok = Session.prompt(id, "/machine chat hello")
+    assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"answer" => answer}}}, 5_000
+    assert answer =~ "off-box budget ($0.00) is spent: /budget <usd> raises it"
+  end
+
   test "step mode and breakpoints", %{id: id} do
     assert {:notice, "step mode on"} = reply(id, "/step")
     assert {:notice, "step mode off"} = reply(id, "/step")
