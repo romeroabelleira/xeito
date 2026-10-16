@@ -1,6 +1,7 @@
 # Weekly dependency updates, one pull request per dependency. Patch updates, and minor updates of
 # packages at 1.0 or later, merge by themselves once CI passes
-# (.github/workflows/dependabot-auto-merge.yml); the rest wait for review.
+# (.github/workflows/dependabot-auto-merge.yml); the rest, and every GitHub Actions update, wait
+# for review.
 version: 2
 updates:
   - package-ecosystem: mix
