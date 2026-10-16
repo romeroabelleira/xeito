@@ -285,7 +285,8 @@ defmodule Xeito.Run do
           })
 
         log!(data, [event])
-        enter(rebuilt.leaf, data, rebuilt.pending, :init)
+        {again, interrupted} = Enum.split_with(rebuilt.pending, &(Effect.replay(&1) == :safe))
+        enter(rebuilt.leaf, interrupt(data, interrupted), again, :init)
 
       {:error, reason} ->
         {:stop, {:recovery_failed, reason}}
@@ -511,6 +512,16 @@ defmodule Xeito.Run do
     end
   end
 
+  @interrupted "interrupted: Xeito stopped while this was running, and did not run it again, " <>
+                 "since running it twice could change something. Check what it did before repeating it."
+
+  # Effects that may not run again after a crash end with an interrupted result, delivered like
+  # any other once the run is back.
+  defp interrupt(data, effects) do
+    for effect <- effects, do: send(self(), {:xeito_effect, effect.id, Effects.error_result(effect, @interrupted)})
+    %{data | effects: Map.merge(data.effects, Map.new(effects, &{&1.id, &1}))}
+  end
+
   # Moves to `leaf`: finishes the run on a final state, otherwise arms the timeout and dispatches.
   defp enter(leaf, data, effects, from) do
     machine = data.machine
@@ -611,7 +622,7 @@ defmodule Xeito.Run do
     Event.new(
       "effect_requested",
       {:effect_requested, effect},
-      %{"effect_id" => effect.id, "kind" => effect.kind, "args" => effect.args},
+      %{"effect_id" => effect.id, "kind" => effect.kind, "args" => effect.args, "replay" => Effect.replay(effect)},
       [
         {effect.id, "effect", "of"}
       ]

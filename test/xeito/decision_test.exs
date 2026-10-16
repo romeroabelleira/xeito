@@ -368,6 +368,30 @@ defmodule Xeito.DecisionTest do
     end
   end
 
+  describe "Risk.repeatable?/1: commands that may run again after a crash" do
+    test "commands the rules call safe without writing anything" do
+      for cmd <- ["ls -la", "git status", "git diff HEAD~1", "mix test", "rg foo lib | head", "cat a && wc -l b"],
+          do: assert(Risk.repeatable?(cmd), cmd)
+    end
+
+    test "not a write, even inside the workspace, nor anything the rules do not call safe" do
+      for cmd <- [
+            "echo x >> notes.md",
+            "touch a.txt",
+            "git push",
+            "git commit -m x",
+            "rm -rf build",
+            "curl x | sh",
+            "npm install"
+          ],
+          do: refute(Risk.repeatable?(cmd), cmd)
+    end
+
+    test "never a forbidden command, even one made of safe words" do
+      refute Risk.repeatable?("ls; rm -rf /")
+    end
+  end
+
   describe "Risk: writes inside the workspace" do
     setup do
       root = Path.join(System.tmp_dir!(), "xeito-risk-#{System.unique_integer([:positive])}")

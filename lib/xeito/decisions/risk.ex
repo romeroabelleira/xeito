@@ -109,6 +109,15 @@ defmodule Xeito.Decisions.Risk do
     end
   end
 
+  @doc """
+  Whether `command` may run again with no further effect, as after a crash: every part is safe by
+  rule without writing (reading, building, testing), and nothing is forbidden. A write inside the
+  workspace is safe to run once, not twice.
+  """
+  @spec repeatable?(String.t()) :: boolean()
+  def repeatable?(command),
+    do: not Enum.any?(forbidden_patterns(), &Regex.match?(&1, command)) and all_segments_safe?(command)
+
   defp all_segments_safe?(command) do
     case segments(command) do
       {:ok, segments} -> segments |> Enum.reject(&(&1 == "")) |> Enum.all?(&safe_segment?/1)

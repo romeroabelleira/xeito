@@ -146,7 +146,7 @@ defmodule Xeito.RunTest do
     assert {:ok, %{status: :done}} = Run.result(log, id)
   end
 
-  test "an effect in flight during a crash is re-dispatched after recovery" do
+  test "a repeatable effect in flight during a crash is re-dispatched after recovery" do
     log = start_log!()
     test_pid = self()
     {:ok, calls} = Agent.start_link(fn -> 0 end)
@@ -167,6 +167,32 @@ defmodule Xeito.RunTest do
     assert_receive {:effect_called, 2, ^effect_id}, 2_000
     await_exit(id)
     assert {:ok, %{status: :done}} = Run.result(log, id)
+  end
+
+  test "an effect that may not run twice is not run again after a crash: it ends as interrupted" do
+    log = start_log!()
+    test_pid = self()
+
+    fun = fn %Xeito.Effect{kind: :bash} = effect ->
+      send(test_pid, {:effect_called, effect.id})
+      Process.sleep(:infinity)
+    end
+
+    id = start(RunTests, {Fake, fun: fun}, log, %{cwd: "/tmp", test_cmd: "git push"})
+    assert_receive {:effect_called, effect_id}
+
+    Process.exit(Run.whereis(id), :kill)
+
+    await_exit(id)
+    refute_received {:effect_called, ^effect_id}
+    assert {:ok, %{status: :failed}} = Run.result(log, id)
+
+    assert [[output]] =
+             Log.query(log, "SELECT json_extract(result, '$.output') FROM event_effect_completed WHERE effect_id = ?1", [
+               effect_id
+             ])
+
+    assert output =~ "interrupted"
   end
 
   test "recovery refuses a run whose machine version changed" do

@@ -38,6 +38,19 @@ defmodule Xeito.Effect do
   @type result ::
           bash_result() | file_result() | chat_result() | machine_result() | decide_result() | escalation_result()
 
+  @doc """
+  Whether the effect may run again after a crash (`:safe`), or must end as interrupted
+  (`:unsafe`): an edit has replaced its text once already, and a command may run again only when
+  `Xeito.Decisions.Risk.repeatable?/1` says so. A child machine resumes from its own log.
+  """
+  @spec replay(t()) :: :safe | :unsafe
+  def replay(%__MODULE__{kind: :edit}), do: :unsafe
+
+  def replay(%__MODULE__{kind: :bash, args: %{cmd: cmd}}),
+    do: if(Xeito.Decisions.Risk.repeatable?(cmd), do: :safe, else: :unsafe)
+
+  def replay(%__MODULE__{}), do: :safe
+
   @doc "Run a shell command. Options: `:cwd`, `:timeout` (ms, default 60 000), `:reply`."
   @spec bash(String.t(), keyword()) :: t()
   def bash(cmd, opts \\ []) do

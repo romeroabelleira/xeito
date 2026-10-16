@@ -89,6 +89,38 @@ defmodule Xeito.LogTest do
     end
   end
 
+  test "a log written before an event type gained an attribute gets its column when opened" do
+    dir = Path.join(System.tmp_dir!(), "xeito-test-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf(dir) end)
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "old.sqlite")
+
+    {:ok, db} = Exqlite.Sqlite3.open(path)
+
+    :ok =
+      Exqlite.Sqlite3.execute(
+        db,
+        "CREATE TABLE event_effect_requested (ocel_id TEXT PRIMARY KEY, ocel_time TIMESTAMP NOT NULL, " <>
+          "effect_id TEXT, kind TEXT, args TEXT)"
+      )
+
+    :ok = Exqlite.Sqlite3.close(db)
+
+    log = start_supervised!({Log, path: path}, id: make_ref())
+    effect = Xeito.Effect.bash("ls")
+    attrs = %{"effect_id" => "e1", "kind" => :bash, "args" => effect.args, "replay" => :safe}
+    assert {:ok, [1]} = Log.append(log, "r1", [Event.new("effect_requested", {:effect_requested, effect}, attrs)])
+    assert [["safe"]] = Log.query(log, "SELECT replay FROM event_effect_requested")
+  end
+
+  test "Schema.upgrade/1: a column for each attribute an existing table lacks, none for a missing table" do
+    existing = %{"event_effect_requested" => ~w(ocel_id ocel_time effect_id kind args)}
+
+    assert Xeito.Log.Schema.upgrade(existing) == [
+             "ALTER TABLE event_effect_requested ADD COLUMN replay TEXT"
+           ]
+  end
+
   test "sequence numbers continue after a restart of the log" do
     dir = Path.join(System.tmp_dir!(), "xeito-test-#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf(dir) end)

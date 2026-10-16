@@ -102,6 +102,20 @@ defmodule Xeito.Log do
   @spec query(server(), String.t(), list()) :: [list()]
   def query(log, sql, params \\ []), do: call(log, {:query, sql, params})
 
+  # The columns of each existing event and object table, for `Schema.upgrade/1`.
+  defp table_columns(db) do
+    tables =
+      select(
+        db,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE 'event_%' OR name LIKE 'object_%')",
+        []
+      )
+
+    Map.new(tables, fn [table] ->
+      {table, db |> select("SELECT name FROM pragma_table_info(?1)", [table]) |> List.flatten()}
+    end)
+  end
+
   @impl true
   def init({path, opts}) do
     File.mkdir_p!(Path.dirname(path))
@@ -111,6 +125,7 @@ defmodule Xeito.Log do
     # FULL, not NORMAL: an acknowledged event must survive a power cut, not only a crash.
     :ok = Sqlite3.execute(db, "PRAGMA synchronous=FULL")
     :ok = Sqlite3.set_busy_timeout(db, 5_000)
+    Enum.each(Schema.upgrade(table_columns(db)), &(:ok = Sqlite3.execute(db, &1)))
     Enum.each(Schema.statements(), &(:ok = Sqlite3.execute(db, &1)))
     :ok = Store.prepare(db)
     if opts[:reconcile], do: reconcile_sessions(db)

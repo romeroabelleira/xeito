@@ -15,7 +15,7 @@ defmodule Xeito.Log.Schema do
     "transition" => ~w(from_state to_state event_name actor implicit),
     "state_exited" => ~w(state),
     "state_entered" => ~w(state),
-    "effect_requested" => ~w(effect_id kind args),
+    "effect_requested" => ~w(effect_id kind args replay),
     "effect_completed" => ~w(effect_id kind result),
     "decision_made" =>
       ~w(effect_id decision_type value confidence actor model latency_ms input_hash tokens_in tokens_out usd joules_est),
@@ -45,6 +45,21 @@ defmodule Xeito.Log.Schema do
   @doc "Object types and their attribute columns."
   @spec object_types() :: %{String.t() => [String.t()]}
   def object_types, do: @object_types
+
+  @doc """
+  The columns to add to tables an older log created before their types gained attributes, given
+  each existing `event_<type>` and `object_<type>` table's columns. Tables not given are left to
+  `statements/0`, which creates them whole.
+  """
+  @spec upgrade(%{String.t() => [String.t()]}) :: [String.t()]
+  def upgrade(existing) do
+    for {prefix, types} <- [{"event_", @event_types}, {"object_", @object_types}],
+        {type, attrs} <- types,
+        columns = existing[prefix <> type],
+        columns != nil,
+        attr <- attrs -- columns,
+        do: "ALTER TABLE #{prefix}#{type} ADD COLUMN #{attr} TEXT"
+  end
 
   @doc "DDL statements, idempotent."
   @spec statements() :: [String.t()]
