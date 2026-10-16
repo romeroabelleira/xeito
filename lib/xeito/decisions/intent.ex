@@ -1,5 +1,5 @@
 defmodule Xeito.Decisions.Intent do
-  @moduledoc "What does the user want? Selects a machine for a free-form request (P4)."
+  @moduledoc "Decision that classifies a free-form request by what the user wants, to select a machine."
 
   use Xeito.Decision, version: "2"
 
@@ -22,7 +22,7 @@ defmodule Xeito.Decisions.Intent do
   rule :small_talk?, then: :other
   rule :run_tests?, then: :run
 
-  # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
+  # Smaller tiers are left out until they pass the zero-shot gate.
   deciders [:local]
   min_confidence 0.75
 

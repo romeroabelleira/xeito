@@ -1,7 +1,6 @@
 defmodule Xeito.Client do
   @moduledoc """
   A client of `Xeito.Api`: connects to the daemon's socket, sends requests and forwards events.
-  It needs nothing from the daemon's code beyond the protocol, so the TUI and the CLI stay thin.
 
   Events are sent to the owner (the process that called `connect/2`) as `{:xeito_event, map}`,
   with string keys as decoded from JSON.
@@ -12,8 +11,7 @@ defmodule Xeito.Client do
   @doc "Connects to the socket at `path`. The caller becomes the owner of events."
   @spec connect(Path.t(), pid()) :: {:ok, pid()} | {:error, term()}
   def connect(path, owner \\ self()) do
-    # Linked only once connected: a failed start would otherwise take the caller down with it,
-    # instead of returning the error.
+    # Linked only once connected, so a failed start returns the error instead of killing the caller.
     with {:ok, client} <- GenServer.start(__MODULE__, {path, owner}) do
       Process.link(client)
       {:ok, client}

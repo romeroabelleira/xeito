@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
   @shortdoc "Measures how well requests find the skills they need"
   @moduledoc """
   Runs a benchmark set against a skill library and reports how often the chat turn's shortlist
-  holds the skill a request needs (`Xeito.Skills.Bench`, P4f step 1).
+  holds the skill a request needs (`Xeito.Skills.Bench`).
 
       mix xeito.skills.bench [SET] [--skills DIR]... [--keywords FILE]
 

@@ -1,10 +1,11 @@
 defmodule Xeito.Backends.SystemOne do
   @moduledoc """
-  System One backend: a Jev-compatible `POST /v1/systemone` backend such as `laya-serve`.
+  Decision backend for a Jev-compatible `POST /v1/systemone` server such as `laya-serve`.
 
-  One `choice` question per decision, named after the type. The backend returns a probability
-  for every option. The model is pinned on every request (`cfg[:model]`, default
-  `"multilingual"`), because Laya's router otherwise ignores the server-side preference (bench 0).
+  * One `choice` question per decision, named after the type; the answer has a probability per
+    option.
+  * Every request pins the model (`cfg[:model]`, default `"multilingual"`): the router ignores
+    the server-side preference otherwise.
   """
 
   @behaviour Xeito.Backends

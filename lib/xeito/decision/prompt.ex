@@ -3,12 +3,10 @@ defmodule Xeito.Decision.Prompt do
   Renders a decision type and a normalised input for each backend:
 
     * `messages/2` — system and user chat messages for generative tiers
-    * `json_schema/1` — `{"value": enum}`, for grammar-constrained decoding (llama.cpp,
-      Ollama `format`, Anthropic tool input schemas)
+    * `json_schema/1` — `{"value": enum}`, for grammar-constrained decoding
     * `system_one/3` — a Jev-compatible `/v1/systemone` request with one `choice` question
 
-  The value always comes first and there is no rationale field: bench 0 measured a rationale
-  costing ~4× the decision itself on the CPU tier.
+  The output has no rationale field, on purpose: it would cost more than the decision.
   """
 
   alias Xeito.Decision.Type

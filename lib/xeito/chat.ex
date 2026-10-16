@@ -1,46 +1,36 @@
 defmodule Xeito.Chat do
   @moduledoc """
-  The chat model client used by the free chat machine and delegated sub-tasks, streamed, with
-  native tool calling.
+  Streaming chat-model client with native tool calling, used by the chat machine and delegated sub-tasks.
 
-  **The chat tier** (`tier/1`) is the session's choice (`/model`, passed as `tier:`), else
-  `config :xeito, :chat_tier` (`XEITO_CHAT_TIER`), else `:local`. Its backend decides the API:
-    * `:ollama` (the local tier): Ollama `/api/chat`. The model is the tier's, or
-      `cfg[:chat_model]` when a different chat model is configured.
-    * `:openrouter` (`:remote`, `:remote_frontier`): `Xeito.Chat.OpenRouter`. The conversation
-      leaves the machine, so only a tier someone chose gets it. Each call is planned against the
-      money left (`Xeito.Allowance.verdict/1`): it is not made once the run's off-box budget
-      (`max_usd:`, from the policy) is spent, nor when its worst case would not fit in what the
-      key may still spend. Its cost is charged to the run (`run:`, `Xeito.Budget`) and the key.
+    * tier (`tier/1`): option `tier:`, else `config :xeito, :chat_tier`, else `:local`
+    * `:ollama` backend: Ollama `/api/chat`, model `cfg[:chat_model]` or the tier's
+    * `:openrouter` backend: `Xeito.Chat.OpenRouter`; each call must pass `Xeito.Allowance.verdict/1`
+      (run budget `max_usd:`, key allowance) and its cost is charged to `run:` and the key
+    * calls go through the tier's capacity queue (`Xeito.Tiers.Queue`)
+    * thinking is off unless `cfg[:think]`
 
-  Calls go through the tier's capacity queue, so a streaming answer and a local-tier decision
-  never compete for the GPU.
-
-  Each streamed chunk of content is passed to `on_delta` (the effect runner forwards it to
-  `Xeito.Events`), and the call returns the complete assistant message:
+  Each streamed text chunk goes to `on_delta`; the call returns the complete message:
 
       {:ok, %{content: "...", tool_calls: [%{name: "bash", arguments: %{...}}],
               model: "...", tokens_in: 812, tokens_out: 64, latency_ms: 2140,
               first_token_ms: 410}}
-
-  Thinking is off by default (`cfg[:think]`), because the harness wants short turns; the
-  statechart, not a long hidden monologue, carries the plan.
   """
 
   alias Xeito.Allowance
   alias Xeito.Backends
   alias Xeito.Budget
+  alias Xeito.Chat.Message
   alias Xeito.Chat.OpenRouter
   alias Xeito.Chat.Window
   alias Xeito.Policy
   alias Xeito.Tiers
   alias Xeito.Tiers.Queue
 
-  @type message :: %{required(:role) => String.t(), optional(atom()) => term()}
+  @type message :: Message.t()
 
   @doc "Runs one chat turn. `tools` are OpenAI-style function specs (see `Xeito.Tools.specs/0`)."
-  @spec complete([message()], [map()], keyword(), (String.t() -> any())) ::
-          {:ok, map()} | {:error, term()}
+  @spec complete([Message.t()], [map()], keyword(), (String.t() -> any())) ::
+          {:ok, Message.reply()} | {:error, term()}
   def complete(messages, tools, overrides \\ [], on_delta \\ fn _ -> :ok end) do
     tier = tier(overrides)
 
@@ -67,7 +57,6 @@ defmodule Xeito.Chat do
 
   defp chat(backend, _tier, _request, _cfg, _on_delta), do: {:error, {:no_chat_backend, backend}}
 
-  # Whether the call may be made: the run's budget, and its worst case against the key's allowance.
   defp plan(messages, tools, cfg) do
     tokens = Window.estimate(messages, Window.default_chars_per_token()) + div(byte_size(JSON.encode!(tools)), 3)
 
@@ -181,7 +170,6 @@ defmodule Xeito.Chat do
     }
   end
 
-  # A message's text and tool calls.
   defp parts(message) do
     calls =
       for %{"function" => f} <- message["tool_calls"] || [], do: %{name: f["name"], arguments: arguments(f["arguments"])}
@@ -196,7 +184,7 @@ defmodule Xeito.Chat do
   defp final(%{"done" => true} = chunk, _final), do: chunk
   defp final(_chunk, final), do: final
 
-  # Time to the first chunk that carries text or a tool call (what the user starts to see).
+  # Time to the first chunk that carries text or a tool call.
   defp first_ms(_started, "", []), do: nil
   defp first_ms(started, _text, _calls), do: System.monotonic_time(:millisecond) - started
 

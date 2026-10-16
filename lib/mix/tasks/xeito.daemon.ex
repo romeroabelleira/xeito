@@ -8,7 +8,7 @@ defmodule Mix.Tasks.Xeito.Daemon do
   The socket defaults to `$XEITO_SOCKET` or `~/.xeito/run/xeito.sock`. Tier endpoints come from
   the environment (`config/runtime.exs`). Each session logs to its workspace's
   `.xeito/log.sqlite`. For a long-running daemon, run this under `systemd --user` (see
-  `deploy/`), or build a release in P8.
+  `deploy/`).
   """
 
   use Mix.Task

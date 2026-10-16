@@ -1,18 +1,14 @@
 defmodule Xeito.Log do
   @moduledoc """
-  Append-only OCEL 2.0 event log in SQLite. It is the single source of truth for runs.
+  Append-only OCEL 2.0 event log in SQLite, the single source of truth for runs.
 
-  One process owns the connection (a single writer, WAL mode). `append/3` is synchronous:
-  it returns only after the events are committed and synced to disk (`synchronous=FULL`). A run acknowledges a state change only after
-  the change is logged (invariant 1 in `docs/architecture/02-state-machine-core.md`).
-
-  Every event gets a per-run sequence number, an OCEL id `"<run_id>:<seq>"`, a UTC timestamp,
-  its typed OCEL attributes, an `event_object` link to its run (qualifier `"within"`) plus any
-  extra objects, and the exact term in `xeito_term` for replay. Terms and attributes are stored
-  compactly (message chains stored once, results not repeated, compression; `Xeito.Log.Store`),
-  and read back exactly.
-
-  See `docs/architecture/05-event-log-and-process-mining.md`.
+  - One process owns the connection (single writer, WAL).
+  - `append/3` returns only after the events are committed and synced to disk
+    (`synchronous=FULL`); a run acknowledges a state change only after it is logged.
+  - Every event gets a per-run sequence number, OCEL id `"<run_id>:<seq>"`, a UTC timestamp,
+    typed attributes, an `event_object` link to its run (qualifier `"within"`) plus any extra
+    objects, and its exact term in `xeito_term` for replay (stored compactly by
+    `Xeito.Log.Store`, read back exactly).
   """
 
   use GenServer
@@ -39,20 +35,17 @@ defmodule Xeito.Log do
   end
 
   @doc """
-  The log of a workspace, `<cwd>/.xeito/log.sqlite`, started on first use under
-  `Xeito.WorkspaceLogs` and registered by path. Sessions started by the daemon use it, so each
-  project keeps its own log (`docs/architecture/07-harness-frontend.md#context-and-configuration`).
+  The log of a workspace, `<cwd>/.xeito/log.sqlite`, started on first use and registered by path.
 
-  A workspace log closes itself after `config :xeito, :log_idle_ms` (default 30 minutes)
-  without a call, so a daemon that touched many projects does not keep them all open. Callers
-  keep the returned name; the next call reopens the log transparently (see `call/2`).
+  It closes after `config :xeito, :log_idle_ms` (default 30 minutes) without a call; callers
+  keep the returned name and the next call reopens it.
   """
   @spec for_workspace(Path.t()) :: server()
   def for_workspace(cwd) do
     dir = cwd |> Path.expand() |> Path.join(".xeito")
     path = Path.join(dir, "log.sqlite")
 
-    # The workspace log is the user's data, never the project's: keep it out of version control.
+    # The log is the user's data, not the project's: keep it out of version control.
     File.mkdir_p!(dir)
     ignore = Path.join(dir, ".gitignore")
     if !File.exists?(ignore), do: File.write!(ignore, "*\n")
@@ -76,8 +69,7 @@ defmodule Xeito.Log do
     end
   end
 
-  # A workspace log that closed while idle is reopened on its next call. Other logs (the
-  # default log, test logs) are plain GenServer calls.
+  # A workspace log that closed while idle is reopened on its next call.
   defp call({:via, Registry, {Xeito.LogRegistry, path}} = name, request) do
     GenServer.call(name, request)
   catch
@@ -114,7 +106,7 @@ defmodule Xeito.Log do
   def init({path, opts}) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
-    # SQLite answers with the mode it ended up in, which is not WAL where WAL is unsupported.
+    # Fails where WAL is unsupported: SQLite answers with the mode it ended up in.
     [["wal"]] = select(db, "PRAGMA journal_mode=WAL", [])
     # FULL, not NORMAL: an acknowledged event must survive a power cut, not only a crash.
     :ok = Sqlite3.execute(db, "PRAGMA synchronous=FULL")
@@ -135,7 +127,7 @@ defmodule Xeito.Log do
   end
 
   @impl true
-  # Closing an idle workspace log is also when its undo store is tidied (`Xeito.Undo.gc/1`).
+  # Closing an idle workspace log also tidies its undo store.
   def handle_info(:timeout, %{workspace: nil} = state), do: {:stop, :normal, state}
 
   def handle_info(:timeout, state) do
@@ -143,8 +135,7 @@ defmodule Xeito.Log do
     {:stop, :normal, state}
   end
 
-  # Sessions recorded as open whose process is not alive in this daemon ended without closing
-  # (the daemon stopped abruptly): record that, so the log does not claim they are open.
+  # Sessions recorded `open` with no live process here are marked `interrupted`.
   defp reconcile_sessions(db) do
     sql = """
     SELECT s.ocel_id FROM object_session s
@@ -213,7 +204,6 @@ defmodule Xeito.Log do
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
 
-  # Reads the rows just written back and compares them with the appended events (tests).
   defp check_roundtrip!(db, run_id, seqs, events) do
     rows =
       select(

@@ -28,13 +28,12 @@ defmodule Xeito.Application do
     Supervisor.start_link(children, strategy: :one_for_one, name: Xeito.Supervisor)
   end
 
-  # The client API (Unix socket) runs in the daemon only: `mix xeito.daemon` or `config :xeito, api: true`.
-  # So does the writer of skill examples, so a mix task never writes them twice alongside it.
+  # Daemon only (`api: true`): the client API, and the skill-example writer so mix tasks never run a second one.
   defp api_children do
     if Application.get_env(:xeito, :api, false), do: [Xeito.Api, Xeito.Skills.Examples.Worker], else: []
   end
 
-  # The default log is started unless disabled (tests start their own logs).
+  # Tests disable the default log and start their own.
   defp log_children do
     if Application.get_env(:xeito, :start_log, true) do
       path = Application.get_env(:xeito, :log_path, ".xeito/log.sqlite")

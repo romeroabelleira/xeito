@@ -1,7 +1,6 @@
 defmodule Xeito.Machines.Chat do
   @moduledoc """
-  The free chat machine: pi's agent loop drawn as a statechart, and therefore logged and mined
-  (`docs/architecture/07-harness-frontend.md#the-free-chat-machine-the-escape-hatch`).
+  The free chat machine: one user turn of the agent loop (model calls, tool calls, checks) as a statechart.
 
       choosing_skill ──decided──┬─ earlier turns too long → summarising ──summarised──→ thinking
                                 └─ otherwise ───────────────────────────────────────→ thinking
@@ -18,46 +17,29 @@ defmodule Xeito.Machines.Chat do
                 · ──instructed (a text answer)──→ thinking (told what to do instead)
       any working state ──steered──→ itself (internal: the line waits for the next model call)
 
-  One run is one user turn. The session (`Xeito.Session`) keeps the conversation and passes the
-  earlier messages in; the run adds the prompt, the model's messages and the tool results, and
-  ends in `answered` with `ctx.answer` and `ctx.turn` (the full message list of the turn,
-  system prompt first).
+  Input: `%{cwd: path, prompt: text, messages: [earlier messages], system: text, max_steps: n}`, and optionally:
 
-  **Verifying.** With `verify` (a quick check command, `Xeito.Session.Router.quick_check_command/1`,
-  e.g. format and compile warnings), a turn that edited
-  files (`write`/`edit`) does not end on the model's word: the checks run first. If they fail,
-  the model is shown the output and may fix it (twice at most), also when the turn reached its
-  step limit: fixing has a budget of @fix_budget model turns past `max_steps`. A turn that still
-  fails ends with the failure stated in the answer. So "it compiles" means the code that
-  actually runs was checked.
+  - `verify: command`: a turn that edited files (`write`/`edit`) runs it before answering; on
+    failure the model sees the output and may fix it (`@max_fixes` times, within `@fix_budget`
+    model turns past `max_steps`). A turn that still fails says so in the answer.
+  - `skills: [skill]`: adds the `skill` tool.
+  - `skill_candidates: [%{name, description}]`: `Xeito.Decisions.Skill` picks one (or none) in
+    `choosing_skill`; it is suggested in the turn's user message, never in the system prompt.
+  - `tools: false`: a plain answer with no tools.
+  - `context`: the context window in tokens (default `@default_context`).
 
-  The tool calls a model makes are *proposals*: each becomes an effect (`Xeito.Tools`), `bash`
-  passes the `Risk` decision first, and invalid calls are answered with an error message rather
-  than executed. `max_steps` (default 25) bounds the model turns per run.
+  Output: ends in `answered` with `ctx.answer` and `ctx.turn` (the turn's full message list,
+  system prompt first), or in `failed` with `ctx.error`.
 
-  **Repeats.** An exact repeat of a call already made in this turn is not run again: it is
-  answered with the earlier result (which may have been elided from the conversation since).
-  A second step in a row of only repeated or invalid calls ends the turn, except once in a turn
-  that has changed nothing yet: then the model is told to act on what it has, and keeps its
-  tools (0.10.0).
-
-  **Summaries** (0.12.0, P4c). After the skill is chosen, a turn whose earlier conversation
-  has grown past 60% of the request budget or 40 messages enters `summarising`: the model
-  summarises its oldest turns (`Xeito.Chat.Window.summary_request/2`), and the summary stands in
-  for them in `ctx.messages`, so also in `ctx.turn` and the session's history. A failed summary
-  changes nothing: fitting then drops turns with a note, as before.
-
-  **A skill per turn** (0.11.0, P4e). A turn starts in `choosing_skill`: the decision
-  `Xeito.Decisions.Skill` picks one of `skill_candidates` (the user's skills the session
-  shortlisted, `Xeito.Skills.for_turn/3`), or none. A chosen skill is suggested after the
-  request, in the turn's user message, so the system prompt (and the model server's prompt
-  cache) stays the same from turn to turn. Without candidates, a rule decides `none` at once.
-
-  Input: `%{cwd: path, prompt: text, messages: [earlier messages], system: text, max_steps: n}`,
-  optionally `verify: command` (see above),
-  optionally `skills: [skill]` (`Xeito.Skills`, adds the `skill` tool), `skill_candidates:
-  [%{name, description}]` (see above) and `tools: false` (a plain answer with no tools, which
-  streams sooner).
+  - Tool calls are proposals: each becomes an effect (`Xeito.Tools`); `bash` passes
+    `Xeito.Decisions.Risk` first; invalid calls get an error message, not a run.
+  - `max_steps` (default 25) bounds model turns. A stopped turn gets one last tool-less model
+    turn (`wrapping_up`) to report.
+  - An exact repeat of a call made in this turn is answered with the earlier result. A second
+    step in a row of only repeated or invalid calls ends the turn, except once in a turn that
+    changed nothing yet: then the model is nudged and keeps its tools.
+  - When the earlier conversation outgrows the request budget, `summarising` replaces its oldest
+    turns with a summary in `ctx.messages` (so also in `ctx.turn`). A failed summary changes nothing.
   """
 
   use Xeito.Machine, version: "0.12.0"
@@ -70,12 +52,10 @@ defmodule Xeito.Machines.Chat do
   @human_timeout 86_400_000
   @verify_timeout 900_000
   @max_fixes 2
-  # Model turns allowed past `max_steps` for fixing a failing check, shared by all fixes: a turn
-  # that runs out of steps with code that does not build gets to repair it (bench 4 §8).
+  # Model turns past `max_steps` for fixing a failing check, shared by all fixes.
   @fix_budget 4
   @output_tail 4_000
-  # The context window when the input names none (`:context`, the large tier's `num_ctx`), and
-  # the part of it kept free for the model's reply.
+  # Context window when the input names none, and the part kept free for the reply.
   @default_context 32_768
   @output_reserve 8_192
 
@@ -96,9 +76,6 @@ defmodule Xeito.Machines.Chat do
     on :steered, action: :steer
   end
 
-  # The earlier conversation has grown past what a request should carry: its oldest turns are
-  # summarised before the model is asked (P4c, `Xeito.Chat.Window`). Without a summary (the call
-  # failed), the turn goes on as before, and fitting drops turns with a note.
   state :summarising, entry: :ask_summary, timeout: 900_000 do
     on :summarised, to: :thinking, guard: :summary_failed?
     on :summarised, to: :thinking, action: :record_summary
@@ -117,7 +94,7 @@ defmodule Xeito.Machines.Chat do
     on :chatted, to: :thinking, guard: :only_invalid_calls?, action: :queue_calls
     on :chatted, to: :verifying, guard: :edited?, action: :record_answer
     on :chatted, to: :answered, action: :record_answer
-    # The model is being asked: a steer waits for its reply, then goes with the next request.
+    # A steer during a model call waits for the reply and goes with the next request.
     on :steered, action: :steer_late
   end
 
@@ -149,9 +126,6 @@ defmodule Xeito.Machines.Chat do
     on :steered, action: :steer
   end
 
-  # A turn that stops (step limit, or calls that keep failing) gets one last model turn without
-  # tools to tell the user what it found and what it would do next, instead of ending on a bare
-  # "Stopped after 25 model turns" (a dogfood session, 2026-10-01).
   state :wrapping_up, entry: :ask_wrap_up, timeout: 900_000 do
     on :chatted, to: :answered, action: :record_wrap_up
     on :steered, action: :steer_late
@@ -161,7 +135,6 @@ defmodule Xeito.Machines.Chat do
     on :approved, to: :executing
     on :denied, to: :wrapping_up, guard: :step_limit?, action: :deny_and_stop
     on :denied, to: :thinking, action: :deny
-    # A text answer instead of y or n: the call is not run, and the model is told what to do.
     on :instructed, to: :wrapping_up, guard: :step_limit?, action: :instruct_and_stop
     on :instructed, to: :thinking, action: :instruct
     on :steered, action: :steer
@@ -173,17 +146,11 @@ defmodule Xeito.Machines.Chat do
   final :failed
 
   # --- elision -------------------------------------------------------------------------------
-  #
-  # Every model request resends the whole conversation. Old tool output is replaced by a stub
-  # that says what it was and how to read it again. It happens in whole batches, so the start
-  # of the prompt (and the model's prompt cache) changes only once every @elide_batch outputs:
-  #   * the last @keep_whole tool outputs are always whole;
-  #   * outputs of at most @elide_min characters, and skill instructions, are never elided;
-  #   * the latest whole read of each of the last @keep_reads project files read stays whole:
-  #     the model reads those to edit them, and re-read them in slices once they were stubbed
-  #     (bench 4 §6). Older reads of the same file, and dependency sources, are elided as usual;
-  #   * the conversation in the context (`ctx.turn`, the session history) keeps everything; only
-  #     what is sent to the model is elided, as a pure function, so replay reproduces it.
+  # Old tool output sent to the model is replaced by stubs in whole batches of @elide_batch, so
+  # the prompt prefix (and the server's prompt cache) changes rarely. Kept whole: the last
+  # @keep_whole outputs, small outputs and skill instructions, and the latest whole read of each
+  # of the last @keep_reads project files. `ctx.turn` keeps everything; elision is pure so replay
+  # reproduces it.
 
   @default_system """
   You are a coding assistant working in a software project. Use the tools to inspect and change
@@ -191,7 +158,7 @@ defmodule Xeito.Machines.Chat do
   answers short. When the task is done, answer without calling a tool.
   """
 
-  @doc "The default system prompt (the session adds project context such as `AGENTS.md`)."
+  @doc "The default system prompt; the session adds project context."
   @spec default_system() :: String.t()
   def default_system, do: @default_system
 
@@ -207,8 +174,7 @@ defmodule Xeito.Machines.Chat do
     [Effect.chat(Window.summary_request(span, window(ctx)), tools: false, quiet: true, reply: :summarised)]
   end
 
-  # The request as sent: elided, then fitted into the context window (`Xeito.Chat.Window`). A
-  # request that cannot fit is not sent; the effect carries the reason and the turn fails with it.
+  # A request that cannot fit is not sent; the effect carries the reason and the turn fails.
   defp request(ctx, messages, opts) do
     window = Keyword.put(window(ctx), :keep_from, 1 + length(Map.get(ctx, :messages, [])))
 
@@ -263,7 +229,6 @@ defmodule Xeito.Machines.Chat do
     |> Enum.map(fn {m, i} -> if i in elided, do: Window.stub(m), else: m end)
   end
 
-  # Indices of the latest whole read of each of the last @keep_reads project files.
   defp latest_reads(messages) do
     messages
     |> Enum.with_index()
@@ -288,7 +253,6 @@ defmodule Xeito.Machines.Chat do
     [effect]
   end
 
-  # The system prompt and the prompt are added on the first turn only.
   defp messages(%{turn: [_ | _] = turn}), do: turn
 
   defp messages(ctx) do
@@ -304,6 +268,12 @@ defmodule Xeito.Machines.Chat do
         "#{skill.name}: #{skill.description})"
 
   @doc "The Skill decision's input: the request and the shortlisted skills, `\"name: description\"`."
+  @spec skill_input(map()) :: %{
+          request: String.t(),
+          first: String.t() | nil,
+          second: String.t() | nil,
+          third: String.t() | nil
+        }
   def skill_input(ctx) do
     listed = for skill <- Map.get(ctx, :skill_candidates, []), do: "#{skill.name}: #{skill.description}"
     %{request: ctx.prompt, first: Enum.at(listed, 0), second: Enum.at(listed, 1), third: Enum.at(listed, 2)}
@@ -327,7 +297,7 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def summary_failed?(ctx, message), do: chat_error?(ctx, message) or String.trim(Map.get(message, :content) || "") == ""
 
-  @doc "The summary replaces the turns it covers in the earlier conversation, for this turn and the session's history."
+  @doc "Replaces the summarised turns of `ctx.messages` with the summary."
   def record_summary(ctx, message) do
     {span, kept} = Window.summary_split(ctx.messages, window(ctx))
     Map.put(ctx, :messages, [Window.summary_message(message.content, span) | kept])
@@ -342,14 +312,12 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def only_invalid_calls?(ctx, message), do: Map.get(message, :tool_calls, []) != [] and valid(message, ctx) == []
 
-  # A second step in a row whose calls all fail (or repeat earlier ones) ends the turn.
   @doc false
   def invalid_again?(ctx, message), do: only_invalid_calls?(ctx, message) and Map.get(ctx, :invalid_streak, 0) >= 1
 
   @doc false
   def invalid_again_edited?(ctx, message), do: invalid_again?(ctx, message) and edited?(ctx, message)
 
-  # The same, in a turn that has changed nothing and was not nudged yet: one more chance.
   @doc false
   def invalid_again_unchanged?(ctx, message),
     do: invalid_again?(ctx, message) and not Map.get(ctx, :edited, false) and not Map.get(ctx, :nudged, false)
@@ -360,7 +328,6 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def passed_but_stopped?(ctx, result), do: checks_passed?(ctx, result) and stopped?(ctx, result)
 
-  # The model asks for tools on its last allowed turn: stop instead of running them.
   @doc false
   def calls_at_limit?(ctx, message),
     do: Map.get(message, :tool_calls, []) != [] and Map.get(ctx, :steps, 0) + 1 >= limit(ctx)
@@ -375,8 +342,6 @@ defmodule Xeito.Machines.Chat do
   def step_limit?(ctx, _data), do: Map.get(ctx, :steps, 0) >= limit(ctx)
 
   # --- actions -----------------------------------------------------------------------------
-  # Edits made in this turn and a check command to verify them with. `edited` is set when a
-  # write or edit succeeds; the guard also counts the result arriving now.
   @doc false
   def edited?(ctx, _data), do: verify?(ctx) and Map.get(ctx, :edited, false)
 
@@ -402,7 +367,6 @@ defmodule Xeito.Machines.Chat do
 
   defp max_steps(ctx), do: Map.get(ctx, :max_steps, 25)
 
-  # While fixing a failing check, the fix budget extends the step limit.
   defp limit(ctx), do: max_steps(ctx) + if(ctx[:fixing], do: @fix_budget, else: 0)
 
   defp next_is?([call | _], risky), do: Tools.risky?(call) == risky
@@ -410,9 +374,7 @@ defmodule Xeito.Machines.Chat do
 
   defp valid(message, ctx), do: message |> sort_calls(ctx) |> elem(0)
 
-  # Calls that can run, and `{call, reason}` for those that cannot: unknown tools or bad
-  # arguments, and exact repeats of a call already made in this turn (since the last edit, which
-  # may have changed what a repeat would see).
+  # Returns `{valid, [{call, reason}]}`; repeats count since the last edit.
   defp sort_calls(message, ctx) do
     {valid, rejected, _seen} =
       Enum.reduce(
@@ -482,7 +444,6 @@ defmodule Xeito.Machines.Chat do
     |> Map.put(:nudged, true)
   end
 
-  # A step that opens with the same sentence as two earlier ones: the model is going in circles.
   defp stuck_note(ctx, message) do
     opening = opening(message)
 
@@ -524,7 +485,6 @@ defmodule Xeito.Machines.Chat do
     end
   end
 
-  # The model's closing words follow the stop notice (and a failing-checks note, if any).
   @doc false
   def record_wrap_up(ctx, %{error: _}), do: ctx
 
@@ -554,13 +514,12 @@ defmodule Xeito.Machines.Chat do
   def record_result(ctx, result) do
     ctx
     |> Map.update(:edited, edit_done?(ctx, result), &(&1 or edit_done?(ctx, result)))
-    # An edit may change what a repeated call would see: repeats are allowed again.
+    # An edit may change what a repeat would see: repeats are allowed again.
     |> then(&if(edit_done?(ctx, result), do: Map.merge(&1, %{seen: [], results: %{}}), else: remember_result(&1, result)))
     |> put_turn([tool_message(ctx.current, Tools.result_text(result), result)])
     |> advance(ctx.pending)
   end
 
-  # What a call returned, to answer an exact repeat of it with.
   defp remember_result(ctx, result) do
     key = {ctx.current.name, ctx.current.arguments}
     Map.update(ctx, :results, %{key => Tools.result_text(result)}, &Map.put(&1, key, Tools.result_text(result)))
@@ -585,7 +544,6 @@ defmodule Xeito.Machines.Chat do
         end)
   end
 
-  # The model sees the failing output as the user's reply, and gets another chance.
   @doc false
   def report_failure(ctx, result) do
     text = """
@@ -627,7 +585,6 @@ defmodule Xeito.Machines.Chat do
   @doc false
   def risk_input(%{current: %{arguments: %{"command" => command}}} = ctx), do: %{command: command, cwd: ctx[:cwd]}
 
-  # A refused call is reported to the model, and the rest of that batch is skipped.
   defp refuse(ctx, reason) do
     skipped =
       for call <- ctx.pending, do: tool_message(call, "skipped: an earlier call was refused")
@@ -656,8 +613,7 @@ defmodule Xeito.Machines.Chat do
 
   # --- steering ---
 
-  # A model reply: the steers its request carried go in the turn just before it, and the ones
-  # that came while it was asked go with the next request.
+  # Steers the request carried go just before the reply; late ones go with the next request.
   defp put_reply(ctx, new_messages) do
     ctx
     |> put_turn(steer_messages(ctx) ++ new_messages)
@@ -670,12 +626,14 @@ defmodule Xeito.Machines.Chat do
       for(text <- Map.get(ctx, :steers, []), do: %{role: "user", content: "(The user, while you were working:) " <> text})
 
   @doc "A line from the user while the turn works, for the next model request."
+  @spec steer(map(), %{text: String.t()}) :: map()
   def steer(ctx, %{text: text}), do: Map.update(ctx, :steers, [text], &(&1 ++ [text]))
 
-  @doc "A line from the user while the model is asked: it waits for the reply."
+  @doc "A line from the user during a model call, held until the reply arrives."
+  @spec steer_late(map(), %{text: String.t()}) :: map()
   def steer_late(ctx, %{text: text}), do: Map.update(ctx, :late_steers, [text], &(&1 ++ [text]))
 
-  @doc "The steers not yet given to the model, oldest first (the session queues them when the turn ends)."
+  @doc "The steers not yet given to the model, oldest first."
   @spec undelivered(map()) :: [String.t()]
   def undelivered(ctx), do: Map.get(ctx, :steers, []) ++ Map.get(ctx, :late_steers, [])
 
@@ -689,8 +647,7 @@ defmodule Xeito.Machines.Chat do
     |> measure_window(tokens_in)
   end
 
-  # The server's count of the request just answered (`ctx` is still as it was sent): it calibrates
-  # the next estimate, and shows whether the server cut the prompt.
+  # Relies on `ctx` still being as sent: the server's count calibrates the next estimate.
   defp measure_window(ctx, 0), do: ctx
 
   defp measure_window(ctx, tokens_in) do
@@ -714,7 +671,6 @@ defmodule Xeito.Machines.Chat do
 
   defp tool_message(call, text), do: %{role: "tool", tool_name: call.name, content: text}
 
-  # A result that can be read back (`ref`) also records what it was, for its stub if elided.
   defp tool_message(call, text, %{ref: ref} = result) do
     call
     |> tool_message(text)
@@ -724,7 +680,6 @@ defmodule Xeito.Machines.Chat do
 
   defp tool_message(call, text, _result), do: tool_message(call, text)
 
-  # A whole read of one of the project's own files (not a part, outline or dependency source).
   defp whole_read(%{name: "read", arguments: %{"path" => path} = args}, %{ok: true})
        when is_binary(path) and path != "" do
     partial? = Enum.any?(~w(symbol lines outline result), &Map.has_key?(args, &1))

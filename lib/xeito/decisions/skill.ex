@@ -1,15 +1,10 @@
 defmodule Xeito.Decisions.Skill do
   @moduledoc """
-  Which of the user's skills, if any, a chat request needs (P4e).
+  Decision type picking which of up to three shortlisted skills, if any, a chat request needs.
 
-  The session shortlists up to three of the user's skills from a full-text index (`Xeito.Skills.Index`);
-  this decision picks one of them, or none, at the start of a chat turn
-  (`Xeito.Machines.Chat`, state `choosing_skill`). A decision type has a fixed set of values while
-  skills differ per directory, so the values are positions in the shortlist: each candidate
-  input is `"<name>: <description>"`.
-
-  Rules decide first: no candidates is `none`, and a request that names a candidate picks it.
-  The model decides the rest.
+    * inputs: `request`, and candidates `first`, `second`, `third` as `"<name>: <description>"`
+    * values: the candidate's position, or `none`
+    * rules: no candidates is `none`; a request naming a candidate picks it; the model decides the rest
   """
 
   use Xeito.Decision, version: "1"

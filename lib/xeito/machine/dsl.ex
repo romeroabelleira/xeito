@@ -1,8 +1,8 @@
 defmodule Xeito.Machine.DSL do
   @moduledoc """
-  Macros behind `use Xeito.Machine`. They accumulate states in module attributes while the
-  module body is evaluated, then compile and validate the `%Xeito.Machine{}` in
-  `__before_compile__/1`.
+  The macros behind `use Xeito.Machine`: `initial`, `state`, `final`, `on`, `decide`.
+
+  The `%Xeito.Machine{}` is built and validated in `__before_compile__/1`.
   """
 
   alias Xeito.Machine

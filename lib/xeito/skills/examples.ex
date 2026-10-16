@@ -1,19 +1,12 @@
 defmodule Xeito.Skills.Examples do
   @moduledoc """
-  Example requests per skill, written by the local model (P4f step 4, "doc2query"): requests a
-  user would type that the skill serves, in their own words. The index searches them
-  (`Xeito.Skills.Index`), so a request finds a skill by what it means even when it shares no
-  word with the skill's description, at no cost per turn.
+  Example user requests per skill, written by the local model and cached, for `Xeito.Skills.Index` to search.
 
-  Generation costs a model call per skill, so its result is cached: one JSON file per skill
-  under `~/.xeito/skills/examples` (`home/0`), keyed by the hash of
-  its `SKILL.md`, the model and the model's digest. An edited skill, another model or new
-  weights under the same tag make it stale (`stale/4`), and `refresh/3` writes it again. Until
-  then the examples of an unchanged `SKILL.md` stay in use (`attach/2`), whatever wrote them.
-
-  Each generation is a logged model call (`skill_examples_generated`, stream
-  `skills/examples`), and it waits for the local tier as a background call
-  (`Xeito.Tiers.Queue`), behind every interactive one.
+  - Cache: one JSON file per skill in `dir/0`, keyed by the hash of its `SKILL.md`, the model
+    and the model's digest. `stale/4` lists entries for another `SKILL.md`, model or digest;
+    `attach/2` uses any entry whose `SKILL.md` hash matches.
+  - `refresh/3` generates stale entries one at a time as background calls on the local tier
+    (`Xeito.Tiers.Queue`), logging each as `skill_examples_generated` in run `skills/examples`.
   """
 
   alias Xeito.Backends
@@ -145,8 +138,7 @@ defmodule Xeito.Skills.Examples do
     do: Enum.reject(skills, &match?(%{"model" => ^model, "digest" => ^digest}, current(&1, dir)))
 
   @doc """
-  Generates and caches the examples of the stale skills, one at a time, each a background call
-  on the local tier. Options: `:dir` (the cache), `:log` (where generations are logged).
+  Generates and caches the examples of the stale skills. Options: `:dir` (the cache), `:log`.
   Returns `[{name, {:ok, count} | {:error, reason}}]`.
   """
   @spec refresh([Skills.t()], keyword(), keyword()) :: [{String.t(), {:ok, non_neg_integer()} | {:error, term()}}]
@@ -192,7 +184,6 @@ defmodule Xeito.Skills.Examples do
 
   defp keep(error, _skill, _model, _digest, _dir, _log), do: error
 
-  # The cache entry for the skill's current `SKILL.md`, if any.
   defp current(skill, dir) do
     with {:ok, json} <- File.read(path(dir, skill)),
          {:ok, %{"hash" => hash} = entry} <- JSON.decode(json),

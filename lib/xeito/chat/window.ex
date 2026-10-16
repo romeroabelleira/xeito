@@ -1,35 +1,28 @@
 defmodule Xeito.Chat.Window do
   @moduledoc """
-  The context window of a chat request: what a conversation costs in tokens, and how it is made
-  to fit before it is sent. Pure functions, so a replay reproduces the request exactly.
+  Token estimates for a chat request and the pure functions that fit it into the context window.
 
-  Ollama does not refuse a prompt that is too long: it cuts it from the *front*, which drops the
-  system prompt (and `AGENTS.md` in it) first, and says nothing. So the chat machine fits every
-  request into its budget itself (`fit/2`), in this order, stopping as soon as it fits:
+  Servers such as Ollama silently cut an overlong prompt from the front, so `fit/2` makes every
+  request fit, stopping as soon as it does:
 
-    1. old tool outputs become stubs, except the last 4 (as `Xeito.Machines.Chat.elide/1`
-       does in batches, here all at once);
-    2. the oldest earlier turns are dropped, whole, with a note saying how many messages were
-       left out. A turn starts at a user message, so a tool result never loses its call;
+    1. old tool outputs become stubs, except the last 4;
+    2. the oldest earlier turns are dropped whole (a turn starts at a user message, so a tool
+       result never loses its call), with a note of how many messages were left out;
     3. the largest message of the current turn is shortened in the middle.
 
-  The system prompt is set aside before any of this and is never changed: a system prompt that
-  does not fit on its own is an error, not a cut. The current prompt is part of the current
-  turn, which only step 3 touches. Nor is a summary of earlier turns dropped (below): it stays
-  first, after the system prompt.
+  Invariants: the system prompt is never changed (too large on its own is an error); a summary
+  of earlier turns is never dropped and stays right after the system prompt; only step 3
+  touches the current turn.
 
-  **Summaries** (P4c). Dropping turns keeps a request within its window, but a long session then
-  forgets what they established. So before it gets that far, the chat machine has the oldest
-  turns summarised (`summary_split/2`, `summary_request/2`): once the earlier conversation takes
-  more than 60% of the budget or 40 messages, its oldest whole turns, and any summary so far,
-  become one summary (`summary_message/2`), until the rest takes at most 30% and 20 messages.
-  The summary is a model call, logged, so a replay reads it instead of asking again.
+  Summaries: `summary_split/2` says when the earlier conversation (over 60% of the budget or 40
+  messages) should have its oldest turns summarised, down to 30% and 20 messages;
+  `summary_request/2` and `summary_message/2` build the call and its result.
 
-  Tokens are estimated from characters (`estimate/2`), at a conservative 3.0 characters per
-  token until the server has reported a real count (`calibrate/2`).
+  Tokens are estimated from characters (`estimate/2`), at 3.0 characters per token until
+  `calibrate/2` has a measured ratio.
   """
 
-  @type message :: map()
+  @type message :: Xeito.Chat.Message.t()
   @type report :: %{dropped: non_neg_integer(), stubbed: non_neg_integer(), shortened: non_neg_integer()}
 
   @default_chars_per_token 3.0
@@ -162,8 +155,7 @@ defmodule Xeito.Chat.Window do
     if fits?(parts, room), do: parts, else: drop_oldest(parts, room)
   end
 
-  # The leading messages up to (not including) the next user message: one turn, or the tail of
-  # one when the history starts mid-turn.
+  # Up to the next user message: one turn, or the tail of one when the history starts mid-turn.
   defp first_span([first | rest]) do
     {tail, after_span} = Enum.split_while(rest, &(&1.role != "user"))
     {[first | tail], after_span}
@@ -191,8 +183,7 @@ defmodule Xeito.Chat.Window do
     |> elem(1)
   end
 
-  # Keeps both ends of a long text, so both stay readable: by default the first and the last
-  # quarter; with `max`, as much of both ends as fits in `max` characters.
+  # Keeps the first and last quarter, or with `max` as much of both ends as fits.
   defp cut_middle(%{content: content} = m, max \\ nil) do
     length = String.length(content)
     keep = if max, do: div(max - 60, 2), else: div(length, 4)
@@ -224,10 +215,9 @@ defmodule Xeito.Chat.Window do
   def summary?(message), do: Map.get(message, :summary, false) == true
 
   @doc """
-  Whether the earlier conversation (`earlier`, without the system prompt) is due for a summary,
-  and of what: `:keep`, or `{span, kept}`, the oldest whole turns (with any summary so far) to
-  summarise and the rest, which starts at a user message. Options: `:budget` (tokens) and
-  `:chars_per_token`.
+  `:keep`, or `{span, kept}` when the earlier conversation (without the system prompt) is due for
+  a summary: `span` is the oldest whole turns (with any summary so far), `kept` starts at a user
+  message. Options: `:budget` (tokens) and `:chars_per_token`.
   """
   @spec summary_split([message()], keyword()) :: :keep | {[message()], [message()]}
   def summary_split(earlier, opts) do
@@ -252,13 +242,12 @@ defmodule Xeito.Chat.Window do
   def summary_request(span, opts) do
     cpt = Keyword.get(opts, :chars_per_token, @default_chars_per_token)
     system = %{role: "system", content: @summary_system}
-    room = (Keyword.fetch!(opts, :budget) - estimate([system, %{content: ""}], cpt)) * cpt
+    room = (Keyword.fetch!(opts, :budget) - estimate([system, %{role: "user", content: ""}], cpt)) * cpt
     [system, %{role: "user", content: span |> transcript() |> cut_to(floor(room))}]
   end
 
   defp transcript(span), do: Enum.map_join(span, "\n\n", &line/1)
 
-  # A span holds user, assistant and tool messages (the system prompt is never in one).
   defp line(%{summary: true, content: content}), do: "Summary so far:\n" <> body(content)
   defp line(%{role: "user", content: content}), do: "User: " <> content
   defp line(%{role: "tool"} = m), do: "Result of #{Map.get(m, :tool_name, "a tool")}: " <> clip(m.content, @result_max)
@@ -289,22 +278,18 @@ defmodule Xeito.Chat.Window do
     %{role: "user", content: header <> String.slice(String.trim(text), 0, @summary_max), summary: true, covers: covers}
   end
 
-  # A summary's text without its header.
   defp body(content), do: content |> String.split("\n", parts: 2) |> List.last()
 
   # --- measurements ------------------------------------------------------------------------------
 
-  @doc """
-  The characters per token measured on a request (`chars` sent, `tokens` the server counted),
-  within 2.0 and 4.5; the default when the server reported nothing.
-  """
+  @doc "Characters per token measured on a request, clamped to 2.0..4.5; the default when `tokens` is 0."
   @spec calibrate(non_neg_integer(), non_neg_integer()) :: float()
   def calibrate(_chars, 0), do: @default_chars_per_token
   def calibrate(chars, tokens), do: (chars / tokens) |> max(2.0) |> min(4.5)
 
   @doc """
-  Whether the server cut a prompt: Ollama keeps n_ctx/2 + 1 to 3 tokens of a prompt longer than
-  its context (measured 2026-10 on 0.32 and 0.35), and reports that as the prompt's size.
+  Whether the server cut a prompt: Ollama reports n_ctx/2 + 1 to 3 prompt tokens for a prompt
+  longer than its context.
   """
   @spec truncated?(non_neg_integer(), pos_integer() | nil) :: boolean()
   def truncated?(_tokens, nil), do: false

@@ -1,17 +1,15 @@
 defmodule Xeito.Source.RepoMap do
   @moduledoc """
-  A compact map of a project for a chat turn's instructions, so the model starts out knowing
-  what kind of project it is in and where things live, instead of spending steps on `find` and
-  `grep` (as in Aider's repository map, without its ranking).
+  Builds a compact map of a project for a chat turn's instructions.
 
-    * the project kind (from its build files) and top-level directories;
-    * for Elixir projects: every module under `lib/` (and `apps/*/lib/`) with its file, the first
-      line of its moduledoc and its public functions, parsed by `Xeito.Source`;
-    * the dependencies, and where their sources are.
+    * the project kind (from its build files) and top-level directories
+    * for Elixir: every module under `lib/` and `apps/*/lib/` with its file, the first line of
+      its moduledoc and its public functions
+    * the dependencies, and where their sources are
 
-  The map is capped at `@budget` characters: function lists go first, then modules are cut
-  with a count of those left out. The text depends only on modules, their docs and public
-  functions, so ordinary edits leave it (and the model's prompt cache) unchanged.
+  The map fits in `budget` characters: function lists are dropped first, then docs, then modules
+  are cut with a count of those left out. It depends only on modules, their docs and public
+  functions, so ordinary edits keep it (and the prompt cache) stable.
   """
 
   alias Xeito.Source
@@ -83,7 +81,7 @@ defmodule Xeito.Source.RepoMap do
     end
   end
 
-  # The first line of a module's @moduledoc, if it is right there (a heredoc or a string).
+  # The first line of a module's @moduledoc, when it follows within three lines.
   defp doc(content, module) do
     lines = content |> String.split("\n") |> Enum.drop(module.first) |> Enum.take(3)
 

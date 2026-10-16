@@ -1,27 +1,13 @@
 defmodule Xeito.Allowance do
   @moduledoc """
-  What an OpenRouter key may still spend, and what a call to a model may cost at most, so that
-  remote chat plans each call against the money left (P4d step 4).
+  Tracks what an OpenRouter key may still spend and gates remote chat calls on their worst-case cost.
 
-  **The allowance** comes from two free calls: `GET /api/v1/key` (the key's limit and budgets;
-  `effective_budget` is the one that blocks first) and `GET /api/v1/credits` (the account's
-  credits; documented as needing a management key, so it may fail and is then left out). The
-  smallest of them is what is left (`left/2`). It is fetched at most once a minute per key and
-  lowered by every cost recorded since (`spent/2`), because OpenRouter's own counters lag.
-
-  **The price** of a model is that of its dearest endpoint (`GET /api/v1/models/<id>/endpoints`,
-  free), since the router may pick any; it is fetched once per model.
-
-  **The gate** (`verdict/1`) lets a call go ahead while two things hold:
-    * the run's off-box budget (`Xeito.Policy`'s `max_usd_per_run`, `/budget`) is not spent;
-    * the call's worst case (`worst_case/3`: every input token uncached, the answer at its
-      `max_tokens`) fits in the allowance. Prompt caching makes the real cost far lower; the
-      worst case only makes sure a call is never started that the key could not pay for.
-
-  A fetch that fails leaves the allowance unknown (`nil`): calls are then bounded by the run's
-  budget alone, and OpenRouter's own limits still apply.
-
-  A process, because the cache and the spending since the last fetch persist across calls.
+    * allowance (`remaining/1`): the smallest of the key's blocking budget or limit and the
+      account's credits (`left/2`); fetched at most once a minute per key, lowered by `spent/2`
+      in between; `nil` if unknown (a failed fetch is not cached)
+    * price (`model_price/1`): the model's dearest endpoint, fetched once per model
+    * gate (`verdict/1`): a call goes ahead while the run's off-box budget is not spent and its
+      `worst_case/3` fits in a known allowance
   """
 
   use GenServer
@@ -149,7 +135,6 @@ defmodule Xeito.Allowance do
 
   defp key_call({:remaining, k, now}, s), do: {:reply, fresh(s.keys[k], now), s}
 
-  # A failed fetch is not cached: the next call asks again.
   defp key_call({:fetched, _k, {:error, _}, _now}, s), do: {:reply, nil, s}
   defp key_call({:fetched, k, left, now}, s), do: {:reply, left, put_in(s.keys[k], %{at: now, left: left, spent: 0})}
 
@@ -165,7 +150,6 @@ defmodule Xeito.Allowance do
      update_in(s.keys, &Map.update(&1, k, %{at: nil, left: nil, spent: usd}, fn e -> %{e | spent: e.spent + usd} end))}
   end
 
-  # The cached allowance if it was fetched within the last minute.
   defp fresh(%{at: at, left: left, spent: spent}, now) when is_integer(at) and now - at < @fresh_ms,
     do: {:ok, minus(left, spent)}
 

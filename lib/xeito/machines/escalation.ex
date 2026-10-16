@@ -1,7 +1,6 @@
 defmodule Xeito.Machines.Escalation do
   @moduledoc """
-  Delegation as a state machine: one run per decision request, walking the tiers of its plan
-  (`docs/architecture/04-delegation.md`).
+  Delegation as a state machine: one run per decision request, walking the tiers of its plan.
 
       deciding ─┬─ rules
                 ├─ local_decision
@@ -14,20 +13,13 @@ defmodule Xeito.Machines.Escalation do
                 └─ human
       committed · abstained · failed
 
-  Each tier state requests one effect. Its result arrives as `:tier_done`, and the routing
-  transitions on the parent `deciding` state commit it, move to the next tier in the plan, or
-  abstain. Because every tier visited is a state entered and every result an event, the
-  escalation path of each decision is in the OCEL log, ready for mining.
-
-  Placement awareness (open question Q16): when the local model is **not** resident, an earlier
-  tier's answer with confidence ≥ `policy.unloaded_accept` is committed instead of paying for a
-  swap.
-
-  2.0.0 (P4d): the tier states are named by kind and place (`Xeito.Tiers`); 1.x had
-  `system_one`, `small`, `large`, `openrouter` and `remote`.
-
-  Context (built by `Xeito.Escalation`): `type`, `input` (normalised), `plan` (remaining tiers),
-  `policy`, `parent` (the requesting run), `base` (a `%Xeito.Decision{}` template), `attempts`.
+  - Each tier state requests one effect; its result arrives as `:tier_done`, and `deciding`
+    commits it, moves to the next tier in `plan`, or abstains.
+  - When the local model is not resident, the best earlier answer with confidence >=
+    `policy.unloaded_accept` is committed instead of swapping.
+  - Context (built by `Xeito.Escalation`): `type`, `input` (normalised), `plan` (remaining
+    tiers), `policy`, `parent` (requesting run), `base` (a `%Xeito.Decision{}` template),
+    `attempts`. The final state has `decision`.
   """
 
   use Xeito.Machine, version: "2.0.0"
@@ -148,7 +140,6 @@ defmodule Xeito.Machines.Escalation do
   def valid_human?(ctx, %{value: value}), do: value in Type.values(Decision.type!(ctx.type))
   def valid_human?(_ctx, _data), do: false
 
-  # The most confident earlier answer that clears `policy.unloaded_accept`, if any.
   defp best_previous(%{policy: %{unloaded_accept: min}} = ctx) when is_number(min) do
     ctx.attempts
     |> Enum.filter(&(is_number(&1[:confidence]) and &1.confidence >= min))

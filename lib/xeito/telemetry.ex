@@ -1,7 +1,7 @@
 defmodule Xeito.Telemetry do
   @moduledoc """
-  `:telemetry` events for runs: a projection of what a run appends to the log, emitted right
-  after the log write, never a separate truth ([06](docs/architecture/06-observability.md)).
+  Emits `:telemetry` events for runs, projected from what a run appends to the log, right after the write.
+
   Handlers run in the run's process; one that raises is detached by `:telemetry`.
 
     * `[:xeito, :run, :start]`: metadata `run_id`, `machine`, `machine_version`
@@ -19,8 +19,7 @@ defmodule Xeito.Telemetry do
 
   alias Xeito.Log.Event
 
-  # Per projected event type: its telemetry name, the attributes copied into the metadata and
-  # those that are measurements.
+  # Log event type => {telemetry name, metadata attributes, measurement attributes}.
   @projected %{
     "run_started" => {[:xeito, :run, :start], ~w(machine machine_version)a, []},
     "transition" => {[:xeito, :run, :transition], ~w(from_state to_state event_name actor implicit)a, []},

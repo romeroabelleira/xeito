@@ -2,20 +2,16 @@ defmodule Xeito.Run do
   @moduledoc """
   One supervised `gen_statem` process per run, interpreting a `Xeito.Machine`.
 
-  The gen_statem state is the active *leaf* of the statechart, and the data holds the run's
-  context. For every event the run:
+  The gen_statem state is the active leaf of the statechart; the data holds the run's context.
+  For every event the run:
 
-    1. asks `Xeito.Machine.Engine` for the step (pure),
-    2. appends the events to `Xeito.Log` (synchronously, before acknowledging anything),
-    3. moves to the new leaf, re-arms the state timeout and dispatches entry effects.
+    1. asks `Xeito.Machine.Engine` for the step (pure)
+    2. appends the events to `Xeito.Log` synchronously, before acknowledging anything
+    3. moves to the new leaf, re-arms the state timeout and dispatches entry effects
 
-  Effect results come back as messages. They are logged together with the event they produce.
-
-  If the process crashes, its supervisor restarts it with the same `run_id`, and `init/1`
-  rebuilds the state from the log via `Xeito.Run.Recovery`. Pending effects are re-dispatched.
-  A run pins the machine version it started with; recovery refuses a changed version.
-
-  See `docs/architecture/02-state-machine-core.md`.
+  Effect results arrive as messages and are logged with the event they produce. After a crash
+  the supervisor restarts the run with the same `run_id`; `init/1` rebuilds it from the log
+  (`Xeito.Run.Recovery`) and re-dispatches pending effects. Recovery refuses a changed machine version.
   """
 
   @behaviour :gen_statem
@@ -62,9 +58,8 @@ defmodule Xeito.Run do
   end
 
   @doc """
-  Halts a run where it is, together with the runs under it (delegated `…/eN/run`, escalations
-  `…/eN/esc`): effects in flight are killed, and each run finishes with status `:halted` in its
-  current state. A halted run is finished: it is not recovered. Returns `:ok`, or
+  Halts a run and the runs under it (`…/eN/run`, `…/eN/esc`): kills effects in flight and
+  finishes each with status `:halted` in its current state, never recovered. Returns `:ok` or
   `{:error, :not_running}`.
   """
   @spec halt(run_id(), atom()) :: :ok | {:error, :not_running}
@@ -89,21 +84,19 @@ defmodule Xeito.Run do
   end
 
   @doc """
-  Sets the debug settings of a live run: `%{step: boolean, breakpoints: [breakpoint]}`.
+  Sets a live run's debug settings: `%{step: boolean, breakpoints: [breakpoint]}`.
 
-  A breakpoint is `{:state, name}` (pause on any result arriving in that state),
-  `{:decision, module}` (pause on that decision type's result) or `{:confidence_below, x}`
-  (pause on a decision whose confidence is below `x`). With `step: true` the run pauses before
-  every effect result. Turning step mode off releases a held result.
-  See `docs/architecture/06-observability.md#2-step`.
+    * `step: true` pauses before every effect result; turning it off releases a held result
+    * `{:state, name}` pauses on any result arriving in that state
+    * `{:decision, module}` pauses on that decision type's result
+    * `{:confidence_below, x}` pauses on a decision with confidence below `x`
   """
   @spec debug(run_id(), map()) :: :ok
   def debug(run_id, settings), do: :gen_statem.call(via(run_id), {:debug, settings})
 
   @doc """
-  Releases the result a paused run is holding. With `{:decide, value}`, a held decision is
-  replaced by a human decision of that value (logged with `actor: :human`, a labelled example).
-  Returns `:ok`, `{:error, :not_paused}` or `{:error, :invalid_value}`.
+  Releases the result a paused run holds; `{:decide, value}` replaces a held decision with a
+  human one (`actor: :human`). Returns `:ok`, `{:error, :not_paused}` or `{:error, :invalid_value}`.
   """
   @spec step(run_id(), :next | {:decide, atom()}) :: :ok | {:error, atom()}
   def step(run_id, how \\ :next), do: :gen_statem.call(via(run_id), {:step, how})
@@ -136,8 +129,7 @@ defmodule Xeito.Run do
   end
 
   @doc """
-  Totals of the decisions a run made: count, latency, tokens, USD and estimated joules, summed
-  from its `decision_made` events.
+  Totals of a run's `decision_made` events: count, latency, tokens, USD and estimated joules.
   """
   @spec cost(Log.server(), run_id()) :: map()
   def cost(log, run_id) do
@@ -206,9 +198,7 @@ defmodule Xeito.Run do
   @impl :gen_statem
   def callback_mode, do: :handle_event_function
 
-  # A run whose log cannot be read has nothing to start or recover from. It is not started (a
-  # restart would fail the same way, until the supervisor gave up on every run): a test's log
-  # stopped under a run still going, or a log server given by pid that ended.
+  # An unreadable log means `:ignore`, not a crash: restarting would fail the same way and exhaust the supervisor.
   defp logged(log, run_id) do
     Log.read_run(log, run_id)
   catch
@@ -334,8 +324,7 @@ defmodule Xeito.Run do
       else: {:keep_state, data, [{:reply, from, :ok}]}
   end
 
-  # While a result is held, further results wait in order; timeouts are dropped (a paused
-  # run is under human control, and the next state re-arms its own timeout).
+  # While a result is held, later results queue in order; timeouts are dropped (the next state re-arms its own).
   defp effect_result({_, id, _} = msg, _leaf, %{held: held} = data) when held != nil,
     do: {:keep_state, %{data | queued: data.queued ++ [msg], tasks: Map.delete(data.tasks, id)}}
 
@@ -497,8 +486,7 @@ defmodule Xeito.Run do
         {:keep_state, data, reply(from, :ignored)}
 
       {:ok, step} ->
-        # Leaving a state makes the effects still in flight stale; an internal transition
-        # (nothing exited or entered) keeps waiting for them.
+        # Leaving a state makes effects in flight stale; an internal transition keeps waiting for them.
         in_flight = if step.exited == [] and step.entered == [], do: data.effects, else: %{}
         {effects, data} = number_effects(step.effects, %{data | ctx: step.ctx, effects: in_flight})
 
@@ -609,10 +597,7 @@ defmodule Xeito.Run do
 
   defp decision_events(_effect, _result), do: []
 
-  # The actor of an event produced by an effect: the decider for decisions, else code.
-  # The actor of an event produced by an effect: the decider for decisions, the chat model's tier
-  # for a chat turn (its output chooses the next transition), else code. This is what the
-  # determinism budget counts (docs/architecture/01-principles.md#2-the-determinism-budget).
+  # The actor of an effect's event, as the determinism budget counts it: the decider, the chat tier, else code.
   defp actor(_effect, %{decision: %{actor: actor}}) when actor not in [nil, :none], do: actor
   defp actor(%Effect{kind: :chat}, %{error: _}), do: :code
   defp actor(%Effect{kind: :chat}, _result), do: :local

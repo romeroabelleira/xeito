@@ -1,21 +1,15 @@
 defmodule Xeito.Skills.Bench do
   @moduledoc """
-  Measures how well requests find the skills they need: the shortlist a chat turn gives its skill
-  decision (`Xeito.Skills.shortlist/2`), against a set of requests labelled with the skill each
-  one needs, or with `none` (P4f step 1, `mix xeito.skills.bench`).
+  Measures the skill shortlist (`Xeito.Skills.shortlist/2`) against requests labelled with the skill they need.
 
-  A set is JSON Lines, one case per line: `{"request": "…", "skill": "name"}` or
-  `{"skill": "none"}`. The report counts:
+  A set is JSON Lines, one case per line: `{"request": "…", "skill": "name"}`, where the
+  skill may be `"none"`. The report counts:
 
-    * **top 1** and **top 3**: of the requests that need a skill, those whose skill is first in
-      the shortlist, and those whose skill is in it at all (it holds at most three);
-    * **none**: of the requests that need no skill, those with an empty shortlist, so the turn
-      decides without a model call;
-    * the **misses**, with what the shortlist held instead, and the time the shortlist took.
+    * **top 1** / **top 3**: requests needing a skill whose skill is first / in the shortlist;
+    * **none**: requests needing no skill that get an empty shortlist;
+    * the **misses**, with what the shortlist held instead, and the shortlist's latency.
 
-  Skills the set names but the library lacks are reported and left out of the counts. A sample
-  library and set ship in `priv/skills/bench`; an operator measures their own set against their
-  own library.
+  Skills the set names but the library lacks are reported and left out of the counts.
   """
 
   alias Xeito.Skills

@@ -1,13 +1,12 @@
 defmodule Xeito.Chat.OpenRouter.Stream do
   @moduledoc """
-  Reads a streamed chat completion (OpenAI's server-sent events, as OpenRouter sends them) into
-  one assistant message.
+  Reads OpenRouter's streamed chat completion (server-sent events) into one assistant message.
 
-  Events arrive in chunks that may split a line. Each `data:` line is a JSON chunk: text deltas
-  are passed to `on_delta` as they come, tool calls are assembled from fragments by their
-  `index`, and the last chunk carries the usage (tokens, cache reads, `cost` in USD), the model
-  and the provider that served it. Comment lines (`: OPENROUTER PROCESSING`) and `[DONE]` are
-  skipped; an `error` chunk ends the answer with that error.
+    * chunks may split a line; `feed/3` buffers the rest
+    * text deltas go to `on_delta` as they arrive
+    * tool calls are assembled from fragments by `index`
+    * usage, cost, model and provider come from the last chunk
+    * comment lines and `[DONE]` are skipped; an `error` chunk makes `finish/1` return an error
   """
 
   @type t :: map()

@@ -2,18 +2,16 @@ defmodule Xeito.Machines.FixFailingTest do
   @moduledoc """
   Reproduces a failing test, triages it, and loops plan → edit → verify until the tests pass.
 
-  `triage` requests the typed decision `Xeito.Decisions.Triage` over the last failure
-  (`triage_input/1`). In `working`, the fix is made either
+  `triage` decides `Xeito.Decisions.Triage` over the last failure. In `working` the fix comes
 
-    * by a human or an external agent, who sends `:planned` and `:edited`, or
-    * with `delegate: true` (the harness), by a child run of `Xeito.Machines.Chat` started on
-      entering `planning`, which gets the failure and the triage and ends with `:child_done`.
+    * from a human or external agent, who sends `:planned` and `:edited`, or
+    * with `delegate: true`, from a child `Xeito.Machines.Chat` run started in `planning`, which
+      ends with `:child_done`.
 
   Context: `%{cwd: path, test_cmd: "mix test", max_attempts: 3, max_reruns: 2}`, plus optional
   `:test_name`, `:diff_stat`, `:delegate`, and for the delegate `:system` and `:max_steps`.
 
-  The diagram in `docs/architecture/02-state-machine-core.md` is generated from this module
-  (`mix xeito.export`), and a test keeps the two in sync.
+  A test checks that the exported diagram (`mix xeito.export`) matches this module.
   """
 
   use Xeito.Machine, version: "0.5.0"

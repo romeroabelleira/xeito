@@ -3,11 +3,11 @@ defmodule XeitoTest do
 
   doctest Xeito
 
-  test "every top-level namespace is a loadable, documented module" do
+  test "every top-level namespace is a loadable module whose doc starts with a summary sentence" do
     for mod <- Xeito.namespaces() do
       assert Code.ensure_loaded?(mod), "#{inspect(mod)} is not loadable"
       assert {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(mod)
-      assert doc =~ "docs/architecture/"
+      assert Xeito.Source.ModuleMap.summary(doc) =~ ~r/\.$/, "#{inspect(mod)}: the moduledoc's first sentence"
     end
   end
 end

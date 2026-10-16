@@ -1,5 +1,10 @@
 defmodule Xeito.Api.Connection do
-  @moduledoc "One client connection of `Xeito.Api`: decodes request lines, replies, forwards events."
+  @moduledoc """
+  One client connection of `Xeito.Api`: decodes request lines, replies, forwards events.
+
+  A followed session that closed while idle, or that the daemon lost on restart, is resumed from
+  its workspace log. A buffered line over 4 MiB closes the connection.
+  """
 
   use GenServer, restart: :temporary
 
@@ -44,7 +49,6 @@ defmodule Xeito.Api.Connection do
     {:noreply, s}
   end
 
-  # Session events and monitor snapshots go to the client as they come.
   defp forward({:xeito, "session:" <> session, event}, s),
     do: send_line(s, %{event: event.type, session: session, run: event.run, attrs: event.attrs})
 
@@ -80,7 +84,6 @@ defmodule Xeito.Api.Connection do
   defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions), do: daemon_request(cmd, req, s)
   defp handle(cmd, req, s) when cmd in ~w(prompts transcript), do: directory_request(cmd, req, s)
 
-  # A followed session that closed while idle is resumed transparently from its workspace log.
   defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
     do: session_request(cmd, id, req, s)
 
@@ -117,7 +120,6 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  # A session the daemon no longer holds (it restarted) is rebuilt from the workspace log.
   defp resume(id, cwd, s) do
     case Session.start(Keyword.merge(s.defaults, id: id, cwd: cwd)) do
       {:ok, ^id} -> {%{ok: true, session: id, status: Session.status(id)}, follow(s, id, cwd)}
@@ -125,7 +127,6 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  # The directory's last updated session, live or rebuilt from the log; a new one if it has none.
   defp open_latest(cwd, s) do
     case Directory.latest(log(cwd, s), cwd) do
       nil -> s.defaults |> Keyword.put(:cwd, cwd) |> start_session(s) |> continued(false)
@@ -139,7 +140,6 @@ defmodule Xeito.Api.Connection do
   # The log sessions in a directory use: the configured one, else the workspace's own.
   defp log(cwd, s), do: Keyword.get_lazy(s.defaults, :log, fn -> Log.for_workspace(cwd) end)
 
-  # Status-bar data: the connection receives monitor snapshots while it is subscribed.
   defp daemon_request("monitor", req, s) do
     if req["on"] == false, do: Monitor.unsubscribe(self()), else: Monitor.subscribe(self())
     {%{ok: true}, s}
@@ -157,7 +157,6 @@ defmodule Xeito.Api.Connection do
     {%{ok: true, sessions: Enum.map(ids, &Session.status/1)}, s}
   end
 
-  # From a directory's log: its prompts, or a session's turns.
   defp directory_request("prompts", req, s) do
     cwd = workspace(req)
     {%{ok: true, prompts: Directory.prompts(log(cwd, s), cwd)}, s}
@@ -204,7 +203,6 @@ defmodule Xeito.Api.Connection do
 
   defp exists?(id), do: Registry.lookup(Xeito.SessionRegistry, id) != []
 
-  # Remembers the workspace of every followed session, so it can be resumed after an idle close.
   defp follow(s, id, cwd) do
     if !Map.has_key?(s.sessions, id), do: Session.subscribe(id)
     %{s | sessions: Map.put(s.sessions, id, cwd)}

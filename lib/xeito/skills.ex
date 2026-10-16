@@ -1,28 +1,15 @@
 defmodule Xeito.Skills do
   @moduledoc """
-  Agent Skills (`SKILL.md` directories, https://agentskills.io/specification), the format pi
-  uses too.
+  Discovers and parses Agent Skills (`SKILL.md` directories) for the chat model.
 
-  Discovery, first match wins on a name collision (project before user):
-
-    * `<workspace>/.agents/skills/`
-    * `~/.agents/skills/`
-
-  Only `.agents/skills`, the folder no single tool owns. Another harness's own folders (pi's
-  `.pi/skills`, `~/.pi/agent/skills`) are not read, so what Xeito sees does not depend on what
-  another tool has installed.
-
-  Directories containing `SKILL.md` are found recursively. The frontmatter must have a `name` and
-  a `description`; skills without a description are skipped, as in pi.
-
-  As in pi, only names and descriptions go into the chat model's prompt, and the model loads a
-  skill with the `skill` tool when a task matches; `/skill:name args` forces one. Unlike pi, a
-  turn lists only the workspace's own skills: the user's are shortlisted by a full-text index
-  (`for_turn/3`, `Xeito.Skills.Index`) and at most one is suggested per turn, by a typed decision
-  (`Xeito.Decisions.Skill`, P4e). A skill with `disable-model-invocation: true` is never listed
-  or suggested, only run by the explicit command. The `skill`
-  tool reads files *inside that skill's directory only*; scripts it mentions run through `bash`,
-  so the `Risk` decision still applies.
+  * Read from `<workspace>/.agents/skills/`, then `~/.agents/skills/`, recursively; on a name
+    collision the first wins. No other tool's skill folders are read.
+  * The frontmatter needs a `name` and a `description`; otherwise the skill is skipped.
+  * A turn lists the workspace's skills in the prompt; the user's are shortlisted (`for_turn/3`)
+    for a `Xeito.Decisions.Skill` decision. `/skill:name args` forces one.
+  * `disable-model-invocation: true` keeps a skill out of lists and suggestions.
+  * The `skill` tool reads only inside the skill's directory; scripts run through `bash`, so the
+    `Risk` decision still applies.
   """
 
   alias Xeito.Skills.Examples
@@ -39,14 +26,13 @@ defmodule Xeito.Skills do
 
   @max_description 1_024
 
-  # The home whose user skills are read: `config :xeito, :skills_home` (tests point it nowhere),
-  # else the user's.
+  # `config :xeito, :skills_home` lets tests point it nowhere.
   defp user_home, do: Application.get_env(:xeito, :skills_home) || System.user_home() || "/nonexistent"
 
   @doc """
-  The skills visible from a workspace, project skills first, with the keywords of the overlay
-  file (`overlay/1`) added and their cached example requests (`Xeito.Skills.Examples`). `opts[:home]` overrides the user's home, `opts[:keywords]` the
-  overlay file (by default `XEITO_SKILL_KEYWORDS`; `nil` for none).
+  The skills visible from a workspace, project skills first, with overlay keywords and cached
+  examples added. Options: `:home` (user's home), `:keywords` (overlay file, default
+  `XEITO_SKILL_KEYWORDS`; `nil` for none).
   """
   @spec discover(Path.t(), keyword()) :: [t()]
   def discover(cwd, opts \\ []) do
@@ -65,8 +51,8 @@ defmodule Xeito.Skills do
     do: Enum.map(skills, &%{&1 | keywords: Enum.uniq(&1.keywords ++ Map.get(overlay, &1.name, []))})
 
   @doc """
-  An overlay file's keywords by skill name, for skills whose files are not yours to edit: one
-  `name: word, word` line per skill; `#` starts a comment. No file, no keywords.
+  An overlay file's keywords by skill name: one `name: word, word` line per skill, `#` comments.
+  A missing file gives `%{}`.
   """
   @spec overlay(Path.t() | nil) :: %{String.t() => [String.t()]}
   def overlay(nil), do: %{}
@@ -146,10 +132,7 @@ defmodule Xeito.Skills do
     end
   end
 
-  @doc """
-  What a chat turn offers the model: the workspace's own skills, `listed` in its prompt, and up
-  to three of the user's skills as `candidates` for the turn's skill decision (`shortlist/2`).
-  """
+  @doc "The workspace's skills as `listed`, and up to three user skills as `candidates` (`shortlist/2`)."
   @spec for_turn([t()], Path.t(), String.t()) :: %{listed: [t()], candidates: [t()]}
   def for_turn(skills, cwd, request) do
     root = Path.join(Path.expand(cwd), ".agents/skills") <> "/"
@@ -157,10 +140,7 @@ defmodule Xeito.Skills do
     %{listed: listed, candidates: shortlist(user, request)}
   end
 
-  @doc """
-  The user's skills a turn may choose from: those the model may invoke, ranked against the
-  request (`Xeito.Skills.Index`), at most three. `Xeito.Skills.Bench` measures it.
-  """
+  @doc "Up to three model-invocable skills ranked against the request (`Xeito.Skills.Index`)."
   @spec shortlist([t()], String.t()) :: [t()]
   def shortlist(skills, request), do: skills |> Enum.filter(& &1.model_invocation) |> Index.search(request)
 
@@ -202,8 +182,6 @@ defmodule Xeito.Skills do
     end
   end
 
-  # A key's value, and the lines after it: a folded or literal block, a nested map, or the rest
-  # of the line.
   defp value(style, rest) when style in [">", "|", ">-", "|-"] do
     {block, rest} = Enum.split_while(rest, &(String.starts_with?(&1, " ") or &1 == ""))
     joiner = if String.starts_with?(style, ">"), do: " ", else: "\n"
@@ -217,7 +195,6 @@ defmodule Xeito.Skills do
 
   defp value(text, rest), do: {unquote_value(String.trim(text)), rest}
 
-  # The indented `key: value` lines under a key without a value: its map (one level only).
   defp nested([]), do: ""
   defp nested(lines), do: lines |> Enum.map(&String.trim_leading/1) |> parse_yaml(%{})
 

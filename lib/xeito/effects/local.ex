@@ -2,24 +2,21 @@ defmodule Xeito.Effects.Local do
   @moduledoc """
   Executes effects on the local machine, confined to the effect's workspace (`:cwd`).
 
-    * `bash` runs `sh -c` in the workspace. Output is merged (stderr into stdout), published to
-      the run's clients as it arrives (`Xeito.Events.output/3`), and truncated to
-      `opts[:max_output]` bytes (default 64 KiB). On timeout the result is `exit_status: 124`
-      and `timed_out: true`, with the output so far. A timeout or a halt stops the command and
-      every process it started (`Xeito.Effects.OsCommand`).
-    * `read` / `write` / `edit` resolve paths relative to the workspace and refuse anything
-      outside it. `edit` replaces exactly one occurrence of the old text, or fails.
-    * `chat` runs one chat-model turn with the core tools (`Xeito.Chat`) and streams its output
-      to `Xeito.Events`. `opts[:chat]` overrides the chat model configuration.
-    * `machine` runs another machine to completion as a child run (`<effect id>/run`, related
-      `part_of` the requesting run) with this same runner, and returns its outcome.
-    * `decide` runs the decision as an escalation machine (`Xeito.Escalation`), a child run in
-      the same log, when the runner was dispatched by a run (`opts[:log]`). Without a log it
-      falls back to the in-process `Xeito.Decider`. `opts[:decider]` passes options (deciders,
-      policy, tier overrides), and `opts[:decide]` (`fun(effect) -> value`) overrides both (tests).
-    * `tier`, `probe` and `swap` are the escalation machine's own effects: one tier call through
-      its capacity queue, a residency check, and a model load. Remote spend and swaps are
-      charged to the parent run's `Xeito.Budget`.
+    * `bash` runs `sh -c` in the workspace, stderr merged into stdout, streamed via
+      `Xeito.Events.output/3`, keeping the last `opts[:max_output]` bytes (default 64 KiB). On
+      timeout: `exit_status: 124`, `timed_out: true`, output so far; the command and every
+      process it started are stopped.
+    * `read` / `write` / `edit` refuse paths outside the workspace. `edit` replaces exactly one
+      occurrence of the old text, or fails with the file's closest region.
+    * `chat` runs one chat-model turn (`Xeito.Chat`), streamed to `Xeito.Events`; `opts[:chat]`
+      overrides the chat configuration.
+    * `machine` runs another machine to completion as child run `<effect id>/run` (`part_of`
+      the requesting run) and returns its outcome.
+    * `decide` runs `Xeito.Escalation` as a child run when `opts[:log]` is set, else
+      `Xeito.Decider`. `opts[:decider]` passes deciders, policy and tier overrides;
+      `opts[:decide]` (`fun(effect) -> value`) overrides both.
+    * `tier`, `probe` and `swap` are the escalation machine's effects (a tier call, a residency
+      check, a model load); remote spend and swaps are charged to the parent run's `Xeito.Budget`.
   """
 
   @behaviour Xeito.Effects.Runner
@@ -53,8 +50,7 @@ defmodule Xeito.Effects.Local do
   def run(%Effect{kind: :chat} = effect, opts), do: chat(effect, opts)
   def run(%Effect{kind: :machine} = effect, opts), do: machine(effect, opts)
 
-  # A change to the workspace: a step of its session for /undo, when it changed something and
-  # was requested by a run (`Xeito.Undo`). `undo: false` turns this off.
+  # A change requested by a run is recorded as an undo step (`Xeito.Undo`) unless `undo: false`.
   defp step(%Effect{id: id, args: args} = effect, opts) do
     if is_binary(id) and Keyword.get(opts, :undo, true),
       do: Xeito.Undo.step(workspace!(args), id, label(effect), fn -> change(effect, opts) end, outside: outside(effect)),
@@ -64,8 +60,7 @@ defmodule Xeito.Effects.Local do
   defp change(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
   defp change(effect, opts), do: file_effect(effect, opts)
 
-  # The files outside the workspace a command names (`Xeito.Decisions.Risk.written_paths/1`), to
-  # back up with the step; `~/` at the start of a word is the home directory, as for the shell.
+  # Files outside the workspace a command writes, backed up with the undo step.
   defp outside(%Effect{kind: :bash, args: %{cmd: cmd} = args}) do
     cwd = workspace!(args)
     command = String.replace(cmd, ~r{(^|\s)~/}, "\\1#{System.user_home()}/")
@@ -90,7 +85,6 @@ defmodule Xeito.Effects.Local do
   defp file_effect(%Effect{kind: :write, args: args}, _opts), do: write(args)
   defp file_effect(%Effect{kind: :edit, args: args}, _opts), do: edit(args)
 
-  # A decision, a tier's answer, and the escalation's model probes and swaps.
   defp decision_effect(%Effect{kind: :decide} = effect, opts), do: decide(effect, opts)
   defp decision_effect(%Effect{kind: :tier, args: args}, opts), do: tier(args, opts)
   defp decision_effect(%Effect{kind: :probe, args: args}, opts), do: probe(args, opts)
@@ -146,7 +140,6 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # The session's chat settings, and the run whose off-box budget a remote chat draws on.
   defp chat_options(opts) do
     policy = Policy.effective(Keyword.take(Keyword.get(opts, :decider, []), [:policy]))
     Keyword.merge([run: opts[:run_id], max_usd: policy.max_usd_per_run], Keyword.get(opts, :chat, []))
@@ -156,7 +149,7 @@ defmodule Xeito.Effects.Local do
   defp specs(true), do: Tools.specs()
   defp specs(false), do: []
 
-  # A quiet request (a summary) is not streamed: deltas without a run go nowhere.
+  # A quiet request is not streamed: deltas without a run go nowhere.
   defp streamed_to(%{quiet: true}, _opts), do: nil
   defp streamed_to(_args, opts), do: opts[:run_id]
 
@@ -176,7 +169,6 @@ defmodule Xeito.Effects.Local do
     if opts[:run_id], do: Log.relate(log, id, opts[:run_id], "part_of")
 
     case Run.await(log, id, args.timeout) do
-      # The child's full context stays in its own log; the parent gets the outcome.
       {:ok, result} ->
         Map.put(%{result | ctx: Map.take(result.ctx, [:answer, :error, :steps, :tokens_in, :tokens_out])}, :run_id, id)
 
@@ -246,7 +238,6 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # Remote spend counts against the run that asked for the decision.
   defp charge(nil, _result), do: :ok
 
   defp charge(parent, %{cost: %{usd: usd}}) when is_number(usd) and usd > 0, do: Budget.add(parent, :usd, usd)
@@ -263,8 +254,6 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # With the workspace's own tool versions, when it pins them with mise (`Xeito.Effects.MiseEnv`).
-  # Its output is published as it arrives, for clients following the run (`Xeito.Events`).
   defp run_bash(cwd, %Effect{id: id, args: args}, opts) do
     {exe, argv} = MiseEnv.command(cwd, args.cmd)
     on_output = &Xeito.Events.output(opts[:run_id], id, &1)
@@ -279,7 +268,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # The shell's own exit status for "cannot run here", with a message a model or human can act on.
+  # 127: the shell's own status for "cannot run here".
   defp workspace_missing(cwd),
     do: %{exit_status: 127, output: "workspace missing: #{cwd} does not exist (moved or deleted?)"}
 
@@ -310,12 +299,10 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # Which effect produced a result, so a model can read it back after it was shaped or elided.
   defp with_ref(result, %Effect{id: id}) when is_binary(id), do: Map.put(result, :ref, id)
   defp with_ref(result, _effect), do: result
 
-  # The full, unshaped result of an earlier effect, from the log: a full effect id
-  # (`ses-x/t1/e12`, also from an earlier turn), or `e12` for one of this run.
+  # `ref` is a full effect id (`ses-x/t1/e12`) or `e12` for one of this run.
   defp read_back(ref, opts) do
     {run_id, id} =
       if String.contains?(ref, "/"),
@@ -335,8 +322,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # A write or edit is applied either way; a file that no longer parses is reported at once, so
-  # the model fixes it in its next step rather than after the turn.
+  # The write is kept even when the file no longer parses; the error is reported.
   defp parsed(path, content) do
     case Xeito.Source.syntax_error(path, content) do
       nil -> %{ok: true}
@@ -354,10 +340,7 @@ defmodule Xeito.Effects.Local do
     end
   end
 
-  # A missed edit (usually old text recalled from memory, or with different indentation) is
-  # answered with the file's closest region, so the next step can copy it exactly. The region
-  # starts at the first line of old_text: an exact match ignoring indentation, else the most
-  # similar line (Jaro distance ≥ 0.85).
+  # Anchors on old_text's first line: exact ignoring indentation, else Jaro distance >= 0.85.
   @max_region 40
   defp nearest(content, old) do
     lines = String.split(content, "\n")

@@ -1,16 +1,13 @@
 defmodule Xeito.Session.Git do
   @moduledoc """
-  The workspace's git state for the status bar: branch, uncommitted entries, and commits ahead
-  of and behind the upstream. One `git status --porcelain=v2 --branch` call, with a timeout, so a
-  huge repository cannot stall the session.
+  Reads the workspace's git state for the status bar: branch, dirty entries, ahead and behind.
+
+  One `git status --porcelain=v2 --branch` call with a 2 s timeout.
   """
 
   @timeout 2_000
 
-  @doc """
-  `%{branch, dirty, ahead, behind}`, or `nil` outside a repository, on timeout, or when the
-  workspace directory no longer exists (git is then not started at all).
-  """
+  @doc "`%{branch, dirty, ahead, behind}`, or `nil` outside a repository, on timeout, or when `cwd` is gone."
   @spec status(Path.t()) :: map() | nil
   def status(cwd) do
     if File.dir?(cwd), do: run_status(cwd)

@@ -1,24 +1,20 @@
 defmodule Xeito.Tiers do
   @moduledoc """
-  Decider tiers: the places on the escalation ladder, named by the kind of model and where it
-  runs. Besides them, the ladder starts with the type's rules and may end with a human.
+  The model tiers of the escalation ladder, their configuration, and one tier call with a cost.
+
+  The ladder starts with the type's rules (`:rules`) and may end with a human.
 
   | tier               | kind                                                   | default backend |
   |--------------------|--------------------------------------------------------|-----------------|
-  | `:local_decision`  | System One decision model on this machine (Laya)       | `:system_one`   |
-  | `:remote_decision` | System One decision model, hosted (Jev)                | `:system_one`   |
+  | `:local_decision`  | System One decision model on this machine              | `:system_one`   |
+  | `:remote_decision` | System One decision model, hosted                      | `:system_one`   |
   | `:local`           | language model on the local GPU: chat and decisions    | `:ollama`       |
   | `:remote`          | hosted language model with logprobs (calibrated)       | `:openrouter`   |
   | `:remote_frontier` | the strongest hosted language model; answers terminally | `:openrouter`  |
 
-  A tier's configuration comes from `config :xeito, :tiers` (read from the environment by
-  `Xeito.Tiers.Settings`) and names the backend it speaks (`Xeito.Backends`), a URL, a model and
-  a key; a tier without a `:url` is unavailable. Every `remote*` tier is off-box: `Xeito.Policy`
-  gates them together.
-
-  At run time, `Xeito.Machines.Escalation` walks the tiers as a logged state machine under
-  `Xeito.Policy`. `Xeito.Decider` is the same ladder in-process, used by evaluation.
-  See `docs/architecture/04-delegation.md`.
+  A tier's configuration comes from `config :xeito, :tiers`: `:backend` (`Xeito.Backends`),
+  `:url`, `:model` and an API key. A tier without a `:url` is unavailable. Every `remote*` tier is off-box
+  and gated by `Xeito.Policy`.
   """
 
   alias Xeito.Backends
@@ -26,6 +22,33 @@ defmodule Xeito.Tiers do
   alias Xeito.Tiers.Queue
 
   @type result :: Backends.result()
+
+  @typedoc """
+  A tier's configuration, from `Xeito.Tiers.Settings` merged with per-call overrides. Backends
+  read the keys that apply to them; chat adds `run` and `max_usd` (the run whose off-box budget
+  it draws on, and that budget).
+  """
+  @type config :: [
+          {:backend, atom()}
+          | {:url, String.t()}
+          | {:model, String.t()}
+          | {:api_key, String.t()}
+          | {:context, pos_integer()}
+          | {:keep_alive, String.t()}
+          | {:providers, [String.t()]}
+          | {:zdr, boolean()}
+          | {:reasoning, String.t()}
+          | {:logprobs, boolean()}
+          | {:top_logprobs, pos_integer()}
+          | {:max_tokens, pos_integer()}
+          | {:temperature, number()}
+          | {:timeout, pos_integer()}
+          | {:think, boolean()}
+          | {:chat_model, String.t()}
+          | {:run, String.t() | nil}
+          | {:max_usd, number()}
+          | {:plug, term()}
+        ]
 
   @all [:local_decision, :remote_decision, :local, :remote, :remote_frontier]
   @off_box [:remote_decision, :remote, :remote_frontier]
@@ -38,9 +61,7 @@ defmodule Xeito.Tiers do
     remote_frontier: :openrouter
   }
 
-  # Estimated average power while a tier works (joules = watts × seconds). An estimate, not a
-  # measurement; deployment-specific values belong in `config :xeito, :tier_watts`. Off-box
-  # tiers count 0 here: their energy is spent elsewhere and not measurable from this machine.
+  # Estimated watts while a tier works; overridden by `config :xeito, :tier_watts`. Off-box: 0.
   @default_watts %{rules: 0, local_decision: 45, local: 300, remote_decision: 0, remote: 0, remote_frontier: 0}
 
   @doc "The model tiers, in ladder order."
@@ -51,12 +72,11 @@ defmodule Xeito.Tiers do
   @spec off_box() :: [atom()]
   def off_box, do: @off_box
 
-  # Settings that follow from a tier's kind: the frontier tier answers terminally, so it asks
-  # for no logprobs (which models such as Claude cannot return).
+  # The frontier tier answers terminally, so it asks for no logprobs.
   @kind_defaults %{remote_frontier: [logprobs: false]}
 
   @doc "The configuration of a tier, merged with overrides; `nil` if a model tier has no URL."
-  @spec config(atom(), keyword()) :: keyword() | nil
+  @spec config(atom(), keyword()) :: config() | nil
   def config(tier, overrides \\ [])
   def config(:rules, overrides), do: overrides
 
@@ -75,10 +95,7 @@ defmodule Xeito.Tiers do
   @spec backend(atom(), keyword()) :: atom()
   def backend(tier, cfg), do: Keyword.get_lazy(cfg, :backend, fn -> Map.fetch!(@default_backends, tier) end)
 
-  @doc """
-  Runs one tier for a decision: resolves its configuration, waits for a capacity slot
-  (`Xeito.Tiers.Queue`), calls the backend, and completes the cost with an energy estimate.
-  """
+  @doc "Runs one tier for a decision in its capacity queue; the result's cost includes `joules_est`."
   @spec run(atom(), Type.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(tier, type, input, overrides \\ []) do
     case config(tier, overrides) do

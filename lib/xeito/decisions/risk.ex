@@ -1,10 +1,9 @@
 defmodule Xeito.Decisions.Risk do
   @moduledoc """
-  Is a proposed shell command safe to run in the workspace?
+  The decision whether a proposed shell command is safe to run in the workspace: `:safe`, `:review` or `:forbidden`.
 
-  Monotonic: rules are authoritative when they fire. Otherwise the result is at least `:review`,
-  and a model can only raise it to `:forbidden`. This decision never goes to a remote tier
-  (`docs/architecture/10-security-and-sandboxing.md`).
+  Monotonic: rules are authoritative when they fire; otherwise the result is at least `:review`,
+  and a model can only raise it to `:forbidden`. It never goes to a remote tier.
   """
 
   use Xeito.Decision, version: "2"
@@ -28,13 +27,13 @@ defmodule Xeito.Decisions.Risk do
   )
 
   rule :classify
-  # Writes the rules cannot prove from the text, but undo can take back (undo stage 3).
+  # Writes the rules cannot prove from the text, but undo can take back.
   rule :undoable
 
   severity [:safe, :review, :forbidden], floor: :review
   policy remote: :forbidden
 
-  # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
+  # Small tiers failed the zero-shot gate; they decide again once they pass.
   deciders [:local]
   min_confidence 0.7
 
@@ -125,9 +124,7 @@ defmodule Xeito.Decisions.Risk do
       not String.contains?(segment, @excluded)
   end
 
-  # `find` anywhere, without the actions that write or run something; `sed -n` printing line
-  # ranges (never `-i`, or scripts that could write or execute); `cd` to a relative directory
-  # inside the workspace.
+  # `find` without writing actions; `sed -n` line ranges only (never `-i` or scripts); `cd` into a subdirectory.
   defp read_only?("find", segment), do: not String.contains?(segment, ["-ok", "-fprint", "-fls"])
 
   defp read_only?("sed", segment), do: Regex.match?(~r/^sed\s+-n\s+'?\d+(,(\d+|\$))?p'?(\s+[^\s-][^\s;]*)*$/, segment)
@@ -146,13 +143,8 @@ defmodule Xeito.Decisions.Risk do
     do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
 
   # --- writes inside the workspace ---------------------------------------------------------
-  #
-  # A command that writes only inside the workspace is safe: the writes are visible in its text
-  # (redirects, tee, touch, mkdir, rm, mv, cp, `sed -i` with one plain substitution), and every
-  # path is a literal word that stays inside once resolved on disk, symlinks included. Not the
-  # workspace root itself, not .git anywhere, and not a protected directory (dependencies, build
-  # output, the log). Anything else (other commands, `$`, `~`, globs, double quotes, long
-  # options, a `cd` first) is not provable and goes to review.
+  # Safe only if every write is visible in the text and every path is a literal word inside the
+  # workspace after symlinks: not its root, not .git, not a protected dir. Anything else goes to review.
 
   @writers ~w(touch mkdir rm mv cp tee)
 
@@ -167,9 +159,8 @@ defmodule Xeito.Decisions.Risk do
   end
 
   @doc """
-  The paths `command` writes, as written (relative or absolute): `{:ok, paths}` when every one
-  is a literal word the rules can name (redirects first, then each command's), `:error`
-  otherwise. Undo backs up those outside the workspace (`Xeito.Undo`).
+  The paths `command` writes, as written, redirects first: `{:ok, paths}` when every one is a
+  literal word the rules can name, else `:error`.
   """
   @spec written_paths(String.t()) :: {:ok, [String.t()]} | :error
   def written_paths(command), do: paths(command, &segment_paths/1)
@@ -209,8 +200,7 @@ defmodule Xeito.Decisions.Risk do
 
   defp command_paths(_command, _args), do: :error
 
-  # `sed -i[SUFFIX] [-i ''] [-E|-r] [-e SCRIPT] [SCRIPT] FILE...`: the options first, then the
-  # files. Any other option ends the options and fails below, as a script or as a file.
+  # `sed -i[SUFFIX] [-i ''] [-E|-r] [-e SCRIPT] [SCRIPT] FILE...`; any other option fails below.
   defp sed_options(["-i", "" | rest], acc), do: sed_options(rest, %{acc | in_place: true})
   defp sed_options(["-i" <> _suffix | rest], acc), do: sed_options(rest, %{acc | in_place: true})
   defp sed_options([flag | rest], acc) when flag in ["-E", "-r"], do: sed_options(rest, acc)
@@ -232,13 +222,8 @@ defmodule Xeito.Decisions.Risk do
     do: Regex.match?(~r/^s([^\w\s\\])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gIi0-9]*$/, script)
 
   # --- writes undo can take back (undo stage 3) ---------------------------------------------
-  #
-  # Some writes stay inside the workspace though the rules above cannot prove it from the text:
-  # globs, options they do not know, `find … -delete`. Each pattern is expanded in the
-  # workspace, and when every path stays inside it (as above) and a snapshot would hold
-  # everything under it (`Xeito.Undo.covers?/3`), the step can be undone: it is safe, decided
-  # as `rule:undoable` so the log shows what undo made safe. Secrets, `-exec`, dot-globs (which
-  # match `.git` or `.env`) and anything but plain writers still go to review.
+  # Globs, unknown options and `find … -delete` are safe when every expanded path is inside and a
+  # snapshot covers it. Secrets, `-exec` and dot-globs (they match `.git`, `.env`) still go to review.
 
   @not_undoable [".env", ".ssh", "credentials", ".netrc", "-exec", "-ok", "-fprint", "-fls"]
 
@@ -300,8 +285,7 @@ defmodule Xeito.Decisions.Risk do
 
   defp glob?(word), do: String.contains?(word, ["*", "?", "["])
 
-  # The directories before a glob's first wildcard: what it matches later stays inside only if
-  # they do (`out/*` through a symlink to elsewhere does not), whatever it matches now.
+  # A glob stays inside later only if its leading directories do (`out/*` via an outside symlink does not).
   defp glob_root_inside?(pattern, cwd) do
     case pattern |> Path.split() |> Enum.take_while(&(not glob?(&1))) do
       [] -> true
@@ -376,13 +360,8 @@ defmodule Xeito.Decisions.Risk do
 
   # --- a small shell tokenizer -------------------------------------------------------------
   #
-  # Splits a command into the segments between unquoted `|`, `||`, `&&`, `;` and newlines,
-  # respecting quotes. It is deliberately strict: `:unsafe` for command substitution, process
-  # substitution, heredocs, background jobs, unbalanced quotes, and any redirection except to
-  # `/dev/null` or between streams (`2>&1`), since other redirections write files.
-
-  # A redirect into a file is a write: `parse/1` returns its target, and `segments/1` (for
-  # read-only commands) calls the command unsafe.
+  # Splits at unquoted `|`, `||`, `&&`, `;` and newlines. Strict on purpose: `:unsafe` for substitution,
+  # heredocs, background jobs and unbalanced quotes. A redirect to a file is a write: `parse/1` returns it.
 
   @doc false
   @spec segments(String.t()) :: {:ok, [String.t()]} | :unsafe
@@ -454,9 +433,7 @@ defmodule Xeito.Decisions.Risk do
 
   defp split(rest, cur, acc), do: scan(rest, nil, [], [segment(cur) | acc])
 
-  # After `>`, `>>`, `N>` or `&>`: `/dev/null` or another stream (`&1`, `&2`), or a file named by
-  # a plain word, which is recorded as a write. The redirection (and a file descriptor number
-  # before it) is dropped from the segment.
+  # After `>`, `>>`, `N>` or `&>`: `/dev/null`, a stream, or a plain-word file recorded as a write.
   defp redirect([">" | rest], cur, acc), do: redirect(rest, cur, acc)
 
   defp redirect(rest, cur, acc) do

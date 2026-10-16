@@ -1,5 +1,5 @@
 defmodule Xeito.Decisions.Done do
-  @moduledoc "Is the task finished? Used at the end of work loops."
+  @moduledoc "The decision whether a task is done, can continue or is blocked, taken at the end of work loops."
 
   use Xeito.Decision, version: "1", name: "done"
 
@@ -19,7 +19,7 @@ defmodule Xeito.Decisions.Done do
 
   rule :blocked_by_access?, then: :blocked
 
-  # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
+  # Small tiers failed the zero-shot gate; they decide again once they pass.
   deciders [:local]
   min_confidence 0.8
 

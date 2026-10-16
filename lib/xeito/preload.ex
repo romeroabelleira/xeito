@@ -2,12 +2,8 @@ defmodule Xeito.Preload do
   @moduledoc """
   Loads all of the daemon's code when it starts, its own and every dependency's.
 
-  Under `mix xeito.daemon` modules load lazily, on first use. A rebuild or a dependency update in
-  the same checkout then mixes versions: a module loaded at start calls one loaded later from
-  the new build, which may no longer have that function (2026-09-28: Mint 1.10's parser calling
-  a function Mint 1.11 had dropped broke every HTTP response, and the Intent decision abstained).
-  With everything loaded at start, the daemon runs one consistent version until it restarts, and
-  `stale?/0` tells when the code on disk has moved on. A release (P8) loads everything anyway.
+  Loading eagerly keeps one consistent code version until restart, even if the checkout is
+  rebuilt meanwhile; `stale?/0` tells when the code on disk has moved on.
   """
 
   @doc "Loads every module of `apps` (default: the running applications). Returns how many."

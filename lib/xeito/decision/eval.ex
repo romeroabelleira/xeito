@@ -1,7 +1,8 @@
 defmodule Xeito.Decision.Eval do
   @moduledoc """
-  Evaluates deciders on a decision type's labelled examples
-  (`priv/decisions/<type>/examples.jsonl`) and applies the gate test.
+  Evaluates deciders on a decision type's labelled examples and applies the gate test.
+
+  Examples come from `priv/decisions/<type>/examples.jsonl`.
 
   Deciders:
 
@@ -13,12 +14,11 @@ defmodule Xeito.Decision.Eval do
   Metrics:
     * accuracy (an abstention counts as wrong), coverage, and accuracy on the answered subset
     * macro-F1
-    * ECE (10 bins), raw and after temperature scaling (2-fold: fit T on one half, measure on the other)
+    * ECE (10 bins), raw and after 2-fold temperature scaling
     * latency p50/p95, accuracy per language, and the confusion pairs
 
-  Gate (`docs/architecture/03-typed-decisions.md#the-gate-test`): a decision-model candidate
-  passes if its accuracy is within `margin` of the local tier and at least `margin` above the
-  static rule.
+  Gate: a decision-model candidate passes if its accuracy is within `margin` of the local tier
+  and at least `margin` above the static rule.
   """
 
   alias Xeito.Decider
@@ -106,7 +106,6 @@ defmodule Xeito.Decision.Eval do
 
   defp certain(value), do: %{predicted: value, confidence: 1.0, probabilities: %{value => 1.0}}
 
-  # Where no rule fires, rules alone abstain; the static rule answers the most frequent label.
   defp without_rule(:rules, _majority), do: %{predicted: :abstain, confidence: nil, probabilities: %{}}
   defp without_rule(:baseline, majority), do: certain(majority)
 
@@ -242,13 +241,11 @@ defmodule Xeito.Decision.Eval do
   end
 
   @doc """
-  Selective-prediction cascade: answer with the small tier when its confidence ≥ θ, otherwise
-  ask the large tier (`docs/architecture/04-delegation.md#tuning-thresholds-from-the-log`).
+  Selective-prediction cascade: the small tier answers when its confidence ≥ θ, else the large.
 
-  θ is chosen as the lowest threshold whose cascade accuracy stays within `epsilon` of
-  large-only accuracy, i.e. the one that sends the most decisions to the small tier. It is fitted
-  on one half of the examples and measured on the other (2-fold), so the reported accuracy and
-  small-tier share are held out. `small` and `large` are `run/4` results over the same examples.
+  θ is the lowest threshold whose cascade accuracy stays within `epsilon` of large-only accuracy,
+  fitted 2-fold so the reported accuracy and small-tier share are held out. `small` and `large`
+  are `run/4` results over the same examples.
   """
   @spec cascade([map()], [map()], float()) :: map()
   def cascade(small, large, epsilon \\ 0.01) do

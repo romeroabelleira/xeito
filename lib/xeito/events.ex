@@ -1,7 +1,6 @@
 defmodule Xeito.Events do
   @moduledoc """
-  Live event feed for clients (TUI, CLI, bridge): everything a run appends to the log, plus
-  ephemeral streams that are not logged: model tokens and the output of running commands.
+  Live event feed for clients: every logged event of a run, plus unlogged model tokens and command output.
 
   Subscribers receive `{:xeito, run_id, event}` messages, where `event` is one of:
 
@@ -15,8 +14,7 @@ defmodule Xeito.Events do
   their parent's (`<parent>/e3/esc`), so a client following a session subscribes to `:all` and
   filters with `related?/2`.
 
-  The feed is best effort and in-process: the log stays the source of truth, and a client that
-  reconnects reads the log first.
+  Best effort and in-process: the log is the source of truth.
   """
 
   alias Xeito.Log.Event

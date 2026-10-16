@@ -1,9 +1,10 @@
 defmodule Xeito.Tui.SkillSearch do
   @moduledoc """
-  Finding a skill by what it does, in the TUI (P4f step 2): `/skills <words>` lists the
-  workspace's and the user's skills that match, the best first (`Xeito.Skills.Index`, matching
-  any word or a fragment of one), and `/skills` alone lists them all. After `/skill:`, Tab
-  completes the names that start with what is typed, then the skills those words describe.
+  The TUI's `/skills` command and `/skill:` Tab completion, finding skills by name or description.
+
+    * `/skills <words>`: workspace and user skills matching any word or fragment, best first
+    * `/skills`: all skills
+    * Tab after `/skill:`: names starting with the typed text, then skills it describes
   """
 
   alias Xeito.Skills

@@ -1,29 +1,22 @@
 defmodule Xeito.Tools do
   @moduledoc """
-  The core tools, as in pi: `read`, `write`, `edit`, `bash`. Each tool call a model makes is
-  turned into an `Xeito.Effect`, so it is logged, replayable and executed by the policy-checked
-  runner, never by the model client.
+  The model's tools (`read`, `write`, `edit`, `bash`, `skill`): their specs, and each call as an `Xeito.Effect`.
 
-  * `read` and `write`/`edit` are confined to the workspace by `Xeito.Effects.Local`.
-  * `write`/`edit` refuse directories that edits do not belong in: fetched dependencies and build
-    output (`deps/`, `_build/`, `node_modules/`), git's own data (`.git/`) and Xeito's log
-    (`.xeito/`). Dependencies are not rebuilt from edited sources and are replaced on the next
-    fetch, so such an edit looks done but never takes; the model is told why and what to do.
-  * `bash` commands pass the `Xeito.Decisions.Risk` decision first (see `Xeito.Machines.Chat`).
-    A command may run for `timeout_s` seconds (default 60, at most `max_bash_timeout_s/0`); one
-    stopped at its timeout tells the model how to give it longer.
-  * `skill` (offered only when skills are available, `Xeito.Skills`) reads a file of a skill,
-    confined to that skill's directory; `SKILL.md` by default.
-  * An unknown tool name or malformed arguments become an error result for the model, not a
-    crash: the set of tools is closed, like a typed decision's values.
+  * Calls become effects run by the policy-checked runner, never by the model client.
+  * `read`, `write` and `edit` are confined to the workspace by `Xeito.Effects.Local`.
+  * `write`/`edit` refuse `protected_dirs/0` (`deps/`, `_build/`, `node_modules/`, `.git/`,
+    `.xeito/`) and tell the model why.
+  * `bash` passes the `Xeito.Decisions.Risk` decision first; `timeout_s` defaults to 60 seconds,
+    at most `max_bash_timeout_s/0`.
+  * `skill` is offered only when the run has skills and reads only inside the skill's directory.
+  * An unknown tool or bad arguments give `{:error, reason}` for the model, not a crash.
   """
 
   alias Xeito.Effect
 
   @names ~w(read write edit bash)
 
-  # How long a model's command may run, in seconds. The chat machine's `executing` state must
-  # outlast the longest, and its stop (`Xeito.Machines.Chat`).
+  # Seconds. `Xeito.Machines.Chat`'s `executing` timeout must outlast the maximum.
   @default_bash_timeout_s 60
   @max_bash_timeout_s 600
 
@@ -32,9 +25,8 @@ defmodule Xeito.Tools do
   def max_bash_timeout_s, do: @max_bash_timeout_s
 
   @doc """
-  The timeout, in milliseconds, of a `bash` call whose `timeout_s` argument is `seconds`, capped
-  at the maximum. One that is not a positive number gets the default: a model's slip is not
-  worth a failed call. Small models often send numbers as strings, so those are read too.
+  A `bash` call's timeout in milliseconds from its `timeout_s` argument, capped at the maximum.
+  Numeric strings are accepted; anything else that is not a positive number gets the default.
   """
   @spec bash_timeout_ms(term()) :: pos_integer()
   def bash_timeout_ms(seconds) when is_binary(seconds), do: seconds |> Float.parse() |> parsed_seconds()
@@ -189,7 +181,6 @@ defmodule Xeito.Tools do
   defp read_effect(%{"path" => p} = args, opts) when is_binary(p), do: Effect.read(p, read_view(args) ++ opts)
   defp read_effect(_args, _opts), do: nil
 
-  # One definition, the outline, or a line range of a file; else the whole file.
   defp read_view(%{"symbol" => s}) when is_binary(s) and s != "", do: [symbol: s]
   defp read_view(%{"outline" => true}), do: [outline: true]
   defp read_view(%{"lines" => l}) when is_binary(l) and l != "", do: [lines: l]
@@ -223,7 +214,6 @@ defmodule Xeito.Tools do
   @spec protected_dirs() :: [String.t()]
   def protected_dirs, do: Map.keys(@protected)
 
-  # `{:error, reason}` if `path` (relative to the workspace) lies in a protected directory.
   defp protected(path, opts) do
     root = Path.expand(Keyword.get(opts, :cwd) || ".")
 

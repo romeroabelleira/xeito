@@ -11,8 +11,7 @@ defmodule Mix.Tasks.Xeito.Candidates do
   continuations ("go ahead") and small talk are left out. `--min-runs` sets how many runs make a
   candidate (default 5); `--all` also lists the groups that are not candidates, with the reason.
 
-  Nothing is drafted or changed: the report is for a human to read (see
-  `docs/architecture/05-event-log-and-process-mining.md#promotion-from-free-chat-to-skills-and-machines`).
+  Nothing is drafted or changed: the report is for a human to read.
   """
 
   use Mix.Task

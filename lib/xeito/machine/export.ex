@@ -2,10 +2,9 @@ defmodule Xeito.Machine.Export do
   @moduledoc """
   Exports a `%Xeito.Machine{}` as a Mermaid `stateDiagram-v2` or as W3C SCXML.
 
-  Mermaid cannot draw an edge from a state nested inside a composite to a state outside it.
-  Such transitions are therefore drawn from the outermost ancestor below the common level,
-  e.g. `verifying → done` inside `working` becomes `working --> done`. Guards appear in
-  brackets. The implicit timeout → `failed` safety net is not drawn.
+  In Mermaid, a transition leaving a composite state is drawn from its outermost ancestor below
+  the common level (`verifying → done` inside `working` becomes `working --> done`); guards are
+  in brackets; internal transitions and the implicit timeout → `failed` are not drawn.
   """
 
   alias Xeito.Machine
@@ -40,7 +39,6 @@ defmodule Xeito.Machine.Export do
   end
 
   defp all_edges(machine) do
-    # An internal transition changes no state: it is no edge.
     for name <- machine.order, t <- Machine.state!(machine, name).transitions, t.to != nil do
       {parent, from, to} = lift(machine, name, t.to)
       {parent, from, to, label(t)}

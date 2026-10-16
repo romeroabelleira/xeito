@@ -1,12 +1,9 @@
 defmodule Xeito.Machines.Shell do
   @moduledoc """
-  Runs one shell command the user typed (`/run <command>`) in the workspace: no model and no
-  review, since the user asked for it. Context: `%{cwd: path, cmd: "mix compile"}`.
+  Runs one shell command the user typed (`/run <command>`) in the workspace, with no model and no review.
 
-  It ends `:done` when the command exits 0 and `:failed` otherwise, with `:exit_status` and
-  `:report` in the context: the output as a model reads a `bash` result (`Xeito.Tools.Shape`),
-  headed by the exit status. The session puts the report in the conversation, so the next turn
-  can talk about it.
+  Input: `%{cwd: path, cmd: "mix compile"}`. Ends `:done` on exit 0, else `:failed`, with
+  `:exit_status` and `:report` (the output shaped as a `bash` result, headed by the status).
   """
 
   use Xeito.Machine, version: "0.1.0"
@@ -17,8 +14,7 @@ defmodule Xeito.Machines.Shell do
 
   initial :running
 
-  # The state outlasts the command's own timeout: a slow command ends with exit 124 and its
-  # output so far, not with a state timeout.
+  # Outlasts the command's timeout, so a slow command ends with exit 124, not a state timeout.
   state :running, entry: :run_command, timeout: @timeout + 60_000 do
     on :ran, to: :done, guard: :succeeded?, action: :record
     on :ran, to: :failed, action: :record

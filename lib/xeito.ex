@@ -1,17 +1,15 @@
 defmodule Xeito do
   @moduledoc """
-  Xeito: a minimalist agent harness that runs every task as a statechart,
-  asks models only for typed decisions, and logs every transition for replay
-  and process mining.
+  Xeito, an agent harness that runs every task as a logged statechart and asks models only for typed decisions.
 
-  The top-level namespaces mirror the architecture sections in `docs/architecture/`:
+  Top-level namespaces:
 
-    * `Xeito.Machine`  – versioned statechart definitions (02)
-    * `Xeito.Run`      – one supervised `gen_statem` per run (02)
-    * `Xeito.Decision` – typed decisions with confidence and provenance (03)
-    * `Xeito.Tiers`    – decider tiers: rules, local_decision, remote_decision, local, remote, remote_frontier, human (04)
-    * `Xeito.Effects`  – effect descriptions and runners (02, 10)
-    * `Xeito.Log`      – the OCEL 2.0 event log (05)
+    * `Xeito.Machine`  – versioned statechart definitions
+    * `Xeito.Run`      – one supervised `gen_statem` per run
+    * `Xeito.Decision` – typed decisions with confidence and provenance
+    * `Xeito.Tiers`    – the model tiers decisions escalate through
+    * `Xeito.Effects`  – effect descriptions and runners
+    * `Xeito.Log`      – the OCEL 2.0 event log
   """
 
   @namespaces [

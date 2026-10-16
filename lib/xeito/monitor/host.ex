@@ -1,15 +1,11 @@
 defmodule Xeito.Monitor.Host do
   @moduledoc """
-  CPU, RAM and GPU readings from `/proc` and `/sys` (Linux). Elsewhere, or where a file is
-  missing, the reading is `nil` rather than an error.
+  Reads CPU, RAM and GPU state from `/proc` and `/sys` (Linux); a missing reading is `nil`, not an error.
 
-  GPUs are the DRM cards that expose `gpu_busy_percent` (the `amdgpu` driver): utilisation,
-  VRAM used and total, power (`power1_average` or `power1_input`, µW) and temperatures by label
-  (`edge`, `junction`, `mem`, m°C). The card with the most VRAM is marked `primary`, which
-  separates a discrete GPU from an integrated one.
-
-  CPU utilisation is the busy share of `/proc/stat` time since the previous reading, so the
-  caller keeps the previous counters (`read/2` returns them).
+  - GPUs are DRM cards exposing `gpu_busy_percent` (`amdgpu`): utilisation, VRAM, power (W)
+    and temperatures by label (°C). The card with the most VRAM is marked `primary`.
+  - CPU utilisation is measured since the previous reading: pass back the counters `read/2`
+    returned.
   """
 
   @doc "Reads the system. `prev` is the CPU counters from the last call (or `nil`)."

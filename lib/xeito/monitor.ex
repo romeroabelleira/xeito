@@ -1,20 +1,15 @@
 defmodule Xeito.Monitor do
   @moduledoc """
-  Live status of the machine and its model services, for clients' status bars.
+  GenServer that polls host and model-service status and pushes snapshots to subscribers.
 
-  A snapshot has three parts:
+  A snapshot has:
 
-    * `system`: CPU utilisation and load, RAM, and each GPU readable from sysfs (AMD `amdgpu`:
-      utilisation, VRAM, power, temperatures). `Xeito.Monitor.Host`.
-    * `models`: per tier, whether its service answers and what it holds: the large tier's resident
-      models with VRAM and seconds until unload (Ollama `/api/ps`), the small tier's busy slots
-      (llama-server `/slots`), System One's loaded models (laya `/health`), and whether off-box
-      tiers are configured. `Xeito.Monitor.Models`.
-    * `queues`: `{in_use, waiting}` per tier (`Xeito.Tiers.Queue`).
+    * `system`: CPU, RAM and GPUs (`Xeito.Monitor.Host`)
+    * `models`: per tier, whether its service answers and what it holds (`Xeito.Monitor.Models`)
+    * `queues`: `%{in_use, waiting}` per tier (`Xeito.Tiers.Queue`)
 
-  **It only polls while someone watches.** Clients subscribe (the API's `monitor` command); the
-  first subscriber starts a timer (`config :xeito, :monitor_interval_ms`, default 2 s), and the
-  last one to leave, or die, stops it. An idle daemon does no polling at all.
+  It polls only while it has subscribers, every `config :xeito, :monitor_interval_ms` (default
+  2 s). A new subscriber gets a snapshot at once.
   """
 
   use GenServer
@@ -61,7 +56,6 @@ defmodule Xeito.Monitor do
         do: s,
         else: %{s | subscribers: Map.put(s.subscribers, pid, Process.monitor(pid))}
 
-    # A new subscriber gets a snapshot at once, then the regular updates.
     send(self(), :poll)
     {:reply, :ok, s}
   end

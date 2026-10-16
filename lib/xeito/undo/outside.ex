@@ -1,13 +1,11 @@
 defmodule Xeito.Undo.Outside do
   @moduledoc """
-  Files outside the workspace that a step names (`Xeito.Undo.step/5`'s `:outside`, from
-  `Xeito.Decisions.Risk.written_paths/1`). Their content before and after the step is kept in
-  the store as blobs, held by the step's commit (`tree/3`), so they live as long as the step.
-  Undo puts the earlier content back, or removes a file the step created, and redo the later
-  one, but only while the file is still as it was left: otherwise nothing changes.
+  Backs up files outside the workspace that a step writes, so undo and redo can restore them.
 
-  Only regular files up to the size limit, or absent ones, are backed up; a directory or a
-  larger file is not.
+  * Content before and after the step is stored as blobs held by the step's commit (`tree/3`).
+  * Undo/redo restores a file only while it is still as the step left it; otherwise nothing
+    changes (`{:error, {:outside_changed, step, path}}`).
+  * Only regular files up to the size limit, or absent ones, are backed up.
   """
 
   alias Xeito.Undo.Store
@@ -41,10 +39,7 @@ defmodule Xeito.Undo.Outside do
         do: %{path: path, before: was, after: now}
   end
 
-  @doc """
-  A tree holding the workspace tree (`workspace`) and the backups (`outside`), so that the step's
-  commit keeps the blobs from garbage collection.
-  """
+  @doc "A tree of the workspace tree and the backups, so the step's commit keeps the blobs from gc."
   @spec tree(Path.t(), String.t(), [entry()]) :: String.t()
   def tree(cwd, workspace, entries) do
     blobs =
@@ -70,9 +65,8 @@ defmodule Xeito.Undo.Outside do
   defp absent(sha), do: sha
 
   @doc """
-  What undo (or redo) of `steps`, in the order they are taken, puts in each path:
-  `{:ok, [{path, blob | nil}]}`, or `{:error, {:outside_changed, step, path}}` when a file is
-  no longer as the steps left it.
+  What undo or redo of `steps` (in the order taken) puts in each path, or
+  `{:error, {:outside_changed, step, path}}` when a file is no longer as the steps left it.
   """
   @spec plan(Path.t(), [map()], :undo | :redo) :: {:ok, [{Path.t(), String.t() | nil}]} | {:error, term()}
   def plan(cwd, steps, direction) do

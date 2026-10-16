@@ -1,57 +1,29 @@
 defmodule Xeito.Tui do
   @moduledoc """
-  The terminal UI: a client of `xeitod` in the Elm architecture of TermUI
-  (`docs/architecture/07-harness-frontend.md`, `docs/architecture/08-tech-stack.md#the-tui-the-weakest-link`).
+  The terminal UI, a TermUI Elm-architecture client of `xeitod`; it owns no run state.
 
-      ┌ xeito · FixFailingTest ───────────────────────────────────────────┐
-      │ transcript (Xeito.Client.Render): intent, decisions, tool calls,  │
-      │ streamed model output                                             │
-      │ ───────────────────────────────────────────────────────────────── │
-      │ > prompt                                                          │
-      │ ───────────────────────────────────────────────────────────────── │
-      │ ◆ state verifying · 14.2 s · review: y/n        ~/src/shop (main) │
-      └───────────────────────────────────────────────────────────────────┘
+  Screen, top to bottom: transcript (`Xeito.Client.Render`), a running command's tail, queued
+  lines, the prompt between two borders, the optional status bar (`Xeito.Client.StatusBar`), and
+  the status line (marker `○` idle, spinner working, `◆` waiting for you, `✗` no daemon; state,
+  time, workspace and git branch).
 
-  A toggleable **status bar** (Ctrl-T, or `/statusbar`; segments with `/statusbar show|hide`,
-  saved in `Xeito.Client.Config`) adds one line, above the status line: GPU, model services and
-  CPU from the daemon's `Xeito.Monitor`, and the session's usage, determinism budget, spend and
-  queues (`Xeito.Client.StatusBar`). While it is hidden, the daemon does not poll for it.
+  Startup: continues the directory's last updated session (or `--session ID`), or starts one,
+  showing a banner and the earlier turns. Up/Down start with the directory's earlier prompts.
 
-  `/quit` (or `/exit`, Ctrl-D, Ctrl-C) closes the TUI; the session keeps running in the daemon.
+  Keys:
 
-  Started in a directory, the TUI continues that directory's last updated session (live in the
-  daemon, or rebuilt from the log) with its earlier turns (each prompt, the first line of each
-  answer, the last answer in full), or starts one if there is none;
-  `--session ID` opens a given one. `/sessions` lists the directory's sessions, last updated
-  first; `/sessions N` switches to one, `/sessions new` starts another. Above the session line,
-  a banner shows the keys, example prompts, the machines, the first lines of the workspace's
-  `AGENTS.md`, and its skills by name (the user's own are only counted). Up / Down start out
-  with the prompts typed in the directory before, from every session there.
+    * Enter sends; on an empty line it steps a paused run or sends held lines
+    * `\\` then Enter, Enter with a modifier, or a paste: new line; the prompt grows to 6 rows
+    * `y`/`n` (or `s`/`a` to allow) answers a pending review; other text says what to do instead
+    * Esc halts the running turn, or drops held lines
+    * Up/Down move between prompt lines, then recall earlier prompts
+    * Tab completes `/command`, `/machine <name>`, `/skill:<name>`; repeated Tab cycles
+    * Ctrl-J steers the running chat turn (`/steer`); Ctrl-T toggles the status bar
+    * PgUp/PgDn scroll; Ctrl-C, Ctrl-D, `/quit`, `/exit` quit, leaving the session in the daemon
 
-  The status line starts with a marker: `○` idle, a spinner while the session works, `◆` (on
-  a highlighted line) when it waits for you, `✗` without a daemon. Like the cursor, the
-  spinner's timer runs only while there is work. At its right end, where commands run: the
-  workspace, shortened from the left, and its git branch.
-
-  The prompt's cursor blinks like an editor's: solid while you type, blinking in between, and
-  solid again (with no timer running) after 10 s without a key.
-
-  Keys: Enter sends (and steps a paused run when the prompt is empty); `\\` then Enter starts a
-  new line in its place (so does Enter with a modifier, where the terminal reports one), and a
-  paste keeps its lines (bracketed paste, turned on by `mix xeito.tui`): the prompt grows to 6
-  rows, then scrolls with the cursor; a pending review is answered with `y` or `n` and Enter, or with text saying what to do instead; Esc halts the
-  running turn; Up / Down move between the prompt's lines, and past its first or last recall
-  earlier prompts (the line being typed comes back past the newest); Tab completes a `/command`, a machine after `/machine ` or a skill after `/skill:`
-  (by name, then by what the typed words describe), and each further Tab shows the next match;
-  `/skills <words>` lists the skills those words describe (`Xeito.Tui.SkillSearch`); a line sent while a turn runs is queued in the
-  session and shown above the prompt, and when the turn ended in a way it was not written for
-  (halted, failed, stopped, a question) it is held: Enter on an empty line sends it, Esc drops it;
-  Ctrl-J sends the typed line into the running chat turn instead, for its next model call
-  (`/steer`); PgUp / PgDn scroll; Ctrl-C or Ctrl-D quit (the
-  session keeps running in the daemon, and the next start in this directory continues it).
-
-  The TUI owns no run state: everything shown comes from daemon events, so it can crash, be
-  closed or be replaced without touching the runs.
+  Lines sent while a turn runs are queued in the session; if the turn ends halted, failed or with
+  a question, they are held. Own commands: `/statusbar [show|hide]`, `/legend`, `/sessions [N|new]`,
+  `/skills <words>` (`Xeito.Tui.SkillSearch`). The cursor and spinner timers run only while needed.
   """
 
   use TermUI.Elm
@@ -68,20 +40,15 @@ defmodule Xeito.Tui do
   alias Xeito.Tui.SkillSearch
 
   @max_lines 5_000
-  # Blink half-period and how long the cursor keeps blinking after the last key (as GTK does), so
-  # an idle TUI stops waking up.
+  # The cursor stops blinking (and its timer) 10 s after the last key.
   @blink_ms 530
   @blink_for_ms 10_000
-  # The working marker: a spinner, one frame per tick while the session works.
   @spin_ms 100
   @frames ~w(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
-  # The workspace in the status line is shortened from the left to about this many characters.
   @place_max 30
   @placeholder "ask, or /help"
-  # The prompt grows a row per line up to this many, then scrolls with the cursor.
   @prompt_rows 6
 
-  # The TUI's own commands (run_line/2); Tab completes them along with the daemon's.
   @own_commands ~w(quit exit statusbar legend sessions skills)
 
   # --- init ----------------------------------------------------------------------------------
@@ -112,10 +79,11 @@ defmodule Xeito.Tui do
   end
 
   @doc """
-  An idle TUI state for a session: `client`, `session`, `cwd`, `size` (`{rows, cols}`), the
-  `earlier` transcript lines, whether the session was `continued`, the `prompt_history` for
-  Up/Down (newest first), the preferences and the file they are saved in (`prefs`,
-  `prefs_file`), and optionally `status_bar` to override the preferences' visibility.
+  An idle TUI state for a session.
+
+  Options: `client`, `session`, `cwd`, `size` (`{rows, cols}`), `earlier` (transcript lines),
+  `continued`, `prompt_history` (newest first), `prefs`, `prefs_file`, and `status_bar`
+  (overrides the preferences' visibility).
   """
   @spec new(keyword()) :: map()
   def new(opts) do
@@ -132,7 +100,6 @@ defmodule Xeito.Tui do
         Keyword.get(opts, :earlier, []) ++
           banner(opts[:cwd]) ++ [header(session, Keyword.get(opts, :continued, false))],
       partial: "",
-      # The last lines of a running command's output, and the one being written.
       live: [],
       live_partial: "",
       input: TextInput.set_focused(input, true),
@@ -156,25 +123,21 @@ defmodule Xeito.Tui do
       workspace_at: nil,
       usage: StatusBar.new(),
       cursor_on: true,
-      # A Risk decision waiting for the line it marks: `{colour, confidence in superscript}`.
+      # `{colour, confidence}` of a Risk decision waiting for the line it marks.
       marker: nil,
       blink: 0,
-      # The spinner's frame, the generation of its timer, and whether a timer is running.
       frame: 0,
-      # Lines typed while a turn ran, queued in the session, and whether the session holds them.
       queue: [],
       held: false,
       spin_gen: 0,
       spinning: false,
       blink_until: 0,
-      # Earlier prompts for Up/Down, newest first; the one shown (-1: the line being typed,
-      # kept as the draft meanwhile).
+      # history_index -1 is the line being typed, kept in history_draft while recalling.
       prompt_history: Keyword.get(opts, :prompt_history, []),
       history_index: -1,
       history_draft: "",
-      # While Tab cycles through completions: `{candidates, shown}`, the index of the one shown.
+      # `{candidates, shown_index}` while Tab cycles.
       completion: nil,
-      # The sessions `/sessions` listed last, by number.
       listed: []
     }
   end
@@ -184,9 +147,7 @@ defmodule Xeito.Tui do
   def header(session, false), do: "session #{session} · /help · Esc halts · /quit"
 
   @doc false
-  # The greeting above the session line: the keys, example prompts, the machines, the first lines
-  # of the workspace's AGENTS.md, and its skills by name (the user's are only counted: P4e keeps
-  # them out of the model's prompt too). `opts[:home]` is where the user's skills are (tests).
+  # The banner above the session line. `opts[:home]` is where the user's skills are (tests).
   def banner(cwd, opts \\ []) do
     [
       "Enter sends · \\ Enter new line · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
@@ -206,7 +167,6 @@ defmodule Xeito.Tui do
     end
   end
 
-  # Its first three lines that are not blank, and where the rest is.
   defp agents_excerpt([], path), do: ["AGENTS.md is empty (#{path})"]
 
   defp agents_excerpt([first | rest], path) do
@@ -230,7 +190,6 @@ defmodule Xeito.Tui do
     do: "skills here: #{Enum.join(here, " · ")} · and #{yours} of yours (/skill: then Tab)"
 
   defp open(client, opts) do
-    # Without a session named, the directory's last updated one, or a new one.
     req =
       case opts[:session] do
         nil -> %{"cmd" => "open", "cwd" => opts[:cwd]}
@@ -246,7 +205,6 @@ defmodule Xeito.Tui do
     end
   end
 
-  # On reattach, the conversation so far, from the log (the runs' details stay there).
   defp earlier_turns(client, session, cwd) do
     case Client.request(client, %{"cmd" => "transcript", "session" => session, "cwd" => cwd}) do
       %{"ok" => true, "turns" => turns} -> transcript_lines(turns)
@@ -310,8 +268,7 @@ defmodule Xeito.Tui do
     end
   end
 
-  # Ctrl-T toggles the status bar; Ctrl-J steers (a line feed, which every terminal sends; the
-  # terminal library does not report Alt-Enter); Ctrl-C and Ctrl-D quit. Other modifiers do nothing.
+  # Ctrl-J steers because every terminal sends it; TermUI does not report Alt-Enter.
   defp control_key(key, mods) do
     cond do
       :ctrl not in mods -> :ignore
@@ -321,18 +278,18 @@ defmodule Xeito.Tui do
     end
   end
 
-  # Daemon events and request replies arrive as plain process messages.
   # Each monitor tick also refreshes the workspace (git, budget) if it is older than 10 s.
+  @spec handle_info(term(), map()) :: {map(), list()}
   def handle_info({:xeito_event, event}, state), do: {on_event(event, state), []}
 
   def handle_info({:xeito_reply, %{"ok" => false, "error" => error}}, state), do: {append(state, "✗ #{error}\n"), []}
   def handle_info({:xeito_reply, tag, reply}, state), do: {Sessions.reply(tag, reply, state), []}
 
-  # The cursor's and the spinner's timers. Only the latest timer of each counts; older ones are stale.
+  # Only the latest timer generation counts; older ticks are stale.
   def handle_info({timer, gen}, state) when timer in [:blink, :spin], do: {tick(timer, gen, state), []}
   def handle_info(_msg, state), do: {state, []}
 
-  # After a switch, the other session's events still arrive (the connection follows it): not shown.
+  # After a switch the connection still follows the other session: ignore its events.
   defp on_event(%{"session" => other}, %{session: session} = state) when other != session, do: state
   defp on_event(%{"event" => "monitor", "attrs" => snapshot}, state), do: on_monitor(snapshot, state)
   defp on_event(%{"event" => "workspace", "attrs" => ws}, state), do: %{state | workspace: ws, workspace_at: now()}
@@ -349,8 +306,7 @@ defmodule Xeito.Tui do
     %{state | monitor: snapshot, workspace_at: state.workspace_at || now()}
   end
 
-  # The spinner's timer starts when work starts and stops itself at the first tick after work
-  # stops (idle, or waiting for you), so an idle TUI does not wake up.
+  # The spinner timer stops itself at the first tick after work stops.
   defp spin(%{spinning: false} = state) do
     if working?(state) do
       gen = state.spin_gen + 1
@@ -374,7 +330,6 @@ defmodule Xeito.Tui do
 
   defp working?(state), do: state.leaf not in ["idle", "disconnected"] and not state.waiting and not state.paused
 
-  # The cursor blinks until `blink_until`, then stays solid with no timer running.
   defp blink(gen, state) do
     if now() < state.blink_until do
       Process.send_after(self(), {:blink, gen}, @blink_ms)
@@ -386,8 +341,7 @@ defmodule Xeito.Tui do
 
   # --- update --------------------------------------------------------------------------------
 
-  # Every message here comes from a key, except a resize: a key shows the cursor solid and
-  # restarts the blinking phase.
+  # Every message but a resize comes from a key, which wakes the cursor.
   @impl true
   def update({:resize, _, _} = msg, state), do: handle_update(msg, state)
   def update(msg, state), do: handle_update(msg, state |> wake_cursor() |> keep_completion(msg))
@@ -419,11 +373,9 @@ defmodule Xeito.Tui do
   defp line_key(:legend, state), do: {legend(state), []}
   defp line_key(:steer, state), do: state.input |> TextInput.get_value() |> String.trim() |> steer(state)
 
-  # Only Tab continues a completion; any other key ends it.
   defp keep_completion(state, :complete), do: state
   defp keep_completion(state, _msg), do: %{state | completion: nil}
 
-  # A line ending in `\` at the cursor goes on in a new line, as in a shell; otherwise Enter sends.
   defp enter(state) do
     if continued?(state.input),
       do: {%{state | input: :input |> edit(%Event.Key{key: :backspace}, state.input) |> insert("\n")}, []},
@@ -432,11 +384,9 @@ defmodule Xeito.Tui do
 
   defp continued?(input), do: input |> before_cursor() |> String.ends_with?("\\")
 
-  # Ctrl-J: the typed line for the running chat turn, at its next model call (`/steer`).
   defp steer("", state), do: {state, []}
   defp steer(text, state), do: send_line("/steer " <> text, remember(state, text))
 
-  # An empty line steps a paused run, and otherwise does nothing.
   defp submit("", %{paused: true} = state) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/next"})
     {%{state | paused: false}, []}
@@ -450,8 +400,6 @@ defmodule Xeito.Tui do
   defp submit("", state), do: {state, []}
   defp submit(text, state), do: run_line(text, remember(state, text))
 
-  # What each review key asks the daemon, and the echo on the transcript (`Xeito.Session.Allowed`
-  # for s and a).
   @review_answers %{
     "y" => {%{"cmd" => "approve"}, "approved"},
     "n" => {%{"cmd" => "deny"}, "denied"},
@@ -465,8 +413,6 @@ defmodule Xeito.Tui do
     {append(%{state | waiting: false}, "  #{said}\n"), []}
   end
 
-  # In a prompt of several lines, Up and Down move between its lines; past the first or the last
-  # they recall.
   defp move_or_recall(direction, state) do
     if within?(state.input, direction),
       do: screen_update({:input, %Event.Key{key: arrow(direction)}}, state),
@@ -482,8 +428,6 @@ defmodule Xeito.Tui do
   defp recalled({:ok, text, state}, _state), do: {%{state | input: put_text(state.input, text)}, []}
   defp recalled(:none, state), do: {state, []}
 
-  # Halts the running turn (the daemon's `/halt`); with nothing running, Esc does nothing.
-  # With nothing running, Esc drops the first line the session holds.
   defp halt(%{leaf: "idle", held: reason, queue: [_ | _]} = state) when is_binary(reason) do
     request(state, %{"cmd" => "prompt", "session" => state.session, "text" => "/drop"})
     {state, []}
@@ -533,7 +477,6 @@ defmodule Xeito.Tui do
   defp statusbar(_args, state),
     do: append(state, "/statusbar [on|off|reset|segments] · /statusbar show|hide <segment>[,<segment>]\n")
 
-  # A bare /statusbar toggles.
   defp visible?([], state), do: not state.bar
   defp visible?(["on"], _state), do: true
   defp visible?(["off"], _state), do: false
@@ -553,7 +496,6 @@ defmodule Xeito.Tui do
     append(state, "status bar #{if state.bar, do: "on", else: "off"} · segments: #{listed} (· hidden)\n")
   end
 
-  # Preferences are saved on every change; a failed write keeps them for this session only.
   defp save_prefs(state) do
     prefs =
       put_in(state.prefs, ["status_bar"], %{"visible" => state.bar, "hidden" => state.hidden})
@@ -567,7 +509,7 @@ defmodule Xeito.Tui do
     end
   end
 
-  # Requests are sent from a task, so the UI never waits on the daemon.
+  # From a task, so the UI never waits on the daemon.
   defp request(state, req) do
     me = self()
     Task.start(fn -> send(me, {:xeito_reply, Client.request(state.client, req)}) end)
@@ -575,15 +517,10 @@ defmodule Xeito.Tui do
 
   # --- the prompt line -----------------------------------------------------------------------
 
-  # Handled here: these change how this client shows things, never what runs.
-
-  # A pending review: y or n answers it, s or a answer it and allow the command (for this session,
-  # or always), other text says what to do instead (the daemon takes a prompt during a review as
-  # that answer).
+  # During a review, any other text goes to the daemon as a prompt, which takes it as the answer.
   defp run_line(answer, %{waiting: true} = state) when answer in ["y", "n", "s", "a"],
     do: handle_update({:review, answer}, %{state | input: TextInput.clear(state.input)})
 
-  # The TUI's own commands run here; every other command goes to the daemon.
   defp run_line("/" <> command = line, state) do
     case own_command(command) do
       nil -> send_line(line, state)
@@ -610,14 +547,11 @@ defmodule Xeito.Tui do
     {append(%{state | input: TextInput.clear(state.input), scroll: 0}, "> #{String.replace(text, "\n", "\n  ")}\n"), []}
   end
 
-  # Every line sent is remembered, as a shell does, but not twice in a row.
   defp remember(%{prompt_history: [text | _]} = state, text), do: %{state | history_index: -1, history_draft: ""}
 
   defp remember(state, text),
     do: %{state | prompt_history: [text | state.prompt_history], history_index: -1, history_draft: ""}
 
-  # Up from the line being typed keeps it as the draft, and Down past the newest prompt brings it
-  # back. With nowhere to go, nothing changes, not even the cursor.
   defp recall(%{history_index: -1, prompt_history: [newest | _]} = state, :older),
     do: {:ok, newest, %{state | history_index: 0, history_draft: TextInput.get_value(state.input)}}
 
@@ -634,8 +568,7 @@ defmodule Xeito.Tui do
   # TextInput.set_value/2 puts the cursor at the start; a recalled line is edited at its end.
   defp put_text(input, text), do: input |> TextInput.clear() |> insert(text)
 
-  # A key goes to TextInput; text (a paste, a new line) is inserted here, since TextInput inserts
-  # only single characters.
+  # TextInput inserts only single characters, so pasted text and new lines are inserted here.
   defp edit(:input, event, input), do: event |> TextInput.handle_event(input) |> elem(1)
   defp edit(:insert, text, input), do: insert(input, text)
 
@@ -654,7 +587,6 @@ defmodule Xeito.Tui do
   defp sep(%{cursor_row: 0}), do: ""
   defp sep(_input), do: "\n"
 
-  # The cursor's line, before and after the cursor; then the lines below it.
   defp before_cursor(input), do: input.lines |> Enum.at(input.cursor_row) |> String.slice(0, input.cursor_col)
 
   defp after_cursor(input) do
@@ -663,11 +595,9 @@ defmodule Xeito.Tui do
   end
 
   @doc false
-  # Pasted text, with its line breaks as `\n` and without control characters other than tabs (an
-  # escape sequence would be written to the screen as it is).
+  # Control characters other than tab are dropped: an escape sequence would reach the screen.
   def pasted(text), do: text |> String.replace(~r/\r\n?/, "\n") |> String.replace(~r/[\x00-\x08\x0B-\x1F\x7F]/, "")
 
-  # Tab shows the first completion of the line; each further Tab the next, around and around.
   defp complete(%{completion: {candidates, shown}} = state),
     do: show(state, candidates, rem(shown + 1, length(candidates)))
 
@@ -685,8 +615,6 @@ defmodule Xeito.Tui do
   @spec commands() :: [String.t()]
   def commands, do: Enum.sort(@own_commands ++ Xeito.Session.commands())
 
-  # The completions of a line, in order: a command, a machine after `/machine `, a skill after
-  # `/skill:` (`Xeito.Tui.SkillSearch`). Case is ignored.
   defp completions("/machine " <> part, _cwd), do: matching("/machine ", Map.keys(Router.machines()), part)
   defp completions("/skill:" <> part, cwd), do: Enum.map(SkillSearch.completions(part, cwd), &("/skill:" <> &1))
   defp completions("/" <> part, _cwd), do: matching("/", commands(), part)
@@ -700,14 +628,12 @@ defmodule Xeito.Tui do
   # --- daemon events -------------------------------------------------------------------------
 
   @doc false
-  # A Risk decision is not a line of its own: it marks the line it applies to (the command, or
-  # the review asking about it) with a coloured dot in the gutter, like a breakpoint.
+  # A Risk decision becomes a coloured dot in the gutter of the line it applies to.
   def apply_event(state, %{"event" => "decision_made", "attrs" => %{"decision_type" => type} = a} = event)
       when type in ["Xeito.Decisions.Risk", "Elixir.Xeito.Decisions.Risk"] do
     track(%{state | usage: StatusBar.count(state.usage, event), marker: risk_marker(a)}, "decision_made", event)
   end
 
-  # A running command's output is a live tail, not transcript: its result shows it once it ends.
   def apply_event(state, %{"event" => "output", "attrs" => %{"text" => text}}), do: live(state, text)
 
   def apply_event(state, %{"event" => type} = event) do
@@ -724,14 +650,12 @@ defmodule Xeito.Tui do
     %{state | live: Enum.take(state.live ++ Enum.map(complete, &plain/1), -@live_rows), live_partial: partial}
   end
 
-  # The tail goes when its command ends, another starts, or the turn is over.
   defp settle_live(state, type) when type in ~w(effect_requested effect_completed turn_finished disconnected),
     do: %{state | live: [], live_partial: ""}
 
   defp settle_live(state, _type), do: state
 
-  # What a terminal would show of a line: no colours, and a line redrawn with `\r` (a progress
-  # bar) in its latest state.
+  # No colours; a line redrawn with `\r` (a progress bar) keeps its latest state.
   defp plain(line) do
     line
     |> String.replace(~r/\e\[[0-9;?]*[ -\/]*[@-~]/, "")
@@ -755,7 +679,6 @@ defmodule Xeito.Tui do
     {"forbidden", "refused, never runs"}
   ]
 
-  # `/legend`: each risk dot in the colour it has on commands, and the small number beside it.
   defp legend(state) do
     dots = for {value, meaning} <- @risk_meanings, do: {:marked, @risk_colors[value], "", "#{value} · #{meaning}"}
     number = {:marked, @risk_colors["safe"], superscript(94), "the small number · how sure the decider was, in percent"}
@@ -763,8 +686,6 @@ defmodule Xeito.Tui do
     %{state | input: TextInput.clear(state.input), lines: Enum.take(state.lines ++ lines, -@max_lines)}
   end
 
-  # The dot's colour is the decision; beside it, in superscript (a terminal's small font), its
-  # confidence in percent.
   defp risk_marker(a) do
     value = to_string(a["value"])
     conf = if is_number(a["confidence"]), do: round(a["confidence"] * 100)
@@ -786,7 +707,6 @@ defmodule Xeito.Tui do
   defp track(state, type, event) when type in ["queued", "dequeued", "queue_held"], do: queued(state, type, event)
   defp track(state, type, _event), do: turn_status(state, type)
 
-  # Where the run is, and what it has cost so far.
   defp progress(state, "run_selected", %{"attrs" => a}),
     do: %{state | machine: short(a["machine"]), started: now(), decisions: 0, usd: 0.0}
 
@@ -800,7 +720,6 @@ defmodule Xeito.Tui do
   defp progress(state, "intent", %{"attrs" => a}),
     do: %{state | decisions: state.decisions + 1, leaf: "intent", tier: a["actor"]}
 
-  # The session's queue of lines typed while a turn ran (`Xeito.Session`).
   defp queued(state, "queued", %{"attrs" => %{"text" => text}}), do: %{state | queue: state.queue ++ [text]}
   defp queued(state, "queue_held", %{"attrs" => %{"reason" => reason}}), do: %{state | held: reason}
 
@@ -822,7 +741,6 @@ defmodule Xeito.Tui do
 
   # --- view ----------------------------------------------------------------------------------
 
-  # Text arrives in pieces (streamed deltas); complete lines move into the transcript.
   @doc false
   def append(state, ""), do: state
 
@@ -854,8 +772,6 @@ defmodule Xeito.Tui do
     live = live_rows(state)
     queued = queue_rows(state)
     prompt = prompt_lines(state, state.width)
-    # The header, a running command's tail, the queue, the prompt between its two borders, the
-    # bar and the status line.
     body_height = max(state.height - 4 - length(prompt) - length(bar) - length(live) - length(queued), 1)
 
     stack(:vertical, [
@@ -874,7 +790,6 @@ defmodule Xeito.Tui do
     ])
   end
 
-  # Lines typed while a turn ran, above the prompt: queued, or held (with how to send or drop).
   defp queue_rows(%{queue: []}), do: []
   defp queue_rows(%{held: false, queue: queue}), do: Enum.map(queue, &" ⏸ queued: #{one_line(&1)}")
 
@@ -884,7 +799,6 @@ defmodule Xeito.Tui do
       | Enum.map(rest, &" ⏸ held: #{one_line(&1)}")
     ]
 
-  # A prompt of several lines, in one row: its first line, and how many more.
   defp one_line(text) do
     case String.split(text, "\n") do
       [line] -> line
@@ -901,8 +815,6 @@ defmodule Xeito.Tui do
   def prompt_rows, do: @prompt_rows
 
   @doc false
-  # The prompt, a row per line after its mark: `> ` on the first, and an arrow where lines above
-  # or below are out of sight. Past `@prompt_rows` lines, the rows shown follow the cursor.
   def prompt_lines(state, width) do
     %{lines: lines, cursor_row: row} = state.input
     first = max(row - (@prompt_rows - 1), 0)
@@ -924,11 +836,7 @@ defmodule Xeito.Tui do
   # A tab takes one cell, so the cursor's column is the character's.
   defp shown(line), do: String.replace(line, "\t", " ")
 
-  # The cursor's line is drawn here; TermUI's TextInput keeps the text and handles editing. Its
-  # own cursor (reverse video) was easy to miss, and its style cannot be changed, so the typing
-  # position is a solid block in a colour nothing else on screen uses. In the blink's off phase
-  # the cell is drawn plain. A long line scrolls so the cursor stays visible; an empty prompt
-  # shows the placeholder, dimmed, after the cursor.
+  # The cursor is drawn here as a coloured block: TextInput's own cursor cannot be restyled.
 
   @doc false
   def input_line(state, width) do
@@ -953,8 +861,7 @@ defmodule Xeito.Tui do
   defp cursor_style, do: Style.new(fg: :black, bg: :yellow)
   defp placeholder_style, do: Style.new(attrs: [:dim])
 
-  # A pending risk marker goes in the gutter of the next complete line that is not a state line
-  # (`· ask_human`): the command, or the review asking about it.
+  # A pending risk marker goes on the next complete line that is not a state line (`· …`).
   defp mark(lines, %{marker: {color, small}} = state) do
     case Enum.find_index(lines, &(not (&1 |> String.trim_leading() |> String.starts_with?("·")))) do
       nil ->
@@ -986,11 +893,8 @@ defmodule Xeito.Tui do
     shown ++ List.duplicate("", height - length(shown))
   end
 
-  @doc """
-  The status line, `width` columns: the working marker, the run's state, and at the right end
-  the workspace (shortened from the left) with its git branch. When it does not all fit, the
-  state gives way.
-  """
+  @doc "The status line in `width` columns: marker and run state, then workspace and branch; the state is cut first."
+  @spec status_line(map(), pos_integer()) :: String.t()
   def status_line(state, width) do
     right = " #{place(state)} "
     left = " #{marker(state)} " <> run_status(state)
@@ -1001,7 +905,6 @@ defmodule Xeito.Tui do
     if String.length(text) <= room, do: String.pad_trailing(text, room), else: String.slice(text, 0, room - 1) <> "…"
   end
 
-  # Idle, working (the spinner), waiting for you (a review or a paused step), or disconnected.
   defp marker(%{leaf: "disconnected"}), do: "✗"
   defp marker(%{waiting: waiting, paused: paused}) when waiting or paused, do: "◆"
   defp marker(%{leaf: "idle"}), do: "○"
@@ -1020,7 +923,6 @@ defmodule Xeito.Tui do
     "state #{state.leaf}#{elapsed}#{tier} · #{state.decisions} decisions#{cost}#{waiting_for(state)}#{scroll}"
   end
 
-  # Where commands run: the workspace, with `~` for the home directory, and its git branch.
   defp place(state) do
     branch = get_in(state.workspace || %{}, ["git", "branch"])
     short_path(state.cwd) <> if(branch, do: " (#{branch})", else: "")
@@ -1037,7 +939,6 @@ defmodule Xeito.Tui do
     if String.length(path) <= @place_max, do: path, else: shorten(path)
   end
 
-  # The last directories that fit, after `…/` (or `~/…/` under the home directory).
   defp shorten(path) do
     lead = if String.starts_with?(path, "~/"), do: "~/…/", else: "…/"
 

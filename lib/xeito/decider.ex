@@ -1,6 +1,6 @@
 defmodule Xeito.Decider do
   @moduledoc """
-  Evaluates a decision type for one input:
+  Decides a decision type for one input: rules first, then tiers in order, else `:abstain`.
 
     1. **Rules** (deterministic, declared on the type) — the first rule that fires decides,
        with `actor: :rule` and confidence 1.0.
@@ -8,11 +8,8 @@ defmodule Xeito.Decider do
        confidence reaches the tier's threshold decides. Unavailable tiers are skipped.
     3. Otherwise the decision is **`:abstain`**, with every attempt kept as evidence.
 
-  For types with a `severity` order, the model result is raised to at least the floor. A model
-  can make a monotonic decision more cautious, never less (`Risk`).
-
-  P2 tries tiers in a fixed order. The escalation machine (policies, budgets, swaps) replaces
-  step 2 in P3.
+  For types with a `severity` order, a model's value is raised to at least the floor; rules and
+  humans are not floored.
   """
 
   alias Xeito.Decision
@@ -154,7 +151,6 @@ defmodule Xeito.Decider do
     }
   end
 
-  # Tiers are named after their backend; the decision's actor names who decided.
   defp actor(:rules), do: :rule
   defp actor(tier), do: tier
 
@@ -163,7 +159,6 @@ defmodule Xeito.Decider do
 
   defp apply_floor(decision, %Type{severity: nil}), do: decision
 
-  # The floor bounds what a *model* may decide. Rules and humans are authoritative.
   defp apply_floor(%Decision{actor: actor} = decision, _type) when actor in [:rule, :human], do: decision
 
   defp apply_floor(%Decision{value: value} = decision, %Type{severity: %{order: order, floor: floor}}) do

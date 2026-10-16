@@ -1,12 +1,10 @@
 defmodule Xeito.Session.TaskRunner do
   @moduledoc """
-  A project's own task runner, which says how to test and check it better than its build files
-  can (`Xeito.Session.Router`): the recipes of a `justfile` (`just test`), then the tasks of a
-  `mise.toml` (`mise run test`). A runner that is not installed is passed over.
+  Finds a command in the project's own task runner: `justfile` recipes first, then `mise.toml` tasks.
 
-  Recipes and tasks are read with patterns, not full parsers: a just recipe is a line that starts
-  with its name (or `@name`) and ends its header with `:` (not `:=`); a mise task is a
-  `[tasks.<name>]` table, or a `<name> = …` key in the `[tasks]` table.
+  * A runner that is not installed is skipped.
+  * Read with patterns, not parsers: a just recipe is a line `name …:` (not `:=`); a mise task
+    is a `[tasks.<name>]` table or a key in `[tasks]`.
   """
 
   alias Xeito.Executables

@@ -24,10 +24,8 @@ defmodule Xeito.Decision do
         def missing_dependency?(input), do: input.output =~ "could not be found"
       end
 
-  `Xeito.Decider.decide/3` evaluates a type. The result is a `%Xeito.Decision{}` record.
-  `:abstain` is an implicit value of every type.
-
-  See `docs/architecture/03-typed-decisions.md`.
+  `Xeito.Decider.decide/3` evaluates a type and returns a `%Xeito.Decision{}`. `:abstain` is an
+  implicit value of every type.
   """
 
   alias Xeito.Decision.Type

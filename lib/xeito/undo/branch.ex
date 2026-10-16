@@ -1,14 +1,13 @@
 defmodule Xeito.Undo.Branch do
   @moduledoc """
-  The project's own git, as far as undo needs it (`Xeito.Undo`): where HEAD is before and after
-  a step, and moving a branch back over the commits a step made, or forward again for redo.
+  Tracks HEAD of the project's git across a step, and moves its branch back over the step's commits for undo, or forward for redo.
 
-  Only new commits on the branch HEAD is on can be undone, and only while the branch is still
-  where the steps left it and none of the commits has been pushed (is on a remote-tracking
-  branch). Any other move of HEAD (a checkout, reset or rebase) is a step undo refuses.
+  - Undoable: new commits on HEAD's branch, while the branch is still where the steps left it
+    and no commit is on a remote-tracking branch.
+  - Any other HEAD move (checkout, reset, rebase) is `:moved`, which undo refuses.
   """
 
-  # Git's own variables (set inside a git hook) would point at another repository or index.
+  # Cleared: set inside a git hook, they would point at another repository or index.
   @clear Enum.map(~w(GIT_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR), &{&1, nil})
 
   @type head :: {String.t() | nil, String.t()} | nil
@@ -81,8 +80,8 @@ defmodule Xeito.Undo.Branch do
   defp refuse(step, reason), do: {:error, {:git, Map.take(step, [:id, :label]), reason}}
 
   @doc """
-  Moves the branch (only if it is still where the plan found it), and resets the project's index
-  to the new position for the files the commits touched: their changes stay in the working tree.
+  Moves the branch if it is still where the plan found it, and resets the index for the files the
+  commits touched; their changes stay in the working tree.
   """
   @spec move(Path.t(), map() | nil) :: :ok | {:error, :changed}
   def move(_cwd, nil), do: :ok

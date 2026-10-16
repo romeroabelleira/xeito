@@ -2,15 +2,10 @@ defmodule Xeito.Run.Recovery do
   @moduledoc """
   Rebuilds a run from its logged events (event sourcing).
 
-  The run's input and every received event are folded through `Xeito.Machine.Engine`, the same
-  pure functions the live run uses, so the rebuilt leaf state and context equal the ones before
-  the crash. Effects requested in the current configuration that have no logged result are
-  returned as *pending*. The run re-dispatches them (at-least-once delivery).
-
-  Replay also checks itself, like the state checksums of rollback netcode: every effect the
-  replay requests must equal the effect the log recorded at that point (for a chat call, the
-  exact messages the model saw). The first mismatch is returned as `desync` (an effect id); the
-  run refuses to recover from it rather than re-sending a different request.
+  - Folds the input and received events through `Xeito.Machine.Engine`, as the live run does.
+  - `pending`: requested effects with no logged result; the run re-dispatches them (at least once).
+  - `desync`: id of the first effect the replay requests that differs from the logged one; the
+    run refuses to recover then.
   """
 
   alias Xeito.Machine

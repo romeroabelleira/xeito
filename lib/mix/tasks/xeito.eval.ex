@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Xeito.Eval do
   Tier endpoints come from the environment (see `config/runtime.exs`). With `--out DIR`, a JSON
   report per type is written to `DIR/<type>.json`. With `--predictions TIER`, that tier's
   per-example verdicts are written to `DIR/<type>.<tier>.jsonl` (input, label, value,
-  probabilities): distillation data for fine-tuning smaller deciders (P7).
+  probabilities): training data for smaller deciders.
 
   When a decision model (`local_decision`, `remote_decision`) is evaluated with `local` or
   `remote`, the report includes the selective-prediction cascade for each pair

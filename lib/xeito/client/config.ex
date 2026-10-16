@@ -1,12 +1,11 @@
 defmodule Xeito.Client.Config do
   @moduledoc """
-  Per-user client preferences, as JSON: `$XEITO_TUI_CONFIG`, else
-  `$XDG_CONFIG_HOME/xeito/tui.json`, else `~/.config/xeito/tui.json`.
+  Per-user client display preferences, as JSON in `$XEITO_TUI_CONFIG`, else `$XDG_CONFIG_HOME/xeito/tui.json`.
 
       {"status_bar": {"visible": true, "hidden": ["cpu", "queue"]}}
 
-  Preferences belong to the client, not the daemon: they change how things are shown, never
-  what runs. A missing or unreadable file means the defaults.
+  Without `$XDG_CONFIG_HOME` the file is `~/.config/xeito/tui.json`. A missing or unreadable file
+  means the defaults. Preferences change only how things are shown, never what runs.
   """
 
   @defaults %{"status_bar" => %{"visible" => true, "hidden" => []}}

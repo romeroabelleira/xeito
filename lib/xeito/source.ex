@@ -1,18 +1,15 @@
 defmodule Xeito.Source do
   @moduledoc """
-  Structure of source files for the tools, so a model can navigate code instead of grepping it
-  (`Xeito.Tools`):
+  Outlines, definitions and syntax checks of source files, for the tools.
 
     * `outline/2`: a file's modules and definitions with their line ranges.
     * `symbol/3`: the source of one definition, by name (`init`, `init/1`, `Xeito.Tui.init/1`,
       or a module).
-    * `syntax_error/2`: whether a file still parses, checked right after a `write` or `edit`.
+    * `syntax_error/2`: the first syntax error, or `nil`.
 
-  `Xeito.Source.RepoMap` builds a project map from the same parse.
-
-  Elixir files (`.ex`, `.exs`) are parsed with Elixir's own parser (`Code.string_to_quoted/2`),
-  so there are no dependencies; JSON files get a syntax check. Other languages are not supported
-  yet: `outline/2` and `symbol/3` say so, and `syntax_error/2` returns `nil`.
+  Elixir files (`.ex`, `.exs`) are parsed with `Code.string_to_quoted/2`; JSON gets a syntax
+  check only. For other languages `outline/2` and `symbol/3` return an error and
+  `syntax_error/2` returns `nil`.
   """
 
   @defs [:def, :defp, :defmacro, :defmacrop, :defguard, :defguardp, :defdelegate]
@@ -51,8 +48,8 @@ defmodule Xeito.Source do
   end
 
   @doc """
-  The source of the definitions matching `name`: `fun`, `fun/arity`, `Module.fun/arity`, or a
-  module name (full or its last part). Each match is headed by its line range.
+  The source of each definition matching `name` (`fun`, `fun/arity`, `Module.fun/arity` or a
+  module), headed by its line range.
   """
   @spec symbol(Path.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def symbol(path, content, name) do
@@ -159,8 +156,6 @@ defmodule Xeito.Source do
     }
   end
 
-  # A do-block ends at its `end`; a one-liner at the end of its expression; anything else at
-  # the deepest line inside it.
   defp last_line(meta, node) do
     cond do
       end_meta = meta[:end] -> end_meta[:line]
@@ -193,7 +188,6 @@ defmodule Xeito.Source do
   defp signature({name, _, context}) when is_atom(name) and is_atom(context), do: "#{name}/0"
   defp signature(_head), do: nil
 
-  # Consecutive clauses of one definition become one entry.
   defp group(entries) do
     Enum.chunk_while(
       entries,
@@ -222,7 +216,6 @@ defmodule Xeito.Source do
 
   defp matches?(%{name: test}, name), do: test == inspect(name) or test == name
 
-  # `fun/2` matches by name and arity, `fun` by name alone.
   defp named?(sig, fun), do: fun == sig or fun == sig |> String.split("/") |> hd()
 
   # A module matches by its full name or its last parts (`Cart` for `Shop.Cart`); none asked, any.

@@ -1,9 +1,8 @@
 defmodule Xeito.Log.Retention do
   @moduledoc """
-  Explicit retention for a workspace log: deletes whole sessions (the session, every run under
-  it, their events, effects and relations) and compacts the file. Nothing is deleted
-  automatically; the log is also the data for resume, `/why`, `/machines`, process mining and
-  training deciders. See `mix xeito.log`.
+  Explicit retention for a workspace log: deletes whole sessions with everything under them, then compacts the file.
+
+  Nothing is deleted automatically.
 
   * Only sessions recorded as `closed` or `interrupted` are candidates. An `open` session may be
     in use by a running daemon and is never touched.
@@ -12,8 +11,8 @@ defmodule Xeito.Log.Retention do
   * Runs that belong to no session (scripts, benchmarks) and machine definitions are kept.
   * Stored chat messages no remaining event refers to are swept (`Xeito.Log.Store.sweep/1`).
 
-  Works on its own SQLite connection, so it can run while the daemon holds the log (SQLite
-  locks); compacting (`VACUUM`) may then be postponed, which `prune/2` reports.
+  Works on its own SQLite connection, so it can run while the daemon holds the log; `VACUUM`
+  may then fail, which `prune/2` reports as `vacuumed: false`.
   """
 
   alias Exqlite.Sqlite3
@@ -31,8 +30,7 @@ defmodule Xeito.Log.Retention do
   @doc "The sessions of the log with their latest status, last activity, runs and events."
   @spec sessions(Sqlite3.db()) :: [session()]
   def sessions(db) do
-    # Activity is a session being opened (or resumed) and its runs; status changes are not
-    # (closing, or being marked interrupted later, must not make a session look recent).
+    # Status changes do not count as activity: closing must not make a session look recent.
     sql = """
     SELECT s.ocel_id,
       (SELECT s2.status FROM object_session s2
@@ -95,12 +93,11 @@ defmodule Xeito.Log.Retention do
   """
   @spec prune(Sqlite3.db(), [session()]) :: {:ok, map()}
   def prune(db, sessions) do
-    # A log last written before the message store existed gets its (empty) tables first.
+    # An old log may lack the message store's tables.
     :ok = Store.prepare(db)
     Enum.each(sessions, &delete_session(db, &1.id))
     messages = if sessions == [], do: 0, else: Store.sweep(db)
-    # In WAL mode the compacted pages land in the WAL file; the checkpoint moves them into the
-    # log file and truncates the WAL, so the file actually shrinks now.
+    # In WAL mode the checkpoint is what makes the file shrink.
     vacuumed =
       Sqlite3.execute(db, "VACUUM") == :ok and
         Sqlite3.execute(db, "PRAGMA wal_checkpoint(TRUNCATE)") == :ok
@@ -147,7 +144,7 @@ defmodule Xeito.Log.Retention do
     end
   end
 
-  # The id itself, or anything under it (`<id>/…`): runs, effects, escalations, delegations.
+  # The id itself or anything under it (`<id>/…`).
   defp prefix(column), do: "(#{column} = ?1 OR substr(#{column}, 1, length(?1) + 1) = ?1 || '/')"
 
   defp run(db, sql, params) do

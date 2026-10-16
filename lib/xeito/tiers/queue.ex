@@ -1,12 +1,10 @@
 defmodule Xeito.Tiers.Queue do
   @moduledoc """
-  Per-backend capacity limits. Each tier admits at most `capacity` concurrent calls; further
-  callers wait in FIFO order. A `:background` call (generating skill examples, P4f) waits until
-  no other call waits for the tier, so it delays an interactive call by at most the one
-  background call already running.
+  Limits concurrent calls per tier; callers beyond `capacity` wait in FIFO order.
 
-  Bench 1 measured why this matters: `laya-serve` serialises requests (~16 decisions/s whatever
-  the concurrency), and a GPU generation competes with itself. Capacities come from `config :xeito, :tier_capacity` (defaults below).
+  - A `:background` call waits until no `:normal` call waits for the tier.
+  - Capacities: `config :xeito, :tier_capacity`, over the defaults below; `:infinity` skips the queue.
+  - A holder that dies frees its slot.
   """
 
   use GenServer
@@ -17,8 +15,7 @@ defmodule Xeito.Tiers.Queue do
   def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
 
   @doc """
-  Runs `fun` once a slot for `tier` is free, and returns its result. A `:background` call
-  takes a free slot only when no `:normal` call waits for it.
+  Runs `fun` once a slot for `tier` is free, and returns its result.
   """
   @spec run(atom(), (-> result), timeout(), :normal | :background) :: result when result: term()
   def run(tier, fun, timeout \\ :infinity, priority \\ :normal) do

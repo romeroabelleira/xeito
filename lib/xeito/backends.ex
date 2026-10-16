@@ -1,7 +1,6 @@
 defmodule Xeito.Backends do
   @moduledoc """
-  Model backends: the API a tier speaks. A tier (`Xeito.Tiers`) is a place on the escalation
-  ladder; its configuration names a backend, a URL, a model and a key.
+  Behaviour and registry for model backends, the API a tier (`Xeito.Tiers`) speaks.
 
   | backend         | module                       | API                                                     |
   |-----------------|------------------------------|---------------------------------------------------------|
@@ -9,8 +8,8 @@ defmodule Xeito.Backends do
   | `:ollama`       | `Xeito.Backends.Ollama`      | Ollama `/api/chat`, JSON-schema format + logprobs       |
   | `:openrouter`   | `Xeito.Backends.OpenRouter`  | OpenAI-compatible chat completions, JSON schema + logprobs |
 
-  Every backend implements `decide/3`: given a decision type, a normalised input and the tier's
-  configuration, it returns the value, a probability for every option, provenance and cost.
+  `decide/3` takes a decision type, a normalised input and the tier's configuration, and returns
+  the value, a probability per option, the model, latency and cost.
   """
 
   alias Xeito.Decision.Scoring
@@ -43,10 +42,9 @@ defmodule Xeito.Backends do
   def module(backend), do: Map.fetch(@modules, backend)
 
   @doc """
-  Ollama `options` with the configured context window (`cfg[:context]`, `num_ctx`) added. Every
-  request to the large tier (chat, decisions, a model load) sends the same value, so they share
-  one loaded model instead of reloading it for each other, and the chat machine's budget is the
-  server's window by construction. Without `:context`, the server's own setting applies.
+  Ollama `options` with `num_ctx` set from `cfg[:context]`, if configured.
+
+  Every request to a tier must send the same value, or Ollama reloads the model.
   """
   @spec context_options(keyword(), map()) :: map()
   def context_options(cfg, options) do

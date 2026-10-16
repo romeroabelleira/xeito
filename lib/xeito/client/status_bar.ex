@@ -1,20 +1,18 @@
 defmodule Xeito.Client.StatusBar do
   @moduledoc """
-  The TUI's toggleable status bar, as pure functions: usage is counted from the daemon events a
-  client already receives, and hardware and model status come from `Xeito.Monitor` snapshots.
+  Renders the TUI's status bar from usage counted over daemon events and from `Xeito.Monitor` snapshots.
 
       GPU 18.5/24.0 GiB 97% 290 W 61°C │ local qwen3.6:27b unload 4:12 │ decision ✓ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB
       local 12 · local_decision 3 · rule 9 · human 1 │ 18.4k→1.2k tok · ctx 3.2k/81.9k │ triage local 512 ms │ reply 2.1 s (first 0.4 s) │ det 45% │ $0.0000 · ~2.1 kJ │ queue local 1+2
 
   * **Calls** per actor: decisions (`decision_made`, `intent`) and chat turns (`chat`).
-  * **Tokens** in → out over the session, and **ctx**: the prompt size of the last chat turn
-    against the resident model's context window, i.e. how full the context is.
-  * **decision** and **reply**: the latest decision (type, who decided, how long it took) and
-    the latest model reply (total time, and time to its first chunk).
-  * **det**: the determinism budget, the share of transitions taken by code or rules rather than
-    models or humans (`docs/architecture/01-principles.md#2-the-determinism-budget`).
-  * **Spend** on off-box tiers and the estimated energy of local decisions.
+  * **Tokens** in → out over the session; **ctx**: last chat prompt against the model's context window.
+  * **decision** and **reply**: latest decision (type, actor, time) and reply (time, time to first chunk).
+  * **det**: share of transitions taken by code or rules.
+  * **Spend** on off-box tiers and estimated energy of local decisions.
   * **Queue**: tiers with calls in flight or waiting.
+
+  Runs ending in `/esc` or `/intent` are not counted.
   """
 
   @type usage :: %{
@@ -80,7 +78,6 @@ defmodule Xeito.Client.StatusBar do
 
   defp context(reply, usage), do: reply["tokens_in"] || usage.ctx
 
-  # Steps taken by code or rules, out of all steps.
   defp determinism({code, total}, actor) when actor in [:code, :rule, "code", "rule"], do: {code + 1, total + 1}
   defp determinism({code, total}, _actor), do: {code, total + 1}
 
@@ -107,7 +104,7 @@ defmodule Xeito.Client.StatusBar do
 
   # --- rendering -------------------------------------------------------------------------
 
-  # Segment → line. Order within a line is fixed; any segment can be hidden.
+  # Segment → line, in display order.
   @segments [
     gpu: 1,
     models: 1,
@@ -123,7 +120,7 @@ defmodule Xeito.Client.StatusBar do
     queue: 2
   ]
 
-  # Which segments win when the line is too narrow for all of them, most important first.
+  # Most important first, for a line too narrow for all segments.
   @priority ~w(decision reply tokens gpu models git cost budget det calls cpu queue)a
 
   @doc "The segment names, in display order."
@@ -131,9 +128,8 @@ defmodule Xeito.Client.StatusBar do
   def segments, do: Enum.map(@segments, fn {name, _} -> Atom.to_string(name) end)
 
   @doc """
-  The bar's lines (empty lines are dropped): machine, models and workspace from a monitor
-  snapshot and a session `workspace` event (either may be `nil`), then usage. `hidden` lists
-  segment names not to show.
+  The bar's non-empty lines: machine, models and workspace (monitor and `workspace` may be `nil`),
+  then usage. `hidden` lists segment names not to show.
   """
   @spec lines(usage(), map() | nil, map() | nil, [String.t()]) :: [String.t()]
   def lines(usage, monitor, workspace \\ nil, hidden \\ []) do
@@ -151,9 +147,8 @@ defmodule Xeito.Client.StatusBar do
   defp join(texts), do: texts |> Enum.reject(&(&1 == "")) |> Enum.join(" │ ")
 
   @doc """
-  The bar as one line of at most `width` characters: segments are taken in priority order
-  (`@priority`) while they fit, and shown in display order. `hidden` lists segment names not to
-  show. Returns `""` when there is nothing to show.
+  The bar as one line of at most `width` characters: segments taken by priority while they fit,
+  shown in display order; `""` when nothing shows.
   """
   @spec line(usage(), map() | nil, map() | nil, [String.t()], pos_integer()) :: String.t()
   def line(usage, monitor, workspace, hidden, width) do
@@ -186,7 +181,6 @@ defmodule Xeito.Client.StatusBar do
   defp segment(name, _u, _m, w) when name in [:git, :budget], do: workspace_segment(name, w)
   defp segment(name, u, m, _w), do: usage_segment(name, u, m)
 
-  # From the daemon's monitor: nothing to show before its first snapshot.
   defp machine_segment(:gpu, nil), do: "status: waiting for the daemon's monitor…"
   defp machine_segment(_name, nil), do: ""
   defp machine_segment(:gpu, m), do: gpu(m["system"]["gpus"])
@@ -201,7 +195,6 @@ defmodule Xeito.Client.StatusBar do
   defp workspace_segment(:git, w), do: git(w && w["git"])
   defp workspace_segment(:budget, w), do: join([budget(w && w["budget"]), chat(w && w["chat"])])
 
-  # From the session's usage.
   defp usage_segment(:calls, u, _m), do: calls(u)
   defp usage_segment(:tokens, u, m), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)
   defp usage_segment(:det, u, _m), do: det(u.det)
@@ -251,7 +244,6 @@ defmodule Xeito.Client.StatusBar do
     "git #{branch} #{state}#{ab}"
   end
 
-  # A remote chat: its model, and what the key has left once known.
   defp chat(%{"off_box" => true, "model" => model} = chat),
     do: "chat #{model |> to_string() |> String.split("/") |> List.last()}" <> key_left(chat["left_usd"])
 
@@ -304,7 +296,6 @@ defmodule Xeito.Client.StatusBar do
 
   defp cpu(_), do: ""
 
-  # The last chat prompt against the resident model's context window, when the monitor knows it.
   defp ctx(nil, _monitor), do: ""
 
   defp ctx(tokens, %{"models" => %{"local" => %{"loaded" => [%{"context" => window} | _]}}})

@@ -8,8 +8,7 @@ defmodule Xeito.Machines.Check do
                 └─ failed, no attempts ───→ ask_human ─┬─ approved (fixed by hand) → checking
                                                        └─ denied → failed
 
-  Unlike `Xeito.Machines.FixFailingTest` there is no triage: a formatter or linter failure
-  names its own cause, and the fixing run reads the output directly.
+  No triage: the fixing run reads the failure output directly.
 
   Input: `%{cwd: path, check_cmd: "mix ci"}`, optionally `max_attempts` (default 3), `system` and
   `max_steps` for the delegate.

@@ -1,29 +1,21 @@
 defmodule Xeito.Backends.OpenRouter do
   @moduledoc """
-  OpenRouter backend: hosted **open-weight** models through OpenRouter's OpenAI-compatible
-  `POST /api/v1/chat/completions`, with token log-probabilities for a calibrated confidence.
-
-  It serves both hosted language model tiers (`:remote` and `:remote_frontier`): a model with
-  logprobs answers with a confidence the escalation can threshold; one without (Claude, for
-  example) answers terminally.
+  OpenRouter backend: decisions on hosted models through `POST /api/v1/chat/completions`, for the remote tiers.
 
   Request:
-    * `response_format` is the decision's JSON Schema (`strict: true`), at temperature 0 with
-      reasoning disabled, and `logprobs` with `top_logprobs` (≤ 20).
-    * `provider.require_parameters: true`, so only provider endpoints that honour the schema
-      **and** return logprobs are used. `provider.data_collection: "deny"` and `provider.zdr`
-      (default `true`) restrict routing to endpoints that neither train on nor retain prompts.
-      `cfg[:providers]` pins providers (`provider.only`). With `logprobs: false` (the
-      `:remote_frontier` tier's default) no logprobs are asked for, so endpoints without them
-      qualify too.
+    * the decision's JSON Schema as `response_format` (`strict: true`), temperature 0, no reasoning
+    * `logprobs` with `top_logprobs` (at most 20), unless `logprobs: false`
+    * `provider`: `require_parameters: true` (endpoints must honour the schema and, when asked,
+      return logprobs), `data_collection: "deny"`, `zdr` (default `true`); `cfg[:providers]`
+      sets `provider.only`
 
-  Result: the confidence comes from the `top_logprobs` at the value's first token, as for the
-  local large tier (`Xeito.Backends.Ollama.probabilities/3`). An endpoint that returns no logprobs
-  yields a `terminal: true` result without confidence. A refusal is an error. Cost is
-  OpenRouter's own `usage.cost` (USD), plus token counts; the model provenance names the
-  provider endpoint that served the request (`openrouter:<model>@<provider>`).
+  Result:
+    * confidence from the value's first-token `top_logprobs`, as `Xeito.Backends.Ollama.probabilities/3`
+    * no logprobs: a `terminal: true` result without confidence
+    * a refusal is an error
+    * cost is OpenRouter's `usage.cost` (USD) plus token counts; `model` is `openrouter:<model>@<provider>`
 
-  Off-box: `Xeito.Policy` gates every tier that uses it, as it gates every `remote*` tier.
+  `Xeito.Policy` gates every tier that uses it, as every off-box tier.
   """
 
   @behaviour Xeito.Backends
@@ -87,8 +79,7 @@ defmodule Xeito.Backends.OpenRouter do
     )
   end
 
-  # Without logprobs (`logprobs: false`), `require_parameters` no longer excludes the endpoints
-  # that cannot return them, such as Claude's; the answer is then terminal.
+  # Without logprobs, `require_parameters` also admits endpoints that cannot return them; the answer is terminal.
   defp logprobs(cfg) do
     if Keyword.get(cfg, :logprobs, true),
       do: %{logprobs: true, top_logprobs: min(Keyword.get(cfg, :top_logprobs, 20), 20)},
@@ -137,7 +128,6 @@ defmodule Xeito.Backends.OpenRouter do
     end
   end
 
-  # Provenance names the model and the provider endpoint that served it.
   defp served_by(model, nil), do: "openrouter:" <> model
   defp served_by(model, provider), do: "openrouter:#{model}@#{provider}"
 
@@ -150,9 +140,7 @@ defmodule Xeito.Backends.OpenRouter do
     }
   end
 
-  @doc """
-  The API key's limits and usage (`GET /api/v1/key`). Free: a health check that spends nothing.
-  """
+  @doc "The API key's limits and usage (`GET /api/v1/key`); spends nothing."
   @spec key_info(keyword()) :: {:ok, map()} | {:error, term()}
   def key_info(cfg) do
     case Req.request([method: :get, url: "/v1/key"] ++ Backends.req_options(cfg)) do

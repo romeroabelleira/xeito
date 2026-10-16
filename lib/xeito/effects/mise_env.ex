@@ -1,13 +1,10 @@
 defmodule Xeito.Effects.MiseEnv do
   @moduledoc """
-  Commands run with the tool versions the workspace pins with mise. The daemon starts in its own
-  directory, so without this a command in another project would get the daemon's Erlang, Ruby
-  or Node, not the project's. When mise is installed and the workspace, or a directory above it,
-  has mise configuration (`mise.toml`, `.tool-versions`, …), a command runs as
-  `mise exec -- sh -c <command>` there, as it would in the user's shell.
+  Wraps a shell command so it runs with the tool versions the workspace pins with mise.
 
-  mise refuses a `mise.toml` it has not been told to trust; that failure is explained with what
-  to do (`explain/3`). `.tool-versions` needs no trust.
+  * When mise is installed and the workspace or a parent has mise configuration, the command is
+    `mise exec -- sh -c <command>`; otherwise `sh -c <command>`.
+  * `explain/3` adds a hint when mise refused an untrusted `mise.toml`.
   """
 
   alias Xeito.Executables
@@ -28,7 +25,6 @@ defmodule Xeito.Effects.MiseEnv do
 
   defp plain(cmd), do: {"sh", ["-c", cmd]}
 
-  # The directory or one above it holds mise configuration.
   defp configured?(dir) do
     Enum.any?(@configs, &File.regular?(Path.join(dir, &1))) or
       (Path.dirname(dir) != dir and configured?(Path.dirname(dir)))

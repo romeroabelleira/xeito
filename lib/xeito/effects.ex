@@ -1,20 +1,15 @@
 defmodule Xeito.Effects do
   @moduledoc """
-  Effect descriptions returned by machines, executed by a policy-checked runner.
+  Dispatches a run's `Xeito.Effect` structs to a runner; the only place a run's effects are executed.
 
-  A run never performs I/O itself. Its entry functions return `Xeito.Effect` structs, and the
-  run hands them to a runner through `dispatch/3`. The runner executes each effect in a
-  supervised task and sends the result back as `{:xeito_effect, effect_id, result}`. That one
-  choke point is what makes replay, sandboxing and testing possible.
+  The runner executes each effect in a supervised task and sends
+  `{:xeito_effect, effect_id, result}` back. Runner specs:
 
-  Runner specs:
+    * `{Xeito.Effects.Local, opts}`: executes `bash`, `read`, `write` inside the workspace
+    * `{Xeito.Effects.Fake, fun: fun}`: `fun.(effect)` returns the result (tests)
+    * `:none`: nothing runs (replay, property tests)
 
-    * `{Xeito.Effects.Local, opts}` — really executes (`bash`, `read`, `write`) inside the
-      workspace; `decide` is stubbed until P2 via `opts[:decide]`
-    * `{Xeito.Effects.Fake, fun: fun}` — `fun.(effect)` returns the result (tests)
-    * `:none` — effects are recorded but never executed (replay, property tests)
-
-  See `docs/architecture/02-state-machine-core.md` and `docs/architecture/10-security-and-sandboxing.md`.
+  A runner that raises yields `error_result/2` instead of crashing.
   """
 
   alias Xeito.Effect
@@ -22,10 +17,9 @@ defmodule Xeito.Effects do
   @type runner_spec :: {module(), keyword()} | :none
 
   @doc """
-  Executes `effect` asynchronously and sends `{:xeito_effect, id, result}` to `reply_to`.
-  `context` (the requesting run's `:log` and `:run_id`) is added to the runner options unless
-  the runner spec sets them itself. Returns the task running it (so a halted run can stop it), or
-  `nil` when nothing runs.
+  Runs `effect` in a task that sends `{:xeito_effect, id, result}` to `reply_to`; returns its pid, or `nil` for `:none`.
+
+  `context` (`:log`, `:run_id`) is merged under the runner's own options.
   """
   @spec dispatch(runner_spec(), Effect.t(), pid(), keyword()) :: pid() | nil
   def dispatch(runner, effect, reply_to, context \\ [])

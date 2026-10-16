@@ -1,12 +1,9 @@
 defmodule Xeito.Tui.Sessions do
   @moduledoc """
-  `/sessions` in the TUI: the directory's sessions, last updated first (`/sessions`), switching
-  to one of them (`/sessions N`) or starting another (`/sessions new`).
+  The TUI's `/sessions` command: list the directory's sessions, switch to one (`N`) or start one (`new`).
 
-  The daemon answers asynchronously, so a request carries a tag and its reply comes back to the
-  TUI as `{:xeito_reply, tag, reply}`, handled by `reply/3`. A switch resets what the TUI shows
-  to the new session: its earlier turns, an idle status, no queue. The previous session keeps
-  running in the daemon.
+  Requests are asynchronous: the reply arrives as `{:xeito_reply, tag, reply}` for `reply/3`.
+  A switch resets the TUI state to the new session; the previous one keeps running in the daemon.
   """
 
   alias Xeito.Client

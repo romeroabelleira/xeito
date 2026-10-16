@@ -1,7 +1,6 @@
 defmodule Xeito.Undo.Store do
   @moduledoc """
-  The undo store of a workspace, `.xeito/undo.git` (`Xeito.Undo`): its path, and git run
-  against it with its own index, apart from the project's own git.
+  Runs git against a workspace's undo store, `.xeito/undo.git`, with its own index, apart from the project's git.
   """
 
   @ident [
@@ -11,8 +10,7 @@ defmodule Xeito.Undo.Store do
     {"GIT_COMMITTER_EMAIL", "xeito@localhost"}
   ]
 
-  # Git's own variables, set for commands run inside a git hook, would put the store's index,
-  # objects or refs elsewhere (the project's index, for one): they are cleared.
+  # Cleared: set inside a git hook, they would redirect the store to the project's index or objects.
   @inherited Enum.map(~w(GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR), &{&1, nil})
 
   @doc "The store's directory in a workspace."

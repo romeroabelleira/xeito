@@ -1,30 +1,19 @@
 defmodule Xeito.Undo do
   @moduledoc """
-  Undo and redo for what the agent changed in a workspace, step by step
-  (`docs/implementation-plan.md`, undo stage 1).
+  Undo and redo of the agent's changes to a workspace, step by step, kept in a private git store.
 
-  `step/5` wraps one effect that may change files (`write`, `edit`, `bash`): the workspace is
-  snapshotted before and after it into a private git store, `.xeito/undo.git`, with its own
-  index. The project's own git (HEAD, index, stash) is never touched, and a workspace without
-  git works the same. A step that changed something is pushed on its session's stack (a ref
-  in the store). `undo/3` reverts a session's last n steps, newest first, and `redo/3` puts
-  them back, oldest first; a new step clears what could be redone.
-
-  Only the agent's own changes are reverted: each step's change is applied in reverse to the
-  workspace as it is now, so what the user changed since stays. When the user changed the
-  same lines, the undo is refused and nothing changes.
-
-  Files the project ignores are captured when small (`.env`, `*.log`), so deleting one can be
-  undone. Not captured, so not undone: directories the project ignores (`_build/`, `.venv/`,
-  what a build or install recreates), the protected directories (`.git`,
-  `.xeito`, `deps`, `_build`, `node_modules`), files over 5 MB (a step names the ones it
-  changed), anything outside the workspace, and any workspace with more than 20,000 files (the
-  step then runs without undo). Steps are serialized per workspace while they run.
-
-  Retention: a session keeps at least its last 200 steps; past 400, the oldest are dropped
-  down to 200. `forget/2` drops a session's steps (`mix xeito.log prune` calls it for the
-  sessions it deletes), and `gc/1` frees the file versions no step holds any more (run when
-  the workspace's log closes after being idle).
+  * `step/5` snapshots the workspace before and after one effect into `.xeito/undo.git`, with
+    its own index; the project's git (HEAD, index, stash) is never touched. A step that changed
+    something goes on its session's stack; a new step clears the redo stack.
+  * `undo/3` reverts the last n steps, newest first; `redo/3` re-applies them, oldest first.
+    Each change is applied in reverse to the workspace as it is now, so the user's later edits
+    stay; if the user changed the same lines, nothing changes and an error is returned.
+  * Captured: tracked files and small ignored files (`.env`). Not captured: ignored directories,
+    `Xeito.Tools.protected_dirs/0`, files over `:max_file_bytes`, and workspaces over
+    `:max_files` (the step then runs without undo). Outside files only via `:outside`.
+  * Undo bookkeeping never fails a step. Steps are serialized per workspace.
+  * A session keeps at least `:max_steps` steps (trimmed back past twice that). `forget/2` drops
+    a session's steps; `gc/1` frees file versions no step holds.
   """
 
   alias Xeito.Undo.Branch
@@ -39,11 +28,9 @@ defmodule Xeito.Undo do
   @type step :: %{id: String.t(), label: String.t(), skipped: [Path.t()], git: Branch.change()}
 
   @doc """
-  Runs `fun` (one agent step, effect `id`) and returns its result. If it changed the
-  workspace, the change is recorded as a step of the effect's session, described by `label`.
-  Options: `:max_files` (default 20,000), `:max_file_bytes` (default 5 MB), `:max_steps`
-  (default 200), `:outside` (paths outside the workspace to back up), `:now` (seconds, for
-  telling a stale lock).
+  Runs `fun` (effect `id`) and returns its result, recording any change as a step labelled `label`.
+  Options: `:max_files` (20,000), `:max_file_bytes` (5 MB), `:max_steps` (200), `:outside`
+  (paths outside the workspace to back up), `:now` (seconds, for telling a stale lock).
   """
   @spec step(Path.t(), String.t(), String.t(), (-> result), keyword()) :: result when result: term()
   def step(cwd, id, label, fun, opts \\ []), do: locked(cwd, fn -> snapshotted(cwd, id, label, fun, opts) end)
@@ -53,9 +40,9 @@ defmodule Xeito.Undo do
   def steps(cwd, session), do: cwd |> stack(undo_ref(session)) |> Enum.map(&public/1)
 
   @doc """
-  Reverts a session's last `n` steps, newest first, and returns them. Errors:
-  `:nothing_to_undo`, `{:only, count}`, `{:conflict, step}` (the user changed the same lines
-  since), `:unavailable` (no snapshot). On an error, nothing changes. Options as for `step/5`.
+  Reverts a session's last `n` steps, newest first, and returns them. On an error nothing
+  changes: `:nothing_to_undo`, `{:only, count}`, `{:conflict, step}` (the user changed the same
+  lines), `:unavailable` (no snapshot). Options as for `step/5`.
   """
   @spec undo(Path.t(), String.t(), pos_integer(), keyword()) :: {:ok, [step()]} | {:error, term()}
   def undo(cwd, session, n, opts \\ []),
@@ -83,10 +70,9 @@ defmodule Xeito.Undo do
   end
 
   @doc """
-  Whether a snapshot can be taken now and would hold everything under `paths` (relative to the
-  workspace; ones not there yet included): no directory the project ignores and no file over
-  the size limit lies under them. `Xeito.Decisions.Risk` treats a write it cannot prove safe
-  as safe when this holds (undo stage 3). Options as for `step/5`.
+  Whether a snapshot can be taken now and would hold everything under `paths` (relative, may
+  not exist yet): no ignored directory and no oversized file under them. `Xeito.Decisions.Risk`
+  relies on it to allow writes. Options as for `step/5`.
   """
   @spec covers?(Path.t(), [Path.t()], keyword()) :: boolean()
   def covers?(cwd, paths, opts \\ []) do
@@ -97,7 +83,6 @@ defmodule Xeito.Undo do
     end
   end
 
-  # What lies under `paths` that a snapshot would leave out: ignored directories, large files.
   defp uncaptured(cwd, paths, opts) do
     {ignored, 0} =
       git(cwd, [
@@ -132,8 +117,7 @@ defmodule Xeito.Undo do
 
   # --- snapshots ---
 
-  # The workspace's tree, and the files left out for their size (with their size and mtime,
-  # to tell which ones a step changed).
+  # Oversized files are left out but kept with size and mtime, to tell which ones a step changed.
   defp snapshot(cwd, opts) do
     with true <- File.dir?(cwd), :ok <- init(cwd, opts), {:ok, ignored} <- within_limit(cwd, opts) do
       capture(cwd, big_files(cwd, opts), ignored)
@@ -165,14 +149,11 @@ defmodule Xeito.Undo do
   end
 
   # A file captured while it was small is taken out once it is over the limit.
-
   defp uncapture(cwd, files), do: git(cwd, ["update-index", "--force-remove", "--" | files])
 
-  # A step killed midway (Esc) may leave git running on the store after its lock is released, or
-  # leave the store half-built: the store is created under a temporary name and renamed into
-  # place, one that git does not take as a repository is rebuilt, and an index lock older than
-  # @stale_lock_s seconds is a leftover.
-  # A missing store is not a repository either: both are (re)built.
+  # A step killed midway can leave a half-built store or a stale index lock: the store is built
+  # under a temporary name and renamed, a store git rejects (or a missing one) is rebuilt, and
+  # an index lock older than @stale_lock_s is removed.
   defp init(cwd, opts) do
     if match?({_, 0}, git(cwd, ~w(rev-parse))),
       do: clear_stale_lock(cwd, Keyword.get(opts, :now) || System.os_time(:second)),
@@ -185,19 +166,18 @@ defmodule Xeito.Undo do
   end
 
   defp create(cwd) do
-    # `.xeito` is the daemon's own; the project's git must not see it, even before a log exists.
+    # The project's git must not see `.xeito`, even before a log exists.
     dot_xeito = Path.dirname(store(cwd))
     File.mkdir_p!(dot_xeito)
     if !File.exists?(Path.join(dot_xeito, ".gitignore")), do: File.write!(Path.join(dot_xeito, ".gitignore"), "*\n")
     new = store(cwd) <> ".new-#{System.unique_integer([:positive])}"
 
     result = with :ok <- build(cwd, new), do: File.rename(new, store(cwd))
-    # Renamed, `new` is gone; after a failure, whatever was built of it goes.
+    # Removes a partial build after a failure; a no-op after the rename.
     File.rm_rf(new)
     result
   end
 
-  # The store, built under the temporary name `new`.
   defp build(cwd, new) do
     env = [{"GIT_DIR", new}]
 
@@ -216,7 +196,6 @@ defmodule Xeito.Undo do
     :ok
   end
 
-  # The ignored files to capture, if the workspace is within the file limit.
   defp within_limit(cwd, opts) do
     {files, 0} = git(cwd, ~w(ls-files --cached --others --exclude-standard -z))
     ignored = ignored_files(cwd, opts)
@@ -226,8 +205,7 @@ defmodule Xeito.Undo do
       else: :error
   end
 
-  # Files the project ignores (`.env`, `*.log`) are captured when small; ignored directories
-  # (`_build/`, `.venv/`, `target/`) are not: they hold what a build or install recreates.
+  # Ignored directories are skipped: they hold what a build or install recreates.
   defp ignored_files(cwd, opts) do
     max = max_bytes(opts)
     {entries, 0} = git(cwd, ~w(ls-files -z --others --ignored --exclude-standard --directory))
@@ -239,8 +217,7 @@ defmodule Xeito.Undo do
         do: entry
   end
 
-  # Undo's bookkeeping never fails the step: when a snapshot or the record cannot be made, the
-  # step runs (or has run) without undo.
+  # Bookkeeping never fails the step: if a snapshot or record fails, the step runs without undo.
   defp snapshotted(cwd, id, label, fun, opts) do
     case attempt(fn -> before_step(cwd, opts) end) do
       {:ok, state} ->
@@ -291,8 +268,7 @@ defmodule Xeito.Undo do
     trim(cwd, undo_ref(session), Keyword.get(opts, :max_steps, @max_steps))
   end
 
-  # Past twice the limit, the chain is rebuilt from its newest `max` steps: the cost of the
-  # rebuild is spread over the steps between two of them.
+  # Past twice the limit, the chain is rebuilt from its newest `max` steps (amortised cost).
   defp trim(cwd, ref, max) do
     {count, 0} = git(cwd, ["rev-list", "--count", ref])
 
@@ -322,7 +298,6 @@ defmodule Xeito.Undo do
     {_, 0} = git(cwd, ["update-ref", ref, String.trim(commit)])
   end
 
-  # A step with backups outside the workspace commits a tree holding them too (`Outside.tree/3`).
   defp commit_tree(_cwd, %{outside: [], after: tree}), do: tree
   defp commit_tree(cwd, step), do: Outside.tree(cwd, step.after, step.outside)
 
@@ -379,8 +354,7 @@ defmodule Xeito.Undo do
     end
   end
 
-  # The workspace, and the branch when the steps committed, with the steps reverted (or
-  # re-applied). Everything is checked first: on an error, nothing has changed.
+  # Everything is checked before anything is written: on an error, nothing has changed.
   defp revert(cwd, steps, direction, opts) do
     with {:ok, branch, outside} <- plans(cwd, steps, direction),
          {:ok, current} <- current(cwd, opts),
@@ -390,7 +364,6 @@ defmodule Xeito.Undo do
          do: Branch.move(cwd, branch)
   end
 
-  # What else changes besides the workspace, checked before anything does.
   defp plans(cwd, steps, direction) do
     with {:ok, branch} <- Branch.plan(cwd, steps, direction),
          {:ok, outside} <- Outside.plan(cwd, steps, direction),
@@ -409,8 +382,7 @@ defmodule Xeito.Undo do
     end
   end
 
-  # The workspace with the steps' changes reverted (or re-applied), built in a scratch index so
-  # that a conflict leaves the workspace as it was.
+  # Built in a scratch index, so a conflict leaves the workspace as it was.
   defp target(cwd, current, steps, direction) do
     index = [{"GIT_INDEX_FILE", Path.join(store(cwd), "index.undo")}]
     {_, 0} = git(cwd, ["read-tree", current], index)
@@ -433,8 +405,7 @@ defmodule Xeito.Undo do
     with :error <- patch(cwd, current, target, ["apply"], []), do: {:error, :changed}
   end
 
-  # Applies the change from tree `from` to tree `to` with `git apply` (`command`). No change (a
-  # step that only committed) applies trivially: git refuses an empty patch.
+  # Equal trees (a step that only committed) apply trivially: git refuses an empty patch.
   defp patch(_cwd, tree, tree, _command, _env), do: :ok
 
   defp patch(cwd, from, to, command, env) do

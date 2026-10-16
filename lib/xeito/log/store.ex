@@ -1,27 +1,20 @@
 defmodule Xeito.Log.Store do
   @moduledoc """
-  How events are stored compactly, and read back exactly (`Xeito.Log` uses it; nothing else
-  needs to know). The log records *inputs* once and refers to them afterwards, the way rollback
-  netcode exchanges inputs rather than game state
-  (`docs/architecture/05-event-log-and-process-mining.md#storage`):
+  Stores `Xeito.Log` events compactly and reads them back exactly; only `Xeito.Log` uses it.
 
-    * **Message chains.** Any list of chat messages inside an event (a chat effect's messages, a
-      run's input history, a chat run's final turn) is stored once per message in
-      `xeito_message`, each row pointing to its parent. A message's id hashes its parent's id and
-      its own content, so the id of a chain's last message is a checksum of the whole
-      conversation up to it, and shared prefixes (system prompt, earlier turns, other sessions)
-      are stored once. Messages are stored as JSON (`json`), so any SQLite tool can read a
-      conversation; a message JSON cannot reproduce exactly also keeps its Erlang term (`term`,
-      otherwise `NULL`). In the event it becomes `{:xeito_chain, head_id, count}`; in the OCEL
-      attributes `%{"chain" => head_id, "messages" => count}`. `xeito_term_chain` records which
-      event refers to which chain, so pruning can sweep unreferenced messages.
-    * **Results once.** The event an effect's result produces carries the same payload as the
-      `effect_completed` logged just before it; it is stored as a reference to that event.
-    * **Compressed terms.** Terms are stored with `term_to_binary(t, [:compressed, :deterministic])`
-      (small terms stay uncompressed).
+    * **Message chains.** Every list of chat messages in an event is stored once per message in
+      `xeito_message`, each row pointing to its parent. A message id hashes its parent's id and
+      its content, so a chain's head id identifies the whole conversation and shared prefixes are
+      stored once. Rows hold JSON, plus the Erlang `term` when JSON cannot reproduce the message
+      exactly (else `NULL`). The event holds `{:xeito_chain, head_id, count}`, the OCEL attributes
+      `%{"chain" => head_id, "messages" => count}`; `xeito_term_chain` records the references
+      for pruning.
+    * **Results once.** An event repeating the result of the `effect_completed` just before it
+      is stored as a reference to that event.
+    * **Compressed terms.** `term_to_binary(t, [:compressed, :deterministic])`.
 
-  Reading reverses all three, so `Xeito.Log.read_run/2` returns the terms that were appended.
-  Logs written before this layout have plain terms and read as they are.
+  Reading reverses all three, so `Xeito.Log.read_run/2` returns the terms that were appended;
+  older logs with plain terms read as they are.
   """
 
   alias Xeito.Log.Codec
@@ -89,8 +82,7 @@ defmodule Xeito.Log.Store do
     {json, if(exact?, do: nil, else: {:blob, pack(message)})}
   end
 
-  # Chat messages have atom keys (`role`, `content`, `tool_calls`, `tool_name`, and `function`,
-  # `name`, `arguments` inside a call); a call's arguments keep the model's string keys.
+  # Chat messages have atom keys; a tool call's arguments keep the model's string keys.
   @message_keys %{
     "role" => :role,
     "content" => :content,
@@ -164,8 +156,7 @@ defmodule Xeito.Log.Store do
   @spec pack(term()) :: binary()
   def pack(term), do: :erlang.term_to_binary(term, [:compressed, :deterministic])
 
-  # An event carrying exactly the result of the `effect_completed` just before it (in the same
-  # batch) refers to that event instead of repeating the payload.
+  # An event carrying exactly the result of the `effect_completed` just before it (same batch) refers to it.
   defp dedupe(run_id, %Event{type: "event_received", term: {:event, name, data, actor}} = e, last) when last != nil do
     case last do
       {^data, seq} ->
@@ -347,9 +338,7 @@ defmodule Xeito.Log.Store do
 
   # --- term walking --------------------------------------------------------------------------
 
-  # Rebuilds a term, threading an accumulator. `fun` sees each sub-term first and returns
-  # `{:replace, new, acc}` or `:descend`. Binaries, numbers and atoms are left as they are;
-  # structs keep their type (their `__struct__` atom walks to itself).
+  # Rebuilds a term with an accumulator; `fun` returns `{:replace, new, acc}` or `:descend`. Structs keep their type.
   defp walk(term, acc, fun) do
     case fun.(term, acc) do
       {:replace, new, acc} -> {new, acc}

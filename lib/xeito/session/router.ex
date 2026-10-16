@@ -1,8 +1,8 @@
 defmodule Xeito.Session.Router do
   @moduledoc """
-  Selects the machine for a request: rules over the `Intent` decision and the message, never a
-  prompt. Unmatched requests go to the free chat machine, whose logged runs later show which
-  new machines are worth writing (`docs/architecture/05-event-log-and-process-mining.md`).
+  Selects the machine for a request by rules over the `Intent` decision and the message, never a prompt.
+
+  First match wins; unmatched requests go to free chat.
 
   | intent         | message mentions                    | machine                                      |
   |----------------|-------------------------------------|----------------------------------------------|
@@ -23,7 +23,7 @@ defmodule Xeito.Session.Router do
   alias Xeito.Machines.Shell
   alias Xeito.Session.TaskRunner
 
-  # The registry: name, module, what it does, and how requests reach it (besides /machine).
+  # {name, module, summary, how requests reach it besides /machine}
   @registry [
     {"fix_failing_test", FixFailingTest, "reproduce a failing test, triage it, delegate the fix to chat, verify",
      "intent edit + a failing, red or broken test to fix"},
@@ -41,9 +41,8 @@ defmodule Xeito.Session.Router do
   def machines, do: Map.new(@registry, fn {name, module, _, _} -> {name, module} end)
 
   @doc """
-  The registered machines with their version, summary, routing and states, plus their usage in
-  the workspace log (runs by final status and the last run), when that log exists. Delegated
-  runs count for the machine that ran (a chat run inside `check` counts as `chat`).
+  The registered machines with version, summary, routing, state count and usage from the workspace
+  log when it exists. Delegated runs count for the machine that ran.
   """
   @spec describe(Path.t(), Xeito.Log.server() | nil) :: [map()]
   def describe(cwd, log \\ nil) do
@@ -129,10 +128,8 @@ defmodule Xeito.Session.Router do
   end
 
   @doc """
-  The check command for a workspace: a `check` or `ci` task of its task runner
-  (`Xeito.Session.TaskRunner`: `just`, mise), a `ci` alias in `mix.exs` (`mix ci`), a `check` target in
-  the Makefile (`make check`), else formatting, warnings and tests for Mix projects, `npm run
-  lint && npm test` when `package.json` has a lint script, and the test command otherwise.
+  The check command for a workspace, first found of: a `check` or `ci` task runner task, `mix ci`,
+  `make check`, format/warnings/tests for Mix, `npm run lint && npm test`, else `test_command/1`.
   """
   @spec check_command(Path.t()) :: String.t()
   def check_command(cwd), do: TaskRunner.command(cwd, ~w(check ci)) || inferred_check(cwd)
@@ -152,13 +149,8 @@ defmodule Xeito.Session.Router do
   end
 
   @doc """
-  The quick check for a chat turn that edited files: whether the code still builds, in a few
-  seconds, without running the tests (those are what `check_command/1` and the `check` machine
-  are for). A `check-quick` task of its task runner (`Xeito.Session.TaskRunner`), a
-  `check.quick` alias in `mix.exs` or a `check-quick` Makefile target wins; else
-  format and warnings for Mix, `cargo check`, `go build ./...`, `tsc --noEmit` for TypeScript,
-  a lint script for other `package.json` projects, and `ruff check` when a Python project
-  configures ruff. `nil` when nothing fits: the turn is then not checked.
+  The quick build check, without tests, for a chat turn that edited files; `nil` when nothing fits.
+  A `check-quick` task runner task wins, then the first build file that fits (see the list below).
   """
   @spec quick_check_command(Path.t()) :: String.t() | nil
   def quick_check_command(cwd), do: TaskRunner.command(cwd, ["check-quick"]) || inferred_quick_check(cwd)
@@ -192,9 +184,8 @@ defmodule Xeito.Session.Router do
   end
 
   @doc """
-  The test command for a workspace: a `test` task of its task runner (`Xeito.Session.TaskRunner`:
-  `just test`, `mise run test`), else from its build files: `mix test`, `npm test`, `pytest`,
-  `cargo test`, `go test ./...`, else `make test`.
+  The test command for a workspace: a `test` task runner task, else one inferred from its build
+  files, else `make test`.
   """
   @spec test_command(Path.t()) :: String.t()
   def test_command(cwd), do: TaskRunner.command(cwd, ["test"]) || inferred_test(cwd)

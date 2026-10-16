@@ -2,21 +2,15 @@ defmodule Xeito.Effects.OsCommand do
   @moduledoc """
   Runs an OS command so that it can be stopped, with everything it started.
 
-  Closing a port does not signal the OS process behind it: a `sh -c` left by a timed-out
-  `System.cmd`, or by a halted run's killed effect task, kept running with its children. Here
-  erlexec (`:exec`) runs the command in its own process group and, when it is stopped, sends the
-  group SIGTERM, then SIGKILL after a grace period (`:grace`, in whole seconds, default 2 s).
-  That happens:
+  The command runs under erlexec in its own process group. Stopping it sends the group SIGTERM,
+  then SIGKILL after `:grace` ms (rounded up to whole seconds, default 2000). It is stopped:
 
-    * on a timeout (`:timeout`, default 60 s), which returns the output so far,
-    * when the process waiting for the command dies (a halt kills effect tasks with `:kill`):
-      the command is linked to it, and
-    * when the daemon's VM dies: erlexec's port program stops what it started.
+    * on `:timeout` (ms, default 60000), returning the output so far,
+    * when the calling process dies (it is linked), and
+    * when the VM dies.
 
-  `:on_output` (`fun(binary)`) is called with each piece of output as it arrives, besides it
-  being returned at the end.
-
-  A command that leaves its group (`setsid`, a daemonising double fork) is not stopped.
+  `:on_output` (`fun(binary)`) gets each chunk of output as it arrives. A command that leaves its
+  group (`setsid`, double fork) is not stopped.
   """
 
   @type result :: {:exited, integer(), binary()} | {:timeout, binary()}
@@ -39,8 +33,7 @@ defmodule Xeito.Effects.OsCommand do
       {:cd, to_charlist(Keyword.fetch!(opts, :cd))}
     ]
 
-    # The link stops the command if this process dies, and is how its exit comes back: exits
-    # are trapped while it runs.
+    # The link carries the command's exit back, so exits are trapped while it runs.
     trapping = Process.flag(:trap_exit, true)
     {:ok, pid, os_pid} = :exec.run_link(Enum.map([path | args], &to_charlist/1), options)
     on_output = Keyword.get(opts, :on_output, fn _chunk -> :ok end)

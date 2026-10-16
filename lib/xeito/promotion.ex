@@ -1,17 +1,12 @@
 defmodule Xeito.Promotion do
   @moduledoc """
-  The first half of promotion (`docs/architecture/05-event-log-and-process-mining.md#promotion-from-free-chat-to-skills-and-machines`):
-  from the log's free-chat turns to **candidates** for a skill or a machine.
+  Finds candidates for a skill or a machine among the log's free-chat turns.
 
-    * `trace/3`: what one turn did: its prompt and intent, its steps (tool calls, abstracted:
-      `read`, `edit`, `write`, `check` for the quick check, `bash:<verb>`), its outcome and cost.
-    * `clusters/2`: turns whose prompts share most of their words, with the same intent. Words
-      for now; embeddings later (P7), which would also bring "write tests" and "add a test" together.
-    * `summary/1`: a cluster's size, success, mean cost, and its variants (step sequences with
-      repeats collapsed), the dominant one first.
-    * `target/2`: the rule-based `PromotionTarget`: `:machine`, `:skill` or `:none`, with the reason.
-
-  `mix xeito.candidates` prints the report.
+    * `trace/3`: one turn's prompt, intent, abstracted steps (`read`, `edit`, `write`, `check`,
+      `bash:<verb>`), outcome and cost.
+    * `clusters/2`: turns with the same intent whose prompts share most of their words.
+    * `summary/1`: a cluster's size, success, mean cost and variants, the dominant one first.
+    * `target/2`: `:machine`, `:skill` or `:none`, with the reason.
   """
 
   alias Xeito.Effect
@@ -26,8 +21,7 @@ defmodule Xeito.Promotion do
   @stopwords ~w(a an the for to of in on at and or please me my it its this that these those is are be with from into can could would should you i we)
 
   @doc """
-  The trace of a finished free-chat turn from its log entries (`[{seq, type, term}]`) and its
-  intent; `nil` for any other run, or one still running.
+  The trace of a finished free-chat turn from its log entries (`[{seq, type, term}]`); `nil` otherwise.
   """
   @spec trace(String.t(), [tuple()], atom()) :: map() | nil
   def trace(run, entries, intent) do
@@ -147,7 +141,7 @@ defmodule Xeito.Promotion do
     }
   end
 
-  # Counts in order of first appearance, then most frequent first (a stable sort keeps ties in that order).
+  # Stable sort: ties stay in order of first appearance.
   defp frequencies(items) do
     items
     |> Enum.reduce([], fn item, acc ->
@@ -160,9 +154,7 @@ defmodule Xeito.Promotion do
   end
 
   @doc """
-  The rule-based promotion target of a cluster, with the reason. Options: `:min_runs`
-  (default 5). A machine needs one variant in at least 70% of the runs and a checkable end; a
-  frequent, successful cluster without one is a skill.
+  The rule-based promotion target of a cluster summary, with the reason. Option `:min_runs` (default 5).
   """
   @spec target(map(), keyword()) :: {:machine | :skill | :none, String.t()}
   def target(summary, opts) do

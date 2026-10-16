@@ -1,36 +1,25 @@
 defmodule Xeito.Session do
   @moduledoc """
-  One interactive session: a workspace, a conversation, and the runs started from it. Clients
-  (TUI, CLI, bridge) talk to a session; the session talks to machines.
+  One interactive session: a workspace, a conversation, and the runs started from it.
 
   For a free-form prompt the session
 
     1. decides `Xeito.Decisions.Intent` (an escalation child run, logged),
-    2. selects a machine with `Xeito.Session.Router` (rules),
-    3. starts the run as `<session>/t<n>`, related `part_of` the session in the log,
+    2. selects a machine with `Xeito.Session.Router`,
+    3. starts the run as `<session>/t<n>`, `part_of` the session in the log,
     4. forwards every event of that run and its children to the session topic, and
-    5. when the run finishes, appends the turn to the conversation history.
+    5. when the run finishes, appends the turn to the history.
 
-  A run waiting in an `ask_human` state (for example a `bash` call the `Risk` decision sent to
-  review) is answered with `approve/2` or `deny/1`. Approved with a scope (`"session"` or
-  `"always"`), the command is not asked about again (`Xeito.Session.Allowed`).
+  - A run waiting in `ask_human` is answered with `approve/2` or `deny/1`; a scope
+    (`"session"`, `"always"`) also remembers the command (`Xeito.Session.Allowed`).
+  - A prompt typed while a turn runs is queued.
+  - Step-mode settings (`/step`, `/break`, ...) apply to live and future runs; escalation runs never pause.
+  - With no run and no activity for `:idle_timeout` (`config :xeito, :session_idle_timeout`,
+    default 2 h) the session stops; its turns stay in the log and an id with logged turns is resumed.
 
-  Slash commands: `/machine <name> [prompt]`, `/run <command>`, `/approve`, `/deny`, `/why`,
-  `/budget <usd>`, `/model [tier]` (`Xeito.Session.ChatModel`), `/help`, and for step mode
-  (`docs/architecture/06-observability.md#2-step`):
-  `/step` (toggle), `/next`, `/decide <value>`, `/continue`, `/break state:<s> | decision:<Type> |
-  conf<<x> | clear`. Debug settings apply to the session's live runs and to every run it starts;
-  escalation runs never pause. See `docs/architecture/07-harness-frontend.md#interaction-model`.
-
-  **Idle sessions close.** A session with no run in progress and no activity for
-  `:idle_timeout` (default 2 hours, `config :xeito, :session_idle_timeout`) stops and frees its
-  memory and budget entries. Nothing is lost: its turns are in the workspace log, and `attach`
-  (or any request of a client that knows the workspace) rebuilds it.
-
-  Clients subscribe with `subscribe/1` and receive `{:xeito, "session:<id>", event}` where
-  `event` is `%{type: type, run: run_id, attrs: map}`. Besides the logged event types, the
-  session emits `prompt`, `intent`, `run_selected`, `human_needed`, `turn_finished`, `notice`
-  and `error`, plus the runs' `delta` stream.
+  Events: `{:xeito, "session:<id>", %{type: type, run: run_id, attrs: map}}`, with the logged
+  types plus `prompt`, `intent`, `run_selected`, `human_needed`, `turn_finished`, `notice`,
+  `error` and the runs' `delta` stream.
   """
 
   use GenServer
@@ -64,19 +53,15 @@ defmodule Xeito.Session do
   alias Xeito.Tools
   alias Xeito.Undo
 
-  # The history window trims with slack: past 80 messages it drops back to 60, so its first
-  # message changes once every ~20 messages rather than every turn. The log stores a conversation
-  # as a chain from its first message (`Xeito.Log.Store`); a window sliding every turn would
-  # start a new chain every turn.
+  # Trimmed with slack (80 back to 60) so the first message, which keys the log's chain, rarely changes.
   @max_history 80
   @trimmed_history 60
   @agents_max_bytes 16_384
 
   @doc """
-  Starts a session. Options: `:cwd` (workspace, required), `:id`, `:log` (default: the
-  workspace's own log, `Xeito.Log.for_workspace/1`),
-  `:decider` (escalation options for decisions: `deciders`, `policy`, `tiers`), `:chat`
-  (chat-model overrides), `:test_cmd`, `:system` (replaces the default system prompt),
+  Starts a session, or returns the id of the running one. Options: `:cwd` (required), `:id`,
+  `:log` (default `Xeito.Log.for_workspace/1`), `:decider` (escalation options), `:chat`
+  (chat-model overrides), `:max_steps`, `:test_cmd`, `:system` (replaces the system prompt),
   `:idle_timeout` (ms).
   """
 
@@ -98,7 +83,7 @@ defmodule Xeito.Session do
   @doc false
   def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}, restart: :temporary}
 
-  # The slash commands, by what they act on (command/3). `skill:` takes the skill's name.
+  # By group (command/3); `skill:` is a prefix.
   @start_commands ~w(machine run skill: steer)
   @turn_commands ~w(approve deny halt send drop)
   @info_commands ~w(why budget model help machines)
@@ -118,8 +103,7 @@ defmodule Xeito.Session do
   def prompt(id, text), do: GenServer.call(via(id), {:prompt, text})
 
   @doc """
-  Approves the command a run is waiting on. With a scope, `"session"` or `"always"`, the command
-  is also remembered and not asked about again (`Xeito.Session.Allowed`).
+  Approves the command a run is waiting on; with scope `"session"` or `"always"`, also remembers it.
   """
   @spec approve(String.t(), String.t() | nil) ::
           :ok
@@ -148,9 +132,8 @@ defmodule Xeito.Session do
   def history(id), do: GenServer.call(via(id), :history)
 
   @doc """
-  The workspace state for status bars, also emitted as a `workspace` event: git (branch, dirty
-  entries, ahead/behind; `nil` outside a repository) and the off-box budget (whether off-box
-  tiers are allowed, the limit per run, and what the current run has spent).
+  The workspace state for status bars, also emitted as a `workspace` event: git (`nil` outside a
+  repository), off-box budget and chat tier.
   """
   @spec workspace(String.t()) :: map()
   def workspace(id), do: GenServer.call(via(id), :workspace)
@@ -167,7 +150,7 @@ defmodule Xeito.Session do
     log = Keyword.get_lazy(opts, :log, fn -> Log.for_workspace(cwd) end)
     id = Keyword.fetch!(opts, :id)
 
-    # Trapping exits lets a clean daemon stop run terminate/2, which records the session closed.
+    # So that a clean daemon stop runs terminate/2.
     Process.flag(:trap_exit, true)
     Log.put_object(log, id, "session", %{cwd: cwd, status: "open"})
     Events.subscribe(:all)
@@ -178,18 +161,15 @@ defmodule Xeito.Session do
       log: log,
       decider: Keyword.get(opts, :decider, []),
       chat: Keyword.get(opts, :chat, []),
-      # Model turns per chat turn (`Xeito.Machines.Chat`'s default when nil).
       max_steps: Keyword.get(opts, :max_steps),
       test_cmd: Keyword.get_lazy(opts, :test_cmd, fn -> Router.test_command(cwd) end),
       system: Keyword.get_lazy(opts, :system, fn -> system_prompt(cwd) end),
       history: [],
-      # The last turn stopped before it was done (step limit): a short "go ahead" continues it.
+      # The last turn hit its step limit.
       unfinished: false,
-      # Lines typed while a turn ran, oldest first, and whether they wait for the user (`held`)
-      # because a turn ended in a way they were not written for.
+      # Lines typed while a turn ran, oldest first; `held` after a turn that did not end normally.
       queue: [],
       held: false,
-      # Whether this session has said that the daemon's code changed on disk (`Xeito.Preload`).
       stale_warned: false,
       decisions: [],
       debug: %{step: false, breakpoints: []},
@@ -218,9 +198,7 @@ defmodule Xeito.Session do
 
   defp busy?(s), do: s.root != nil or s.waiting != nil or s.paused != nil
 
-  # A session id that already has turns in the workspace log is resumed: the conversation is
-  # rebuilt from its finished runs. An unfinished run (the daemon stopped mid-turn) is reported,
-  # not re-executed.
+  # Rebuilds the history from logged turns; an unfinished run is reported, not re-executed.
   defp restore(s) do
     turns =
       s.log
@@ -263,7 +241,6 @@ defmodule Xeito.Session do
     end
   end
 
-  # Commands that answer or inspect work while a run is busy; anything that starts a run does not.
   # Every request counts as activity for the idle timeout.
   @impl true
   def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
@@ -301,8 +278,7 @@ defmodule Xeito.Session do
     {:reply, attrs, s}
   end
 
-  # Commands that act on a running turn (or need none) are taken while it runs; while a review
-  # waits, text is the answer: what to do instead of the call.
+  # While a review waits, plain text is its answer: what to do instead of the call.
   defp prompt(trimmed, text, s) do
     log_prompt(trimmed, text, s)
 
@@ -325,8 +301,7 @@ defmodule Xeito.Session do
     end
   end
 
-  # Every line typed is logged, for Up/Down in this directory's later sessions
-  # (`Xeito.Session.Directory`); not the lines clients send for keys (Enter, Esc) or review answers.
+  # Typed lines are logged for input history; lines clients send for keys are not.
   @key_lines ~w(/send /drop /halt /next /approve /deny)
 
   defp log_prompt(trimmed, _text, _s) when trimmed in ["" | @key_lines], do: :ok
@@ -386,8 +361,7 @@ defmodule Xeito.Session do
     {machine, reason} = Router.route(decision.value, text)
     input = input_for(machine, text, s)
 
-    # Small talk needs no tools, and without tools the model's answer streams at once. Only when
-    # the small-talk rule says so: a model's `other` can be a reply to an unfinished turn.
+    # Only the rule's `other`: a model's `other` can be a reply to an unfinished turn.
     input = if small_talk?(machine, decision, s), do: Map.put(input, :tools, false), else: input
     start_machine(machine, input, reason, s)
   end
@@ -414,9 +388,7 @@ defmodule Xeito.Session do
     end
   end
 
-  # An idle close (:normal) or a clean daemon stop (:shutdown) records the session closed. A
-  # crash records nothing; the next time the workspace log opens, it marks the session
-  # `interrupted` (`Xeito.Log`).
+  # A crash records nothing; `Xeito.Log` marks the session `interrupted` on next open.
   @impl true
   def terminate(reason, s) when reason in [:normal, :shutdown] or (is_tuple(reason) and elem(reason, 0) == :shutdown) do
     Budget.delete(s.id)
@@ -427,8 +399,7 @@ defmodule Xeito.Session do
 
   def terminate(_reason, s), do: Budget.delete(s.id)
 
-  # A short go-ahead right after a turn that stopped unfinished continues it, with tools. Decided
-  # by rule: the Intent decision sees only the message, and took "go ahead" for small talk.
+  # By rule: the Intent decision sees only the message and takes "go ahead" for small talk.
   @continuations ~r/\A(go ahead|go on|continue|carry on|proceed|keep going|yes|yes,? (please|do it|go ahead)|do it|please do|ok,? (go ahead|continue|do it))[\s.!]*\z/i
 
   defp route_prompt(text, trimmed, s),
@@ -463,7 +434,6 @@ defmodule Xeito.Session do
       send(me, {:intent, text, decision})
     end)
 
-    # Busy until the run starts (and while it runs).
     %{s | root: :deciding}
   end
 
@@ -495,7 +465,6 @@ defmodule Xeito.Session do
   defp command_group("skill:" <> _name), do: :start
   defp command_group(name), do: @command_groups[name]
 
-  # Commands that start a turn.
   defp start_command("machine", rest, _raw, s), do: machine_command(rest, s)
   defp start_command("skill:" <> name, rest, _raw, s), do: skill_command(name, rest, s)
   defp start_command("run", "", _raw, s), do: error(s, "/run <command>: a shell command to run in the workspace")
@@ -506,13 +475,11 @@ defmodule Xeito.Session do
   defp start_command("steer", text, _raw, s), do: steer(text, s)
   defp start_command("run", cmd, _raw, s), do: start_machine(Shell, input_for(Shell, cmd, s), "/run", s)
 
-  # Commands for the turn that is running.
   defp turn_command("approve", arg, s), do: approve_command(arg, s)
   defp turn_command("deny", _arg, s), do: human_command(:denied, s)
   defp turn_command("halt", _arg, s), do: halt(s)
   defp turn_command(send_or_drop, _arg, s), do: queue_command(send_or_drop, s)
 
-  # `/approve` answers the review; `/approve session` and `/approve always` also remember the command.
   defp approve_command("", s), do: human_command(:approved, s)
   defp approve_command(scope, s) when scope in ["session", "always"], do: allow_command(scope(scope), s)
   defp approve_command(arg, s), do: error(s, "/approve takes session or always, not #{inspect(arg)}")
@@ -533,7 +500,6 @@ defmodule Xeito.Session do
   defp allow_error({:not_saved, reason}), do: "approved, but .xeito/allowed.json could not be written: #{inspect(reason)}"
   defp allow_error(reason), do: Map.fetch!(@allow_errors, reason)
 
-  # /send and /drop: the first line typed while a turn ran.
   defp queue_command(_send_or_drop, %{queue: []} = s), do: error(s, "nothing is queued")
 
   defp queue_command("send", %{root: root} = s) when root != nil,
@@ -548,7 +514,6 @@ defmodule Xeito.Session do
   defp info_command("help", _arg, s), do: notice(s, help())
   defp info_command("machines", _arg, s), do: notice(s, machines_text(s))
 
-  # Step mode and breakpoints.
   defp debug_command("step", _arg, _raw, s), do: set_debug(%{s.debug | step: not s.debug.step}, s)
   defp debug_command("continue", _arg, _raw, s), do: set_debug(%{s.debug | step: false}, s)
   defp debug_command("next", _arg, _raw, s), do: step(:next, s)
@@ -559,8 +524,7 @@ defmodule Xeito.Session do
   defp debug_arg_command("break", "clear", _raw, s), do: set_debug(%{s.debug | breakpoints: []}, s)
   defp debug_arg_command("break", spec, _raw, s), do: add_breakpoint(spec, s)
 
-  # /undo [n] and /redo [n]: this session's last n steps in the workspace (`Xeito.Undo`). The
-  # model is told, so that it does not take the files to be as it left them.
+  # The model is told, so it does not assume the files are as it left them.
   defp undo_command(name, arg, s) do
     case count(arg) do
       {:ok, n} -> name |> undo_or_redo(s, n) |> undone(name, s)
@@ -590,8 +554,7 @@ defmodule Xeito.Session do
 
   defp undone({:error, reason}, name, s), do: error(s, undo_error(reason, name))
 
-  # Every undo is a label against the effect it reverts (for promotion and machine evals). The
-  # events go in the session's own stream: `within` the session object, not a run.
+  # Logged in the session's own stream, not a run's, against the effect reverted.
   defp log_undone(steps, name, s) do
     {type, qualifier} = if name == "undo", do: {"step_undone", "undoes"}, else: {"step_redone", "redoes"}
     Log.append(s.log, s.id, Enum.map(steps, &undo_event(&1, type, qualifier)))
@@ -602,7 +565,6 @@ defmodule Xeito.Session do
     Log.Event.new(type, {String.to_atom(type), step.id, step.label}, attrs, [{step.id, "effect", qualifier}])
   end
 
-  # Where the branch went when the steps made commits (`Xeito.Undo.Branch`).
   defp branch_moved(steps, name) do
     case Enum.filter(steps, &is_map(&1.git)) do
       [] ->
@@ -681,7 +643,7 @@ defmodule Xeito.Session do
     end
   end
 
-  # `/skill:name args`, as in pi: the skill's instructions become the prompt of a chat turn.
+  # `/skill:name args`: the skill's instructions become the prompt of a chat turn.
   defp skill_command(name, request, s) do
     case Enum.find(Skills.discover(s.cwd), &(&1.name == name)) do
       nil ->
@@ -697,14 +659,13 @@ defmodule Xeito.Session do
         Request: #{if request == "", do: "(none; follow the instructions)", else: request}
         """
 
-        # The skill is chosen already: no other is suggested.
         start_machine(Chat, Map.put(input_for(Chat, prompt, s), :skill_candidates, []), "/skill:#{name}", s)
     end
   end
 
   @halted "Halted by the user."
 
-  # Once per session: the daemon keeps running the code it loaded at start (`Xeito.Preload`).
+  # Once per session.
   defp warn_if_stale(%{stale_warned: true} = s), do: s
 
   defp warn_if_stale(s) do
@@ -719,8 +680,7 @@ defmodule Xeito.Session do
       else: s
   end
 
-  # Stops the turn where it is (Esc in the TUI): the run and the runs under it, or the intent
-  # decision before any run started.
+  # Stops the run and the runs under it, or the intent decision before any run started.
   defp halt(%{root: nil} = s), do: error(s, "nothing is running")
 
   defp halt(%{root: :deciding} = s) do
@@ -753,8 +713,7 @@ defmodule Xeito.Session do
     end
   end
 
-  # The waiting command is approved and remembered for the scope (`Xeito.Session.Allowed`): the
-  # next review about the very same command is skipped. Only a shell command can be allowed.
+  # Only a shell command can be allowed.
   defp allow(scope, %{waiting: %{run: run, call: call}} = s) do
     with {:ok, command} <- Allowed.command(call),
          :ok <- answer_human(run, :approved) do
@@ -765,7 +724,7 @@ defmodule Xeito.Session do
     end
   end
 
-  # Approved already; what fails here is the write to `.xeito/allowed.json`.
+  # Approved already; only the write to `.xeito/allowed.json` can fail here.
   defp keep_allowed(scope, command, s) do
     case Allowed.remember(scope, command, s.cwd, s.allowed) do
       {:ok, allowed} -> {:ok, notice(%{s | allowed: allowed}, "approved · `#{command}` is now #{allowed_how(scope)}")}
@@ -776,8 +735,7 @@ defmodule Xeito.Session do
   defp allowed_how(:session), do: "allowed for this session"
   defp allowed_how(:always), do: "always allowed in this workspace (.xeito/allowed.json)"
 
-  # Review states take :approved / :denied (the chat machine); a machine's own ask_human state
-  # may continue with :answered and stop with :abort (fix_failing_test).
+  # Fallback for a machine's own ask_human state, which takes :answered / :abort (fix_failing_test).
   @fallback %{approved: :answered, denied: :abort}
 
   defp answer_human(run, answer, data \\ %{}) do
@@ -793,7 +751,7 @@ defmodule Xeito.Session do
   end
 
   # --- step mode -----------------------------------------------------------------------------
-  # Skills are discovered on every turn, so a new or edited SKILL.md applies at once.
+  # Skills are discovered every turn, so an edited SKILL.md applies at once.
   defp input_for(Chat, text, s), do: chat_input(text, s)
 
   defp input_for(Commit, text, s), do: %{cwd: s.cwd, request: text}
@@ -808,14 +766,10 @@ defmodule Xeito.Session do
 
   defp chat_input(text, s) do
     skills = Skills.discover(s.cwd)
-    # Their example requests are written in the background, for later turns (the daemon's worker;
-    # outside the daemon there is none, and the cast goes nowhere).
+    # Outside the daemon there is no worker and the cast goes nowhere.
     Worker.wanted(skills)
-    # The workspace's skills are listed; the user's are shortlisted for the turn's skill decision.
     %{listed: listed, candidates: candidates} = Skills.for_turn(skills, s.cwd, text)
 
-    # A turn that edits files is checked before it answers (`Xeito.Machines.Chat`): the quick
-    # check (does it still build), not the full suite, which is the `check` machine's job.
     then(
       %{
         cwd: s.cwd,
@@ -831,8 +785,6 @@ defmodule Xeito.Session do
     )
   end
 
-  # Built each turn (tens of milliseconds): its text changes only when modules or public
-  # functions do, so the model's prompt cache survives ordinary edits.
   defp repo_map(cwd) do
     case RepoMap.build(cwd) do
       nil -> ""
@@ -848,7 +800,7 @@ defmodule Xeito.Session do
 
     start = [run_id: run_id, log: s.log, runner: runner, debug: s.debug]
 
-    # The request is kept in the run's input, so a resumed session can rebuild its history.
+    # Kept in the input so a resumed session can rebuild its history.
     input = Map.put_new(input, :request, s.prompt)
 
     case RunSupervisor.start_run(machine, input, start) do
@@ -875,9 +827,7 @@ defmodule Xeito.Session do
   defp track(run_id, %{type: "run_finished"} = event, %{root: run_id} = s) do
     {:ok, result} = Run.result(s.log, run_id)
     answer = answer(s.machine, result)
-    # A turn may have edited files or committed: refresh the status bars first, so that
-    # `turn_finished` is the turn's last event and nothing (git) still runs in the workspace
-    # once a client sees it.
+    # Before `turn_finished`, so that it is the turn's last event and no git runs after it.
     emit(s, "workspace", nil, workspace_attrs(%{s | root: nil}))
     emit(s, "turn_finished", run_id, Map.put(event.attrs, "answer", answer))
 
@@ -892,8 +842,7 @@ defmodule Xeito.Session do
     %{s | waiting: %{run: run_id, call: call}}
   end
 
-  # The command was allowed before (`/approve session|always`): approved as the human would
-  # have, with the scope in the log, and said so. The `Risk` decision has already run.
+  # Allowed before: approved as the human would, with the scope in the log.
   defp skip_review(run_id, call, scope, s) do
     {:ok, command} = Allowed.command(call)
 
@@ -905,9 +854,7 @@ defmodule Xeito.Session do
 
   # --- input while busy ---
 
-  # `/steer`: a line for the running chat turn, which the chat machine gives the model with its
-  # next request (`Xeito.Machines.Chat.steer/2`). Idle, it is a prompt; during another machine,
-  # it is queued like any other line.
+  # Idle, a steer is a prompt; during a machine other than chat, it is queued.
   defp steer(text, %{root: nil} = s), do: start_turn(text, String.trim(text), s)
 
   defp steer(text, %{machine: Chat, root: run} = s) when is_binary(run) do
@@ -923,10 +870,10 @@ defmodule Xeito.Session do
 
   defp steer(text, s), do: s |> notice("steering reaches a chat turn only; queued instead") |> then(&enqueue(text, &1))
 
-  # Steers the chat turn ended before giving to the model wait like lines typed meanwhile.
+  # Steers the turn ended before delivering are queued.
   defp requeue_steers(s, result), do: result.ctx |> Chat.undelivered() |> Enum.reduce(s, &enqueue/2)
 
-  # A line typed while a turn runs waits here, in order; it is never taken as a review's answer.
+  # A queued line is never taken as a review's answer.
   defp enqueue(text, s) do
     queue = s.queue ++ [text]
     emit(s, "queued", nil, %{"text" => text, "queued" => length(queue)})
@@ -934,8 +881,7 @@ defmodule Xeito.Session do
     %{s | queue: queue}
   end
 
-  # A turn that ended normally sends the first queued line as the next prompt. Otherwise the
-  # queue is held: its lines were written without seeing that ending.
+  # A normal ending sends the first queued line; otherwise the queue is held.
   defp after_turn(%{queue: []} = s, _result, _answer), do: s
   defp after_turn(%{held: true} = s, _result, _answer), do: s
 
@@ -943,7 +889,7 @@ defmodule Xeito.Session do
     do: if(release?(result, answer), do: send_queued(s), else: hold(s, hold_reason(result)))
 
   @doc false
-  # Whether a turn ended normally: done, not stopped at its step limit, and not asking a question.
+  # Done, not stopped at its step limit, and not asking a question.
   def release?(result, answer),
     do:
       result.status == :done and not stopped?(result) and
@@ -977,7 +923,6 @@ defmodule Xeito.Session do
 
   defp review_ended(run_id, s), do: if(s.waiting && s.waiting.run == run_id, do: %{s | waiting: nil}, else: s)
 
-  # The runs that are live (for step mode) and the one that is paused.
   defp track_run(run_id, %{type: "paused"}, s), do: %{s | paused: run_id}
 
   defp track_run(run_id, %{type: "run_started"}, s) do
@@ -987,8 +932,7 @@ defmodule Xeito.Session do
   defp track_run(run_id, %{type: "run_finished"}, s),
     do: %{s | live: MapSet.delete(s.live, run_id), paused: unpause(s.paused, run_id)}
 
-  # Streamed pieces (model tokens, a command's output) can arrive after the run paused on the
-  # result they belong to: they do not mean it moved on.
+  # Streamed pieces can arrive after the run paused: they do not mean it moved on.
   defp track_run(run_id, %{type: type}, s) when type not in ~w(delta output), do: %{s | paused: unpause(s.paused, run_id)}
   defp track_run(_run_id, _event, s), do: s
 
@@ -1016,7 +960,7 @@ defmodule Xeito.Session do
     }
   end
 
-  # The chat tier for the status bar; a remote one with what its key has left (no request made).
+  # `Allowance.last/1` makes no request.
   defp chat_attrs(tier, cfg) do
     left = if ChatModel.off_box?(tier) and cfg[:url], do: Allowance.last(cfg)
     %{"tier" => tier, "model" => cfg[:model], "off_box" => ChatModel.off_box?(tier), "left_usd" => left}
@@ -1087,8 +1031,7 @@ defmodule Xeito.Session do
   defp confidence_breakpoint({f, ""}), do: {:ok, {:confidence_below, f}}
   defp confidence_breakpoint(_parsed), do: :error
 
-  # A command the model gave a time of its own: how long it will get (`Xeito.Tools`), so a client
-  # shows that and not what was asked.
+  # The timeout the command will actually get, not what the model asked.
   defp runs_for(%{"tool" => "bash", "arguments" => %{"timeout_s" => asked}} = call),
     do: Map.put(call, "runs_for_s", div(Tools.bash_timeout_ms(asked), 1_000))
 
@@ -1105,7 +1048,6 @@ defmodule Xeito.Session do
   end
 
   @doc false
-  # A finished turn's answer, as the session reported it (`Xeito.Session.Directory.turns/3`).
   def turn_answer(machine, result), do: answer(machine, result)
 
   defp answer(_machine, %{status: :halted}), do: @halted
@@ -1116,7 +1058,6 @@ defmodule Xeito.Session do
 
   defp answer(machine, result), do: ended(machine, result)
 
-  # Any other machine: its answer or error, else the state it ended in.
   defp ended(machine, %{state: state} = result) do
     ctx = Map.get(result, :ctx, %{})
 
@@ -1124,7 +1065,6 @@ defmodule Xeito.Session do
       ctx |> Map.get(:error) |> to_text() |> default("#{inspect(machine)} ended in #{state}")
   end
 
-  # Nothing failed when it reproduced: say so, and how to ask for a new test instead.
   defp fix_failing_answer(%{state: :done, ctx: ctx}) when not is_map_key(ctx, :last_failure),
     do:
       "The tests pass (#{Map.get(ctx, :test_cmd, "the test suite")}): there is no failing test to fix. " <>
@@ -1144,16 +1084,11 @@ defmodule Xeito.Session do
 
   defp to_text(nil), do: ""
   defp to_text(text) when is_binary(text), do: text
-  # A remote chat call that was not made: its reason is written for the user (`Xeito.Allowance`).
+  # Reasons from `Xeito.Allowance` are written for the user.
   defp to_text({:budget, text}), do: text
   defp to_text({:allowance, text}), do: text
   defp to_text(other), do: inspect(other)
 
-  # Chat turns keep their full message list; other machines leave a short exchange.
-  # A halted turn may end with tool calls still unanswered: they are dropped, so the next request
-  # is well-formed, and a note says where the turn stopped.
-  # The model server cut a request of this turn from the front (`Xeito.Chat.Window.truncated?/2`):
-  # the system prompt was lost, so say so.
   defp warn_truncated(s, %{ctx: %{context_truncated: true}}),
     do:
       notice(
@@ -1164,10 +1099,8 @@ defmodule Xeito.Session do
 
   defp warn_truncated(s, _result), do: s
 
-  # The chat tier's configuration (`[]` if it is not configured).
   defp chat_config(s), do: Tiers.config(ChatModel.current(s.chat)) || []
 
-  # /model: show the chat tiers, or switch this session's chat to one.
   defp chat_model("", s) do
     cfg = chat_config(s)
     notice(s, ChatModel.describe(ChatModel.current(s.chat), chat_configs(), cfg[:url] && Allowance.last(cfg)))
@@ -1196,8 +1129,7 @@ defmodule Xeito.Session do
 
   defp remember(%{machine: Chat}, %{ctx: %{turn: [_system | messages]}}, _answer), do: trim_history(messages)
 
-  # A command the user ran is something they did, not an exchange: a note in their voice, as for
-  # /undo, with what a model would have read of its output.
+  # A note in the user's voice, not an exchange.
   defp remember(%{machine: Shell} = s, %{ctx: ctx}, _answer),
     do: trim_history(s.history ++ [%{role: "user", content: shell_note(ctx)}])
 
@@ -1209,6 +1141,7 @@ defmodule Xeito.Session do
   defp shell_note(%{cmd: cmd}), do: "(I ran `#{cmd}` in the workspace and stopped it before it finished.)"
 
   @doc false
+  # Drops a trailing tool call left unanswered, so the next request is well-formed.
   def settled(messages) do
     with i when i != nil <- Enum.find_index(Enum.reverse(messages), &calls?/1),
          {before, [call | rest]} <- Enum.split(messages, length(messages) - 1 - i),
@@ -1221,8 +1154,7 @@ defmodule Xeito.Session do
 
   defp calls?(message), do: match?(%{role: "assistant", tool_calls: [_ | _]}, message)
 
-  # A summary of earlier turns (P4c, `Xeito.Chat.Window.summary_message/2`) stays first: it
-  # stands for what was trimmed before.
+  # A leading summary of earlier turns stays first.
   @doc false
   def trim_history(messages) when length(messages) > @max_history do
     {pinned, rest} = Enum.split_while(messages, &Window.summary?/1)
@@ -1233,7 +1165,6 @@ defmodule Xeito.Session do
 
   # --- commands ------------------------------------------------------------------------------
 
-  # The session's own decisions (Intent) plus those its runs logged, newest first.
   defp why(s) do
     own =
       for d <- s.decisions do
@@ -1362,7 +1293,6 @@ defmodule Xeito.Session do
     end
   end
 
-  # A longer AGENTS.md is cut, and the model is told so (it can read the rest).
   defp agents_text(text) when byte_size(text) <= @agents_max_bytes, do: text
 
   defp agents_text(text),

@@ -1,16 +1,11 @@
 defmodule Xeito.Backends.Ollama do
   @moduledoc """
-  Ollama backend: decisions through `/api/chat` with the decision's JSON Schema as `format` and
-  `logprobs`, and model residency.
+  Ollama backend: decisions through `/api/chat` under the decision's JSON Schema, and model residency.
 
-  The answer is generated under the grammar at temperature 0. Its confidence comes from the
-  `top_logprobs` at the first token of the value, renormalised over the options
-  (`Xeito.Decision.Scoring.one_step/2`). If that position cannot be found, the chosen value
-  gets the product of its own token probabilities.
-
-  Residency: which model Ollama has loaded (`/api/ps`), and loading one (a *swap*). With one
-  model resident at a time, a swap costs seconds, so the escalation machine treats it as a state
-  of its own (`docs/architecture/04-delegation.md#the-cost-of-a-tier-change-is-a-state`).
+  Decisions run at temperature 0. Confidence comes from the `top_logprobs` at the value's first
+  token, renormalised over the options (`Xeito.Decision.Scoring.one_step/2`); when those give
+  nothing, the chosen value gets the product of its own token probabilities.
+  `loaded?/1` and `load/1` check and load the resident model.
   """
 
   @behaviour Xeito.Backends

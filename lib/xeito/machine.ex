@@ -3,8 +3,7 @@ defmodule Xeito.Machine do
   Versioned statechart definitions: states, events, guards, timeouts and final states.
 
   A machine is written with a small DSL and compiled into plain data (`%Xeito.Machine{}`),
-  which the generic run process interprets, the exporters turn into Mermaid or SCXML,
-  and later phases turn into Petri nets for conformance checking.
+  which the run process interprets and the exporters turn into Mermaid or SCXML.
 
       defmodule MyMachine do
         use Xeito.Machine, name: "run_tests", version: "0.1.0"
@@ -30,12 +29,9 @@ defmodule Xeito.Machine do
     * `guard: :fun` — `fun(ctx, event_data) :: boolean()`, must be pure
     * `action: :fun` — `fun(ctx, event_data) :: ctx`, pure context update on the transition
 
-  Every non-final state has a timeout: either `timeout: ms | {ms, event}` or the machine's
-  `default_timeout` (5 minutes). A timeout that no transition handles moves the run to the
-  mandatory `:failed` final state. Validation happens at compile time; see
-  `Xeito.Machine.Validator`.
-
-  See `docs/architecture/02-state-machine-core.md`.
+  Every non-final state has a timeout: `timeout: ms | {ms, event}`, else the machine's
+  `default_timeout` (5 minutes). An unhandled timeout moves the run to the mandatory `:failed`
+  final state. `Xeito.Machine.Validator` checks definitions at compile time.
   """
 
   alias Xeito.Machine.State

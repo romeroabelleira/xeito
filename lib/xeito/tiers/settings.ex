@@ -1,26 +1,21 @@
 defmodule Xeito.Tiers.Settings do
   @moduledoc """
-  Reads the tiers' configuration from the environment (`config/runtime.exs`), so no deployment
-  detail lives in the repository.
+  Reads the tiers' configuration from `XEITO_*` environment variables (used by `config/runtime.exs`).
 
-  Every tier reads the same settings under its own prefix, `XEITO_<TIER>_`, for example
-  `XEITO_LOCAL_MODEL` or `XEITO_REMOTE_FRONTIER_KEY_FILE`:
+  Per tier, under the prefix `XEITO_<TIER>_` (e.g. `XEITO_LOCAL_MODEL`):
 
     * `BACKEND` — the API it speaks (`Xeito.Backends`); default: the tier's (`Xeito.Tiers`)
     * `URL` — default: OpenRouter's for an OpenRouter tier, none otherwise
     * `MODEL`, `KEY_FILE` (a file holding the API key)
-    * `CONTEXT` (Ollama: the context window, sent as `num_ctx`), `KEEP_ALIVE` (Ollama)
-    * `PROVIDERS` (OpenRouter: a comma list to pin), `ZDR` (OpenRouter: `false` to allow
-      endpoints that retain prompts; default on), `REASONING` (OpenRouter chat: an effort such as
-      `low` or `high`; default: the model's own)
+    * `CONTEXT` (Ollama `num_ctx`), `KEEP_ALIVE` (Ollama)
+    * `PROVIDERS` (OpenRouter: comma list to pin), `ZDR` (OpenRouter: `false` allows endpoints
+      that retain prompts; default on), `REASONING` (OpenRouter chat effort, e.g. `low`)
 
-  Two settings are not per tier (`app_env/1`): `XEITO_CHAT_TIER`, the tier chat runs on unless a
-  session chooses another with `/model` (default `local`), and `XEITO_MAX_USD_PER_RUN`, the
-  off-box spend limit per run (`Xeito.Policy`, default 0.50; `/budget` changes it per session).
+  Not per tier (`app_env/1`): `XEITO_CHAT_TIER` (default chat tier) and `XEITO_MAX_USD_PER_RUN`
+  (off-box spend limit per run, `Xeito.Policy`).
 
-  A local tier is configured by its URL. A remote tier is opt-in: it is configured only when its
-  URL, its model and its key file are all set, so one OpenRouter key does not switch on both
-  remote tiers. An unconfigured tier is left out, and the escalation never reaches it.
+  A local tier is configured by its URL; a remote tier only when URL, model and key file are all
+  set. An unconfigured tier is left out and never reached. Bad values raise `ArgumentError`.
   """
 
   alias Xeito.Backends

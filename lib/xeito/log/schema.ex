@@ -1,14 +1,11 @@
 defmodule Xeito.Log.Schema do
   @moduledoc """
-  OCEL 2.0 relational layout (SQLite) for Xeito's event types, plus one Xeito-specific table.
+  The SQLite schema of the event log: OCEL 2.0 tables for Xeito's event types plus `xeito_term`.
 
-  OCEL 2.0 tables: `event`, `event_map_type`, `event_<type>`, `object`, `object_map_type`,
-  `object_<type>`, `event_object`, `object_object`. Process-mining tools (e.g. PM4Py) read
-  these directly and ignore any other tables.
-
-  `xeito_term` stores the exact Erlang term of every event (`:erlang.term_to_binary/1`),
-  indexed by `(run_id, seq)`. Replay and recovery read it, because JSON attributes cannot
-  round-trip tuples and atoms.
+    * OCEL 2.0 tables: `event`, `event_map_type`, `event_<type>`, `object`, `object_map_type`,
+      `object_<type>`, `event_object`, `object_object`
+    * `xeito_term`: each event's exact Erlang term, unique on `(run_id, seq)`; replay and
+      recovery read it, since the JSON attributes lose tuples and atoms
   """
 
   @event_types %{
@@ -23,16 +20,14 @@ defmodule Xeito.Log.Schema do
     "decision_made" =>
       ~w(effect_id decision_type value confidence actor model latency_ms input_hash tokens_in tokens_out usd joules_est),
     "run_finished" => ~w(status final_state),
-    # `/undo` and `/redo` (`Xeito.Undo`), in the session's own stream (`within` the session):
-    # a label against the effect whose change was reverted or put back.
+    # `Xeito.Undo`, in the session's stream.
     "step_undone" => ~w(effect_id label),
     "step_redone" => ~w(effect_id label),
-    # Lines typed while a turn ran: queued, then sent or dropped (`Xeito.Session`).
+    # `Xeito.Session`: lines typed while a turn ran.
     "prompt_queued" => ~w(text),
     "prompt_entered" => ~w(text),
     "prompt_dequeued" => ~w(text outcome),
-    # Example requests the local model wrote for a skill (`Xeito.Skills.Examples`), in the user's
-    # own log (`~/.xeito`), stream `skills/examples`.
+    # `Xeito.Skills.Examples`, in the user's log, stream `skills/examples`.
     "skill_examples_generated" => ~w(skill skill_hash model digest count tokens_in tokens_out latency_ms)
   }
 

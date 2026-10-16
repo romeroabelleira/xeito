@@ -1,14 +1,12 @@
 defmodule Xeito.Session.Allowed do
   @moduledoc """
-  The shell commands a review does not ask about again: those approved with `/approve session`
-  (the TUI's `s`), held by the session until it closes, and those approved with
-  `/approve always` (`a`), kept in the workspace's `.xeito/allowed.json`. Edit that file to
-  take one back.
+  The shell commands a review no longer asks about, per session or kept in `.xeito/allowed.json`.
 
-  A command is matched exactly, as the model wrote it, so an allowance never widens to a
-  variant of it. An allowance only stands in for the human's `y`: the `Risk` decision still
-  runs first, and a command it forbids is blocked whether or not it was allowed
-  (`docs/architecture/10-security-and-sandboxing.md`).
+  * `/approve session` (`s`) holds the command in the session until it closes; `/approve always`
+    (`a`) writes it to the workspace's `.xeito/allowed.json`. Edit that file to take one back.
+  * A command matches exactly, as the model wrote it: an allowance never widens to a variant.
+  * An allowance only stands in for the human's `y`: the `Risk` decision still runs first, and
+    a command it forbids is blocked whether or not it was allowed.
   """
 
   @file_name "allowed.json"
@@ -66,8 +64,7 @@ defmodule Xeito.Session.Allowed do
     end
   end
 
-  # `.xeito` is the daemon's own and normally exists already (the log lives there); made here
-  # as `Xeito.Log.for_workspace/1` makes it, so the project's git never sees it.
+  # Made with its own `.gitignore`, as `Xeito.Log.for_workspace/1` does, so the project's git never sees it.
   defp save(cwd, commands) do
     dir = Path.join(cwd, ".xeito")
 
@@ -82,7 +79,7 @@ defmodule Xeito.Session.Allowed do
     if File.exists?(gitignore), do: :ok, else: File.write(gitignore, "*\n")
   end
 
-  # One command per line, so the file reads and edits well.
+  # One command per line, so a human can edit the file.
   defp encode(commands), do: "[\n" <> Enum.map_join(commands, ",\n", &("  " <> JSON.encode!(&1))) <> "\n]\n"
 
   defp path(cwd), do: Path.join([cwd, ".xeito", @file_name])

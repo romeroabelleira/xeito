@@ -2,11 +2,10 @@ defmodule Xeito.Decision.Scoring do
   @moduledoc """
   Turns token log-probabilities at the value position into a distribution over the options.
 
-  Backends report `top_logprobs` from the *unconstrained* distribution (bench 0), so tokens the
-  grammar would forbid appear there too. `assign/2` maps each top token to the options it can
-  start (by string prefix, ignoring leading whitespace), sums the probability mass per option,
-  and renormalises. A token that could start several options (`test` for `test_bug` and
-  `test_flaky`) is reported as ambiguous, so the caller can resolve it with one more step.
+  `top_logprobs` come from the unconstrained distribution, so they include tokens the grammar
+  forbids. A token counts towards each option it is a prefix of (ignoring leading whitespace);
+  a token that could start several options (`test` for `test_bug` and `test_flaky`) is reported
+  as ambiguous for the caller to resolve.
   """
 
   @type tops :: [{String.t(), float()}]
@@ -50,8 +49,8 @@ defmodule Xeito.Decision.Scoring do
   end
 
   @doc """
-  Probabilities for `options` from a single token position, splitting ambiguous mass evenly
-  between its candidates. Used when a backend cannot continue from a prefix (Ollama).
+  Probabilities for `options` from one token position, splitting ambiguous mass evenly between
+  its candidates; for backends that cannot continue from a prefix.
   """
   @spec one_step(tops(), [String.t()]) :: %{String.t() => float()}
   def one_step(tops, options) do

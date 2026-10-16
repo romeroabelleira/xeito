@@ -1,8 +1,6 @@
 defmodule Xeito.Api do
   @moduledoc """
-  The client API of `xeitod`: JSON Lines over a Unix domain socket, one request, reply or event
-  per line, modelled on pi's RPC mode (`docs/architecture/07-harness-frontend.md#processes-and-clients`).
-  The TUI, the line-mode CLI and the pi bridge are all clients of it.
+  The `xeitod` client API server: JSON Lines over a Unix domain socket, one request, reply or event per line.
 
   Requests carry an `id` that the reply echoes:
 
@@ -29,9 +27,8 @@ defmodule Xeito.Api do
 
       {"event": "delta", "session": "ses-…", "run": "ses-…/t1", "attrs": {"text": "…"}}
 
-  **Security.** The socket runs commands in the user's workspaces, so it lives in a directory
-  only the owner can enter (mode 0700) and the socket itself is mode 0600. It is never bound to
-  a network address.
+  Security: the socket's directory is mode 0700 and the socket 0600; it is never bound to a
+  network address. It refuses to start if a daemon already listens at the path.
   """
 
   use GenServer
@@ -43,12 +40,10 @@ defmodule Xeito.Api do
   def default_socket, do: System.get_env("XEITO_SOCKET") || Path.expand("~/.xeito/run/xeito.sock")
 
   @doc "Starts the API server. Options: `:socket` (path), `:session` (defaults for new sessions)."
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
 
-  @doc """
-  Whether a daemon accepts connections at `path`. A socket file nobody listens on, left by a
-  daemon that died without cleaning up, is not one.
-  """
+  @doc "Whether a daemon accepts connections at `path` (a stale socket file does not count)."
   @spec listening?(Path.t()) :: boolean()
   def listening?(path) do
     case :gen_tcp.connect({:local, path}, 0, [:binary, active: false], 1_000) do
@@ -73,7 +68,7 @@ defmodule Xeito.Api do
     dir = Path.dirname(path)
     File.mkdir_p!(dir)
 
-    # The directory must be private: refuse to serve from one we cannot lock down.
+    # Security: refuse to serve from a directory we cannot make private.
     case File.chmod(dir, 0o700) do
       :ok -> :ok
       {:error, reason} -> raise "socket directory #{dir} must be owned by the user (#{reason})"

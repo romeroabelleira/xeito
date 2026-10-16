@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Xeito.Skills.Examples do
   @shortdoc "Writes the skills' example requests with the local model, or shows a skill's"
   @moduledoc """
-  The example requests the index searches (`Xeito.Skills.Examples`, P4f step 4).
+  The example requests the index searches (`Xeito.Skills.Examples`).
 
       mix xeito.skills.examples [--cwd DIR]          # write the missing or stale ones
       mix xeito.skills.examples [--cwd DIR] NAME     # show a skill's

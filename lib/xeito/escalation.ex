@@ -1,11 +1,10 @@
 defmodule Xeito.Escalation do
   @moduledoc """
-  Runs a typed decision as an escalation machine (`Xeito.Machines.Escalation`): a child run of
-  the requesting run, logged in the same OCEL log and related to its parent (`part_of`).
+  Runs a typed decision as a child escalation run (`Xeito.Machines.Escalation`) and waits for it.
 
-  `decide/3` builds the plan from `Xeito.Policy`, starts the child run (or finds it, if the same
-  request is being retried after a crash: the child id is derived from the requesting effect),
-  waits for it to finish, and returns the `%Xeito.Decision{}` it committed.
+  * The child is logged in the same log, related to its parent with `part_of`.
+  * The child id derives from the requesting effect, so a retry after a crash finds the same run.
+  * On a failed or timed-out run the result is an `:abstain` decision with `actor: :none`.
   """
 
   alias Xeito.Decision

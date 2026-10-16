@@ -1,23 +1,16 @@
 defmodule Xeito.Skills.Index do
   @moduledoc """
-  Finds skills by what a request says: a full-text index of their names and descriptions, ranked
-  by BM25 (P4f step 2). SQLite's FTS5 holds it, in memory: built per search, which takes a
-  couple of milliseconds for about fifty skills, so an edited or new skill counts at once.
+  Finds skills matching a request: BM25 full-text search over names, keywords, examples and descriptions.
 
-  Keywords (`Xeito.Skills`: a skill's `metadata.keywords`, or the user's overlay file) are words
-  the skill's author or user chose to find it by. Examples are requests the local model wrote
-  for the skill (`Xeito.Skills.Examples`): they bring the words people use for it.
+  The index is an in-memory SQLite FTS5 table built per search, so edited skills count at once.
 
-  Words are normalised the same way in the index and in the request: lower case, British
-  endings in their American form (`summarise` and `summarize` meet), diacritics removed, and
-  the Porter stemmer joins a word's other forms (`testing`, `tests`, `test`). A word of a skill's
-  name weighs most, then a keyword, an example's word, and a word of its description; the skill
-  bodies are not indexed (measured: no better, and slower).
-
-  A turn's shortlist (the default) keeps a skill that shares one of the request's words in its
-  name or keywords, two in its name, keywords and description, or three in its examples, so
-  most requests that need no skill shortlist nothing and decide without a model call. `any: true` keeps every match and, when no word matches, looks for the request's
-  fragments inside names and descriptions (`youtub`): for finding skills by hand.
+    * words are lower-cased, British endings mapped to American (`summarise` = `summarize`),
+      diacritics removed and Porter-stemmed, in the index and in the request alike
+    * weights, highest first: name, keywords, examples, description; skill bodies are not indexed
+    * default (a turn's shortlist): keeps a skill with one request word in its name or keywords,
+      two in name, keywords and description, or three in its examples
+    * `any: true` (search by hand): keeps every match and, when no word matches, falls back to
+      trigram fragments of names and descriptions (`youtub`)
   """
 
   alias Exqlite.Sqlite3
@@ -43,10 +36,7 @@ defmodule Xeito.Skills.Index do
     |> String.replace(~r/(\p{L}{2,})our\b/u, "\\1or")
   end
 
-  @doc """
-  The skills matching `request`, the best first, at most `opts[:k]` (default 3). See the module
-  documentation for `opts[:any]`.
-  """
+  @doc "The skills matching `request`, best first, at most `opts[:k]` (default 3); `opts[:any]` as in the moduledoc."
   @spec search([Skills.t()], String.t(), keyword()) :: [Skills.t()]
   def search(skills, request, opts \\ []) do
     case words(request) do
@@ -126,20 +116,17 @@ defmodule Xeito.Skills.Index do
 
   defp with_fragments(_db, ranked, _words), do: ranked
 
-  # A word of the name or keywords, two of the name, keywords and description, or three of the
-  # examples: generated sentences hold everyday words ("tests", "error"), so one or two of them
-  # would shortlist skills for requests that need none.
+  # Examples need three hits: generated sentences hold everyday words ("tests", "error").
   defp fits?(rowid, {described, examples, names}),
     do: MapSet.member?(names, rowid) or Map.get(described, rowid, 0) >= 2 or Map.get(examples, rowid, 0) >= 3
 
-  # How many of the words each skill holds in `columns`.
+  # rowid => how many of the words the skill holds in `columns`.
   defp hits(db, words, columns),
     do:
       words
       |> Enum.flat_map(&rows(db, "SELECT rowid FROM skill WHERE skill MATCH ?1", ~s(#{columns} : "#{&1}")))
       |> Enum.frequencies()
 
-  # The skills whose name or keywords hold one of the words.
   defp names(db, words),
     do: MapSet.new(rows(db, "SELECT rowid FROM skill WHERE skill MATCH ?1", "{name keywords} : (#{any_of(words)})"))
 

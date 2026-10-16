@@ -1,7 +1,6 @@
 defmodule Xeito.Policy do
   @moduledoc """
-  Escalation policy: which tiers a decision may use, under which limits. Policy is data and code,
-  never a prompt (`docs/architecture/04-delegation.md#guards-on-escalation`).
+  Escalation policy: which tiers a decision may use, under which limits.
 
   Sources, merged in order (later wins):
     1. defaults below
@@ -9,8 +8,8 @@ defmodule Xeito.Policy do
     3. the decision type's `policy` declaration (e.g. `Risk` forbids the remote tiers)
     4. per-request options (`Xeito.Decider` / effect options)
 
-  Off-box tiers (`off_box_tiers/0`: every `remote*` tier) send the input to a third party.
-  They share one gate, the `:remote` key, one locality rule and one spend budget.
+  A type that declares `remote: :forbidden` cannot be relaxed by config or options. Off-box tiers
+  (`off_box_tiers/0`) share the `:remote` gate, the locality rule and one spend budget.
 
   Keys:
     * `:remote` — `:forbidden` (default) or `:allowed`, for every off-box tier
@@ -20,8 +19,7 @@ defmodule Xeito.Policy do
     * `:max_swaps_per_run` — local-model loads per parent run (default 3)
     * `:unloaded_accept` — when the local model is not loaded, accept an earlier tier's answer
       whose confidence is at least this, instead of swapping (default 0.6; `nil` disables)
-    * `:human` — whether to end the ladder with a human prompt (default false; most machines
-      handle `:abstain` themselves)
+    * `:human` — whether to end the ladder with a human prompt (default false)
     * `:human_timeout` — how long a human prompt waits (default 10 minutes)
   """
 
@@ -49,10 +47,7 @@ defmodule Xeito.Policy do
     |> enforce_type(type)
   end
 
-  @doc """
-  The session-wide policy, before any decision type narrows it: defaults, deployment config and
-  request options. What the status bar shows as the off-box budget.
-  """
+  @doc "The session-wide policy before any decision type narrows it: defaults, config and request options."
   @spec effective(keyword()) :: map()
   def effective(opts \\ []) do
     @defaults
@@ -67,10 +62,7 @@ defmodule Xeito.Policy do
       else: policy
   end
 
-  @doc """
-  The ordered tiers a decision will try: rules first, then the requested model tiers that are
-  configured and permitted, then the human if the policy asks for one.
-  """
+  @doc "The ordered tiers to try: `:rules`, the requested tiers that are available and permitted, then `:human` if set."
   @spec plan(map(), [atom()], String.t() | nil, (atom() -> boolean())) :: [atom()]
   def plan(policy, tiers, parent_run \\ nil, available? \\ &(Tiers.config(&1) != nil)) do
     models =

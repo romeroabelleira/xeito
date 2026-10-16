@@ -2,15 +2,14 @@ defmodule Xeito.Machine.Engine do
   @moduledoc """
   Pure statechart semantics over a `%Xeito.Machine{}`: no processes, no I/O.
 
-  `Xeito.Run` uses the engine live, and `Xeito.Run.Recovery` folds logged events through the
-  same functions to rebuild a run. Because guards and actions are pure, both paths produce the
-  same state.
+  `Xeito.Run` uses it live and `Xeito.Run.Recovery` replays logged events through it, so guards
+  and actions must stay pure.
 
-  The active configuration is always one *leaf* state. On an event, the leaf's transitions
-  are tried first, then its ancestors' (the event bubbles up). The first transition whose
-  guard passes wins. Exited and entered states are computed relative to the least common
-  ancestor. A self-transition exits and re-enters the state. A `:timeout` event that no
-  transition handles moves the run to `:failed`.
+  - The active configuration is always one *leaf* state.
+  - An event tries the leaf's transitions, then its ancestors'; the first passing guard wins.
+  - Exits and entries are relative to the least common ancestor; a self-transition exits and
+    re-enters the state.
+  - An unhandled `:timeout` moves the run to `:failed`.
   """
 
   alias Xeito.Effect
@@ -91,7 +90,7 @@ defmodule Xeito.Machine.Engine do
 
   defp guard_passes?(machine, %Transition{guard: guard}, ctx, data), do: apply(machine.module, guard, [ctx, data]) == true
 
-  # An internal transition: the action, and nothing else.
+  # Internal transition: no exit, no entry.
   defp take(machine, leaf, ctx, %Transition{to: nil} = transition, data, implicit?) do
     ctx = if transition.action, do: apply(machine.module, transition.action, [ctx, data]), else: ctx
     %{from: leaf, to: leaf, event: transition.event, exited: [], entered: [], ctx: ctx, effects: [], implicit: implicit?}

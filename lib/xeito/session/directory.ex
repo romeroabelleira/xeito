@@ -1,13 +1,9 @@
 defmodule Xeito.Session.Directory do
   @moduledoc """
-  A directory's sessions, read from its log: the one a client continues by default
-  (`latest/2`), the list `/sessions` shows (`sessions/2`), the prompts typed there, for
-  Up/Down (`prompts/3`), and a session's turns with their answers, for its transcript
-  (`turns/3`). A session belongs to the directory it was started in (its `cwd` in the
-  log).
+  Reads a directory's sessions, prompts and turns from its log.
 
-  A session's prompts are its `prompt_entered` events. Sessions logged before those existed
-  contribute their turns' requests instead: the input of each `<session>/tN` run.
+  A session belongs to the directory it was started in (its `cwd`). A session's prompts are
+  its `prompt_entered` events, or, for sessions without any, the requests of its `<session>/tN` runs.
   """
 
   alias Xeito.Log
@@ -87,9 +83,7 @@ defmodule Xeito.Session.Directory do
   end
 
   @doc """
-  A session's last `limit` turns, oldest first: each turn's request and its answer as the session
-  reported it (`nil` while the turn runs). Read from the turns' runs (`<session>/t<n>`), so the
-  harness's own messages to the model are not among them.
+  A session's last `limit` turns, oldest first, each with its request and answer (`nil` while it runs).
   """
   @spec turns(Log.server(), String.t(), pos_integer()) :: [%{prompt: String.t() | nil, answer: String.t() | nil}]
   def turns(log, session, limit \\ 20) do
@@ -120,8 +114,7 @@ defmodule Xeito.Session.Directory do
 
   defp answer(_machine, []), do: nil
 
-  # `{time, session, text}`, newest first: logged prompts, and the turns' requests of sessions
-  # without any.
+  # `{time, session, text}`, newest first.
   defp entries(log, cwd) do
     cwd = Path.expand(cwd)
     entered = rows(log, @entered, cwd)

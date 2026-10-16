@@ -1,10 +1,9 @@
 defmodule Xeito.Client.Render do
   @moduledoc """
-  Turns daemon events (`Xeito.Api`, string keys) into transcript text, in the style of the
-  mockup in `docs/architecture/07-harness-frontend.md`: one line per step that matters, streamed
-  model output inline, and everything inside escalation runs folded into its decision.
+  Renders daemon events (`Xeito.Api`, string keys) as transcript text for the line-mode client and the TUI.
 
-  Shared by the line-mode client and the TUI, so both show the same transcript.
+  One line per step that matters, model output streamed inline, delegated runs indented, and
+  escalation runs (`…/esc`, `…/intent`) hidden behind the decision they produce.
   """
 
   @doc "The text for one event (possibly empty). Lines end with a newline; deltas do not."
@@ -35,7 +34,6 @@ defmodule Xeito.Client.Render do
   defp render(%{"event" => "state_entered", "attrs" => %{"state" => state}}, pad), do: state_line(state, pad)
   defp render(event, _pad), do: message_line(event)
 
-  # What was decided, and what waits for a human.
   defp decision_line("intent", a, pad), do: "#{pad}◆ intent: #{a["value"]} (#{a["actor"]} #{conf(a["confidence"])})\n"
   defp decision_line("run_selected", a, pad), do: "#{pad}  → #{short(a["machine"])} · #{a["reason"]}\n"
 
@@ -62,7 +60,6 @@ defmodule Xeito.Client.Render do
 
   defp state_line(state, pad), do: "#{pad}· #{state}\n"
 
-  # A chat answer was already streamed; other machines get a one-line summary.
   defp message_line(%{"event" => "turn_finished", "attrs" => a}),
     do: "#{mark(to_string(a["status"]))} #{a["final_state"]}#{answer_summary(a)}\n"
 
@@ -125,7 +122,6 @@ defmodule Xeito.Client.Render do
 
   defp paused_what(a), do: "#{a["kind"]} result"
 
-  # A compact diff of an edit: removed lines, then added lines, a few of each.
   @diff_lines 6
 
   defp diff(old, new, pad) when is_binary(old) and is_binary(new) do

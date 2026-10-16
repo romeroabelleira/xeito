@@ -1,16 +1,11 @@
 defmodule Xeito.Budget do
   @moduledoc """
-  Per-run ledger for resources whose limits are enforced by escalation guards: remote spend
-  (`:usd`), large-model swaps (`:swaps`), and so on.
+  Per-run ledger of resources limited by escalation guards, such as remote spend (`:usd`) and model swaps (`:swaps`).
 
-  The ledger is an ETS table keyed by the *parent* run, so every decision in a run draws on the
-  same budget. It is in memory: after a node restart, budgets start from zero. The logged costs
-  (`decision_made` events) remain the durable record, and `Xeito.Run.cost/2` sums them.
-
-  Entries are removed when their run finishes (`Xeito.Run`) or their session closes
-  (`Xeito.Session`). As a backstop for a long-running daemon, a periodic sweep (hourly by
-  default, `config :xeito, :budget_sweep_ms`) drops entries whose owner is neither a live run
-  nor a live session.
+  - Keyed by the *parent* run, so every decision in a run draws on the same budget.
+  - In memory only: budgets restart from zero with the node; `Xeito.Run.cost/2` sums the logged costs.
+  - Entries are deleted when their run finishes or session closes; a periodic sweep
+    (`config :xeito, :budget_sweep_ms`, default hourly) drops entries with no live owner.
   """
 
   use GenServer

@@ -1,7 +1,8 @@
 defmodule Xeito.Effect do
   @moduledoc """
-  A description of a side effect, returned by a machine's entry function and executed by an
-  effect runner (see `Xeito.Effects`). The result comes back to the run as an event:
+  A side effect as plain data, returned by a machine's entry function and executed by `Xeito.Effects`.
+
+  The result comes back to the run as an event:
 
   | kind      | result event          | result data                              |
   |-----------|-----------------------|------------------------------------------|
@@ -15,9 +16,6 @@ defmodule Xeito.Effect do
   | `:tier`   | `:tier_done`          | a tier result, or `%{tier: t, error: reason}` (escalation) |
   | `:probe`  | `:probed`             | `%{loaded: boolean, swap_allowed: boolean}` (escalation) |
   | `:swap`   | `:swapped`            | `%{ok: boolean, ms: integer}` (escalation) |
-
-  Effects are plain data, so they can be logged, replayed from the log, and policy-checked
-  at one choke point.
   """
 
   @enforce_keys [:kind, :args, :reply]
@@ -26,6 +24,19 @@ defmodule Xeito.Effect do
   @type kind ::
           :bash | :read | :write | :edit | :chat | :machine | :decide | :tier | :probe | :swap
   @type t :: %__MODULE__{id: String.t() | nil, kind: kind(), args: map(), reply: term()}
+
+  # Result types by kind, as in the table above. Runners may add keys (a shaped output's `ref`,
+  # `shaped`), hence `optional(atom())`.
+  @type bash_result :: %{required(:exit_status) => integer(), required(:output) => binary(), optional(atom()) => term()}
+  @type file_result ::
+          %{required(:ok) => true, optional(:content) => binary(), optional(atom()) => term()}
+          | %{ok: false, error: term()}
+  @type chat_result :: Xeito.Chat.Message.reply() | %{error: term()}
+  @type machine_result :: %{run_id: String.t(), status: atom(), state: atom() | nil, ctx: map()}
+  @type decide_result :: %{required(:value) => term(), optional(atom()) => term()}
+  @type escalation_result :: map()
+  @type result ::
+          bash_result() | file_result() | chat_result() | machine_result() | decide_result() | escalation_result()
 
   @doc "Run a shell command. Options: `:cwd`, `:timeout` (ms, default 60 000), `:reply`."
   @spec bash(String.t(), keyword()) :: t()
@@ -88,9 +99,8 @@ defmodule Xeito.Effect do
     }
   end
 
-  # `error:` marks a request the machine could not send (it does not fit the context window):
-  # the runner answers it with the error instead of calling the model.
-  # `quiet:` asks for a reply that is not streamed to clients (it is not an answer: a summary).
+  # `error:` (request does not fit the window): the runner replies with it instead of calling the model.
+  # `quiet:` (e.g. a summary): the reply is not streamed to clients.
   defp chat_args(messages, opts) do
     args = Map.merge(%{messages: messages, tools: Keyword.get(opts, :tools, true)}, Map.new(Keyword.take(opts, [:quiet])))
     if Keyword.has_key?(opts, :error), do: Map.put(args, :error, opts[:error]), else: args

@@ -1,19 +1,16 @@
 defmodule Xeito.Session.ChatModel do
   @moduledoc """
-  The session's chat tier (`/model`): which tiers can chat, what each holds, and what switching
-  to a remote one means. `Xeito.Session` keeps the choice in its chat options (`tier:`), which
-  `Xeito.Chat` reads.
+  The session's chat tier (`/model`): which tiers can chat, what each holds, and the notices for switching.
 
-  A remote chat tier sends the conversation, and every file the model reads, to OpenRouter. The
-  choice is made per session, by someone typing it (or for every session, by setting
-  `XEITO_CHAT_TIER`); the model never chooses it.
+  `Xeito.Session` keeps the choice in its chat options (`tier:`), which `Xeito.Chat` reads.
+  A remote tier sends the conversation and every file the model reads to OpenRouter, so only a
+  person chooses it (`/model`, or `XEITO_CHAT_TIER` for every session), never the model.
   """
 
   alias Xeito.Tiers
 
   @chat_tiers [:local, :remote, :remote_frontier]
-  # A remote tier's window when none is configured (`XEITO_<TIER>_CONTEXT`): enough for long
-  # turns, while bounding what each call costs.
+  # A remote tier's window when `XEITO_<TIER>_CONTEXT` is not set.
   @remote_context 131_072
 
   @doc "The session's chat tier, from its chat options (`Xeito.Chat.tier/1`)."

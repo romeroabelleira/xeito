@@ -1,9 +1,13 @@
 defmodule Xeito.Monitor.Models do
   @moduledoc """
-  Whether each local tier's service answers, and what it holds. A local tier is probed through
-  its backend (`Xeito.Tiers.backend/2`) with a short HTTP GET (timeout `:timeout`, default
-  800 ms). Remote tiers are not probed: they report only whether they are configured, and their
-  spend is in the usage line. A tier without a configured URL is `configured: false`.
+  Probes whether each local tier's service answers, and which models it holds.
+
+  A local tier is probed through its backend (`Xeito.Tiers.backend/2`) with one HTTP GET bounded
+  by `:timeout`. Remote tiers are not probed, they report only `configured: true`. A tier
+  without a configuration is `configured: false`.
+
+    * `:ollama`: `GET /api/ps`; resident models with VRAM, context and seconds to unload
+    * `:system_one`: `GET /health`; up, loaded models
 
   | backend       | probe              | reports                                           |
   |---------------|--------------------|---------------------------------------------------|

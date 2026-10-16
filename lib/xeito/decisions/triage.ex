@@ -1,5 +1,5 @@
 defmodule Xeito.Decisions.Triage do
-  @moduledoc "Why is a test failing? Used by `Xeito.Machines.FixFailingTest`."
+  @moduledoc "Decision type: why a test is failing (flaky, code bug, test bug or environment)."
 
   use Xeito.Decision, version: "1"
 
@@ -21,7 +21,7 @@ defmodule Xeito.Decisions.Triage do
   rule :missing_environment?, then: :env_problem
   rule :timeout_only?, then: :flaky
 
-  # Small tiers failed the zero-shot gate in P2 (bench/2-decisions.md); they decide again once they pass.
+  # Smaller tiers are left out until they pass the zero-shot gate for this type.
   deciders [:local]
   min_confidence 0.8
 

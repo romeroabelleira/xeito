@@ -1,11 +1,9 @@
 defmodule Xeito.Skills.Examples.Worker do
   @moduledoc """
-  Writes missing example requests in the daemon's background (P4f step 4): the user's skills
-  when it starts, and the skills each chat turn sees (`wanted/2`), one model call at a time, as
-  background calls on the local tier (`Xeito.Skills.Examples.refresh/3`). A turn never waits for
-  it: a skill without examples is found by its name, keywords and description until they exist.
+  Background process that writes missing skill example requests (`Xeito.Skills.Examples.refresh/3`).
 
-  Without a local tier it does nothing.
+  It handles the user's skills at start and the skills passed to `wanted/2`, one at a time; no
+  turn waits for it. Without a local tier it does nothing.
   """
 
   use GenServer
@@ -19,12 +17,13 @@ defmodule Xeito.Skills.Examples.Worker do
   configuration; default `Xeito.Tiers.config(:local)`), `:dir` and `:log` (as for
   `Xeito.Skills.Examples.refresh/3`), `:startup` (the skills to write first; default the user's).
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, if(name, do: [name: name], else: []))
   end
 
-  @doc "Asks for the examples of `skills` to be written, if they are missing or stale. Without a worker, nothing happens."
+  @doc "Asks for the examples of `skills` to be written if missing or stale; a cast, so no worker means no-op."
   @spec wanted(GenServer.server(), [Skills.t()]) :: :ok
   def wanted(worker \\ __MODULE__, skills), do: GenServer.cast(worker, {:wanted, skills})
 

@@ -1,8 +1,8 @@
 defmodule Xeito.Executables do
   @moduledoc """
-  Where an executable is, if it is installed: `config :xeito, :executables` (a name mapped to a
-  path, or to `false` for "not installed"), else the `PATH`. Tests set it, so whether `just` or
-  `mise` happens to be installed on the machine running them changes nothing.
+  Finds an installed executable, from `config :xeito, :executables` first, then the `PATH`.
+
+  The config maps a name to a path, or to `false` for "not installed"; tests set it.
   """
 
   @doc "The path of `name`, or `nil` if it is not installed."
