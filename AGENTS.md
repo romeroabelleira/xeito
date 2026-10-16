@@ -4,9 +4,9 @@ These are the project's instructions for any coding agent: Xeito itself reads th
 
 ## Finding your way
 
-Understand the code from the code. Start with [GLOSSARY.md](GLOSSARY.md) (the terms, each with its module), then `mix xeito.map` (every module in one line; `mix xeito.map Xeito.Chat` adds the public functions with their specs), then the module you need and its test. The tests name the behaviour each module guarantees.
+Understand the code from the code. Start with [GLOSSARY.md](GLOSSARY.md) (the terms, each with its module), then run `mix xeito.map` before searching (every module in one line; `mix xeito.map Xeito.Chat` adds the public functions with their specs), then read the module you need and its test, `test/<path>_test.exs` for `lib/<path>.ex`. The tests name the behaviour each module guarantees.
 
-`docs/` and `bench/` hold reasons, history and measurements, not the interface; they are kept out of searches (`.ignore`). Open one only when a task is about it, such as the plan (`docs/implementation-plan.md`).
+`docs/` and `bench/` hold reasons, history and measurements, not the interface. Search `lib/` and `test/` with `rg` (it honours `.ignore`, which leaves those two out), not `grep -r`; open a document only when a task is about it, such as the plan (`docs/implementation-plan.md`).
 
 ## Hard rule: this repository is public
 
