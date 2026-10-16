@@ -79,7 +79,7 @@ A machine that users can start is registered in `lib/xeito/session/router.ex`: t
 ## Testing
 
 Work test-first, at three levels:
-1. **Guards and actions** as plain functions on contexts, without a model (as in `test/xeito/chat_machine_test.exs`).
+1. **Guards and actions** as plain functions on contexts, without a model (as in `test/xeito/machines/chat_test.exs`).
 2. **Steps** with `Xeito.Machine.Engine.handle(Xeito.Machine.fetch!(Module), state, ctx, event, data)`, which returns the next state, context and effects without running anything.
 3. **Runs** with a scripted runner (`scripted_runner/2` in `test/support/xeito_case.ex`; examples in `test/xeito/run_test.exs`); sessions and routing with the scripted model in `test/xeito/harness_test.exs`.
 

@@ -1,4 +1,4 @@
-defmodule Xeito.LogStoreTest do
+defmodule Xeito.Log.StoreTest do
   use Xeito.Case, async: true
 
   alias Xeito.Effect

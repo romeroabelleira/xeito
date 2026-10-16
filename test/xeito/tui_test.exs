@@ -7,23 +7,21 @@ defmodule Xeito.TuiTest do
   alias Xeito.Client.Config
   alias Xeito.Client.StatusBar
   alias Xeito.Tui
+  alias Xeito.Tui.Banner
+  alias Xeito.Tui.StatusLine
+  alias Xeito.Tui.Timers
+  alias Xeito.Tui.Transcript
+  alias Xeito.Tui.View
 
   defp state do
     {:ok, input} = TextInput.init(TextInput.new(width: 20))
     %{input: TextInput.set_focused(input, true), cursor_on: true, blink: 0, blink_until: 0}
   end
 
-  defp cursor_drawn?(state), do: state |> Tui.input_line(20) |> inspect() =~ "bg: :yellow"
-
-  defp typed(state, text) do
-    Enum.reduce(String.graphemes(text), state, fn c, st ->
-      {:ok, input} = TextInput.handle_event(%TermUI.Event.Key{key: c, char: c}, st.input)
-      %{st | input: input}
-    end)
-  end
+  defp cursor_drawn?(state), do: state |> View.input_line(20) |> inspect() =~ "bg: :yellow"
 
   test "the cursor blinks after a key, and stops blinking (solid) once idle" do
-    state = Tui.wake_cursor(state())
+    state = Timers.wake_cursor(state())
     gen = state.blink
     assert cursor_drawn?(state)
 
@@ -47,61 +45,6 @@ defmodule Xeito.TuiTest do
     refute_receive {:blink, _}, 700
   end
 
-  test "the input line draws a block cursor at the typing position and scrolls to keep it visible" do
-    st = typed(state(), "hello")
-    line = inspect(Tui.input_line(st, 20))
-    # The block sits after the text, on a space; an empty line shows the dimmed placeholder.
-    assert line =~ ~s(content: "hello") and line =~ "bg: :yellow"
-    assert inspect(Tui.input_line(state(), 20)) =~ "ask, or /help"
-
-    long = typed(state(), String.duplicate("x", 30) <> "END")
-    shown = long |> Tui.input_line(20) |> inspect()
-    assert shown =~ "END" and not (shown =~ String.duplicate("x", 20))
-  end
-
-  defp session_state do
-    Map.merge(state(), %{
-      usage: StatusBar.new(),
-      lines: [],
-      partial: "",
-      live: [],
-      live_partial: "",
-      marker: nil,
-      decisions: 0,
-      tier: nil,
-      usd: 0.0,
-      leaf: "idle",
-      waiting: false
-    })
-  end
-
-  test "a risk decision marks the line it applies to with a coloured dot and its confidence" do
-    decision = %{
-      "event" => "decision_made",
-      "run" => "ses-x/t1",
-      "attrs" => %{
-        "decision_type" => "Xeito.Decisions.Risk",
-        "value" => "review",
-        "actor" => "local",
-        "confidence" => 0.94
-      }
-    }
-
-    state =
-      session_state()
-      |> Tui.apply_event(decision)
-      |> Tui.apply_event(%{"event" => "state_entered", "run" => "ses-x/t1", "attrs" => %{"state" => "ask_human"}})
-      |> Tui.apply_event(%{
-        "event" => "effect_requested",
-        "run" => "ses-x/t1",
-        "attrs" => %{"kind" => "bash", "args" => %{"cmd" => "rm -rf _build"}}
-      })
-
-    # No line of its own; the state line stays plain; the command carries the marker.
-    assert [_state_line, {:marked, :yellow, "⁹⁴", "$ rm -rf _build"}] = state.lines
-    refute Enum.any?(state.lines, &(is_binary(&1) and &1 =~ "risk"))
-  end
-
   test "the status bar is one line, filled by priority up to the width" do
     usage = StatusBar.new()
     line = StatusBar.line(usage, nil, nil, [], 40)
@@ -109,20 +52,6 @@ defmodule Xeito.TuiTest do
     refute line =~ "\n"
     assert String.length(StatusBar.line(usage, nil, nil, [], 200)) > 40
     assert StatusBar.line(usage, nil, nil, StatusBar.segments(), 80) == ""
-  end
-
-  test "in the blink's off phase the cursor cell is drawn plain" do
-    st = typed(state(), "ab")
-    assert cursor_drawn?(st)
-    refute cursor_drawn?(%{st | cursor_on: false})
-    assert inspect(Tui.input_line(%{st | cursor_on: false}, 20)) =~ ~s(content: "ab")
-  end
-
-  test "a marked line renders a coloured dot, a dim superscript and the text" do
-    node = inspect(Tui.line_node({:marked, :red, "¹⁰⁰", "$ rm -rf /"}))
-    assert node =~ ~s(content: "●") and node =~ "fg: :red"
-    assert node =~ ~s(content: "¹⁰⁰") and node =~ ":dim"
-    assert node =~ ~s(content: " $ rm -rf /")
   end
 
   test "the status bar keeps the higher-priority segment when two do not fit" do
@@ -138,7 +67,7 @@ defmodule Xeito.TuiTest do
   end
 
   test "a newer key makes older blink timers stale" do
-    state = state() |> Tui.wake_cursor() |> Tui.wake_cursor()
+    state = state() |> Timers.wake_cursor() |> Timers.wake_cursor()
     stale = state.blink - 1
     assert {^state, []} = Tui.handle_info({:blink, stale}, state)
   end
@@ -181,64 +110,12 @@ defmodule Xeito.TuiTest do
   defp submit(state, text), do: state |> typing(text) |> then(&Tui.update(:submit, &1))
   defp value(state), do: TextInput.get_value(state.input)
 
-  describe "banner/1: the greeting above the session line" do
-    test "keys, example prompts, the workspace's instructions and skills" do
-      lines = Tui.banner("/w")
-
-      assert lines == [
-               "Enter sends · \\ Enter new line · Esc halts · Up/Down recall · Tab completes · Ctrl-J steers · Ctrl-T status bar · /help",
-               "try: fix the failing test · run the checks · commit these changes · explain this code",
-               "machines: chat · check · commit · fix_failing_test · run_tests · shell",
-               "no AGENTS.md in /w",
-               "no skills in /w",
-               ""
-             ]
-    end
-
-    @tag :tmp_dir
-    test "the first lines of AGENTS.md, the workspace's skills by name, and how many of yours", %{tmp_dir: dir} do
-      File.write!(Path.join(dir, "AGENTS.md"), "# Notes\n\nline two\n\nline three\nline four\n")
-
-      for {root, name} <- [
-            {".agents/skills", "zz-tui-skill"},
-            {"home/.agents/skills", "mine-a"},
-            {"home/.agents/skills", "mine-b"}
-          ] do
-        skill = Path.join([dir, root, name])
-        File.mkdir_p!(skill)
-        File.write!(Path.join(skill, "SKILL.md"), "---\nname: #{name}\ndescription: a long description\n---\nbody\n")
-      end
-
-      assert Enum.drop(Tui.banner(dir, home: Path.join(dir, "home")), 3) == [
-               "AGENTS.md: # Notes",
-               "  line two",
-               "  line three",
-               "  … (#{Path.join(dir, "AGENTS.md")})",
-               "skills here: /skill:zz-tui-skill · and 2 of yours (/skill: then Tab)",
-               ""
-             ]
-    end
-
-    @tag :tmp_dir
-    test "only your own skills, or no directory at all", %{tmp_dir: dir} do
-      skill = Path.join(dir, "home/.agents/skills/mine")
-      File.mkdir_p!(skill)
-      File.write!(Path.join(skill, "SKILL.md"), "---\nname: mine\ndescription: d\n---\n")
-
-      File.write!(Path.join(dir, "AGENTS.md"), "\n  \n")
-      lines = Tui.banner(dir, home: Path.join(dir, "home"))
-      assert "no skills here · 1 of yours (/skill: then Tab)" in lines
-      assert "AGENTS.md is empty (#{Path.join(dir, "AGENTS.md")})" in lines
-      assert Enum.drop(Tui.banner(nil), 3) == ["no AGENTS.md", "no skills", ""]
-    end
-  end
-
   describe "new/1" do
     test "an idle state with a greeting after the earlier turns, the bar from the preferences" do
       state = tui(earlier: ["> hi", "hello"])
       assert ["> hi", "hello" | banner] = state.lines
       [header | _] = Enum.reverse(banner)
-      assert banner == Tui.banner("/w") ++ [header]
+      assert banner == Banner.banner("/w") ++ [header]
       assert header =~ "session ses-t · /help"
       assert %{leaf: "idle", bar: true, width: 80, height: 24, scroll: 0, hidden: []} = state
       refute tui(status_bar: false).bar
@@ -403,7 +280,7 @@ defmodule Xeito.TuiTest do
   describe "a running command's output: a live tail above the prompt" do
     defp output(state, text),
       do:
-        Tui.apply_event(state, %{
+        Transcript.apply_event(state, %{
           "event" => "output",
           "run" => "ses-x/t1",
           "attrs" => %{"effect_id" => "ses-x/t1/e1", "text" => text}
@@ -438,8 +315,10 @@ defmodule Xeito.TuiTest do
         "attrs" => %{"kind" => "bash", "result" => %{"exit_status" => 0, "output" => "building\n"}}
       }
 
-      assert live_rows(Tui.apply_event(running, completed)) == []
-      assert live_rows(Tui.apply_event(running, %{"event" => "turn_finished", "attrs" => %{"status" => "halted"}})) == []
+      assert live_rows(Transcript.apply_event(running, completed)) == []
+
+      assert live_rows(Transcript.apply_event(running, %{"event" => "turn_finished", "attrs" => %{"status" => "halted"}})) ==
+               []
     end
   end
 
@@ -451,8 +330,8 @@ defmodule Xeito.TuiTest do
       state =
         [status_bar: false]
         |> tui()
-        |> Tui.apply_event(qevent("queued", %{"text" => "/run mix test", "queued" => 1}))
-        |> Tui.apply_event(qevent("queued", %{"text" => "and commit", "queued" => 2}))
+        |> Transcript.apply_event(qevent("queued", %{"text" => "/run mix test", "queued" => 1}))
+        |> Transcript.apply_event(qevent("queued", %{"text" => "and commit", "queued" => 2}))
 
       assert state.queue == ["/run mix test", "and commit"]
 
@@ -461,7 +340,7 @@ defmodule Xeito.TuiTest do
 
       assert length(screen(Tui.view(state))) == state.height
 
-      sent = Tui.apply_event(state, qevent("dequeued", %{"text" => "/run mix test", "outcome" => "sent"}))
+      sent = Transcript.apply_event(state, qevent("dequeued", %{"text" => "/run mix test", "outcome" => "sent"}))
       assert sent.queue == ["and commit"]
     end
 
@@ -469,8 +348,8 @@ defmodule Xeito.TuiTest do
       state =
         [status_bar: false]
         |> tui()
-        |> Tui.apply_event(qevent("queued", %{"text" => "and commit", "queued" => 1}))
-        |> Tui.apply_event(qevent("queue_held", %{"reason" => "halted", "queued" => 1}))
+        |> Transcript.apply_event(qevent("queued", %{"text" => "and commit", "queued" => 1}))
+        |> Transcript.apply_event(qevent("queue_held", %{"reason" => "halted", "queued" => 1}))
 
       assert [row] = queue_rows(state)
       assert String.trim_trailing(row) == " ⏸ held (the turn halted): and commit · Enter sends · Esc drops"
@@ -481,13 +360,13 @@ defmodule Xeito.TuiTest do
       {_, []} = Tui.update(:halt, state)
       assert_receive {:request, %{"cmd" => "prompt", "text" => "/drop"}}
 
-      dropped = Tui.apply_event(state, qevent("dequeued", %{"text" => "and commit", "outcome" => "dropped"}))
+      dropped = Transcript.apply_event(state, qevent("dequeued", %{"text" => "and commit", "outcome" => "dropped"}))
       assert {dropped.queue, dropped.held} == {[], false}
       assert queue_rows(dropped) == []
     end
 
     test "Enter on an empty line does nothing, and Esc halts, when the queue is not held" do
-      state = Tui.apply_event(%{tui() | leaf: "executing"}, qevent("queued", %{"text" => "next", "queued" => 1}))
+      state = Transcript.apply_event(%{tui() | leaf: "executing"}, qevent("queued", %{"text" => "next", "queued" => 1}))
       {_, []} = Tui.update(:submit, state)
       refute_receive {:request, %{"text" => "/send"}}, 100
 
@@ -641,7 +520,7 @@ defmodule Xeito.TuiTest do
       {state, []} = tui() |> paste("one\ntwo") |> then(&Tui.update(:submit, &1))
       assert Enum.take(state.lines, -2) == ["> one", "  two"]
 
-      queued = Tui.apply_event(tui(status_bar: false), %{"event" => "queued", "attrs" => %{"text" => "a\nb\nc"}})
+      queued = Transcript.apply_event(tui(status_bar: false), %{"event" => "queued", "attrs" => %{"text" => "a\nb\nc"}})
 
       assert [" ⏸ queued: a (+2 lines)"] =
                queued
@@ -660,13 +539,13 @@ defmodule Xeito.TuiTest do
       assert length(screen(Tui.view(three))) == three.height
 
       many = [status_bar: false] |> tui() |> paste(Enum.map_join(1..20, "\n", &"line #{&1}"))
-      assert rows.(many) == single + Tui.prompt_rows() - 1
+      assert rows.(many) == single + View.prompt_rows() - 1
       assert length(screen(Tui.view(many))) == many.height
     end
 
     test "each line is drawn after its mark; the cursor's line has the cursor, a tab is drawn as a space" do
       state = tui() |> paste("one\n\ttwo") |> up()
-      [first, second] = Tui.prompt_lines(state, 20)
+      [first, second] = View.prompt_lines(state, 20)
       assert inspect(first) =~ ~s(content: "> ") and inspect(first) =~ "bg: :yellow"
       assert inspect(second) =~ ~s(content: "  ") and inspect(second) =~ ~s(content: " two")
       refute inspect(second) =~ "bg: :yellow"
@@ -674,13 +553,13 @@ defmodule Xeito.TuiTest do
 
     test "past the limit, the lines around the cursor are shown, with arrows where lines are hidden" do
       state = paste(tui(), Enum.map_join(1..20, "\n", &"line #{&1}"))
-      shown = state |> Tui.prompt_lines(40) |> Enum.map(&inspect/1)
-      assert length(shown) == Tui.prompt_rows()
-      assert hd(shown) =~ "↑ " and hd(shown) =~ "line #{21 - Tui.prompt_rows()}"
+      shown = state |> View.prompt_lines(40) |> Enum.map(&inspect/1)
+      assert length(shown) == View.prompt_rows()
+      assert hd(shown) =~ "↑ " and hd(shown) =~ "line #{21 - View.prompt_rows()}"
       assert List.last(shown) =~ "line 20"
 
       top = Enum.reduce(1..19, state, fn _, st -> up(st) end)
-      shown = top |> Tui.prompt_lines(40) |> Enum.map(&inspect/1)
+      shown = top |> View.prompt_lines(40) |> Enum.map(&inspect/1)
       assert hd(shown) =~ "> " and hd(shown) =~ "line 1"
       assert List.last(shown) =~ "↓ "
     end
@@ -760,7 +639,7 @@ defmodule Xeito.TuiTest do
     test "the legend's colours are the dots' colours" do
       for {value, color} <- [{"safe", :green}, {"review", :yellow}, {"abstain", :yellow}, {"forbidden", :red}] do
         state =
-          Tui.apply_event(tui(), %{
+          Transcript.apply_event(tui(), %{
             "event" => "decision_made",
             "attrs" => %{"decision_type" => "Xeito.Decisions.Risk", "value" => value, "confidence" => 0.5}
           })
@@ -850,32 +729,32 @@ defmodule Xeito.TuiTest do
     test "a run's machine, states, decisions and spend" do
       state =
         tui()
-        |> Tui.apply_event(event("run_selected", %{"machine" => "Elixir.Xeito.Machines.Chat"}))
-        |> Tui.apply_event(event("state_entered", %{"state" => "thinking"}))
-        |> Tui.apply_event(event("state_entered", %{"state" => "classify"}, "ses-t/t1/intent"))
-        |> Tui.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "local", "usd" => 0.25}))
-        |> Tui.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "local_decision"}))
+        |> Transcript.apply_event(event("run_selected", %{"machine" => "Elixir.Xeito.Machines.Chat"}))
+        |> Transcript.apply_event(event("state_entered", %{"state" => "thinking"}))
+        |> Transcript.apply_event(event("state_entered", %{"state" => "classify"}, "ses-t/t1/intent"))
+        |> Transcript.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "local", "usd" => 0.25}))
+        |> Transcript.apply_event(event("decision_made", %{"decision_type" => "X", "actor" => "local_decision"}))
 
       assert %{machine: "Chat", leaf: "thinking", decisions: 2, tier: "local_decision", usd: 0.25} = state
       assert is_integer(state.started)
 
-      assert Tui.status_line(state, 80) =~
+      assert StatusLine.line(state, 80) =~
                ~r/^ ⠋ state thinking · \d+\.\d s · tier local_decision · 2 decisions · \$0\.25 +\/w $/
     end
 
     test "intent, a review, a pause, the end of a turn and a lost daemon" do
-      state = Tui.apply_event(tui(), event("intent", %{"actor" => "rule"}))
+      state = Transcript.apply_event(tui(), event("intent", %{"actor" => "rule"}))
       assert %{leaf: "intent", decisions: 1, tier: "rule"} = state
 
-      waiting = Tui.apply_event(state, event("human_needed", %{}))
-      assert Tui.status_line(waiting, 80) =~ "review: y / n / s / a"
-      paused = Tui.apply_event(state, event("paused", %{}))
-      assert Tui.status_line(%{paused | scroll: 3}, 80) =~ "paused: Enter steps · scrolled"
+      waiting = Transcript.apply_event(state, event("human_needed", %{}))
+      assert StatusLine.line(waiting, 80) =~ "review: y / n / s / a"
+      paused = Transcript.apply_event(state, event("paused", %{}))
+      assert StatusLine.line(%{paused | scroll: 3}, 80) =~ "paused: Enter steps · scrolled"
 
-      done = Tui.apply_event(%{waiting | paused: true}, event("turn_finished", %{}))
+      done = Transcript.apply_event(%{waiting | paused: true}, event("turn_finished", %{}))
       assert %{leaf: "idle", waiting: false, paused: false, started: nil} = done
-      assert Tui.status_line(done, 80) =~ ~r/^ ○ state idle · tier rule · 1 decisions +\/w $/
-      assert Tui.apply_event(done, event("disconnected", %{})).leaf == "disconnected"
+      assert StatusLine.line(done, 80) =~ ~r/^ ○ state idle · tier rule · 1 decisions +\/w $/
+      assert Transcript.apply_event(done, event("disconnected", %{})).leaf == "disconnected"
     end
   end
 
@@ -933,14 +812,14 @@ defmodule Xeito.TuiTest do
   end
 
   describe "the status line: a working marker, and where commands run" do
-    defp marker(state), do: state |> Tui.status_line(80) |> String.slice(1, 1)
-    defp working(state \\ tui()), do: Tui.apply_event(state, event("state_entered", %{"state" => "thinking"}))
+    defp marker(state), do: state |> StatusLine.line(80) |> String.slice(1, 1)
+    defp working(state \\ tui()), do: Transcript.apply_event(state, event("state_entered", %{"state" => "thinking"}))
 
     test "idle is a still circle, waiting for you a still diamond, a lost daemon a cross" do
       assert marker(tui()) == "○"
-      assert marker(Tui.apply_event(working(), event("human_needed", %{}))) == "◆"
-      assert marker(Tui.apply_event(working(), event("paused", %{}))) == "◆"
-      assert marker(Tui.apply_event(tui(), event("disconnected", %{}))) == "✗"
+      assert marker(Transcript.apply_event(working(), event("human_needed", %{}))) == "◆"
+      assert marker(Transcript.apply_event(working(), event("paused", %{}))) == "◆"
+      assert marker(Transcript.apply_event(tui(), event("disconnected", %{}))) == "✗"
     end
 
     test "working is a spinner: each tick of its timer shows the next frame, around and around" do
@@ -981,17 +860,17 @@ defmodule Xeito.TuiTest do
     test "the workspace, shortened from the left, and its git branch, at the right end" do
       home = System.user_home!()
       state = %{tui(cwd: Path.join(home, "Development/xeito")) | workspace: %{"git" => %{"branch" => "main"}}}
-      line = Tui.status_line(state, 80)
+      line = StatusLine.line(state, 80)
       assert String.length(line) == 80
       assert String.ends_with?(line, " ~/Development/xeito (main) ")
 
       deep = %{tui(cwd: "/very/long/path/with/many/levels/and/a/project") | workspace: %{"git" => nil}}
-      assert String.ends_with?(Tui.status_line(deep, 80), " …/many/levels/and/a/project ")
+      assert String.ends_with?(StatusLine.line(deep, 80), " …/many/levels/and/a/project ")
     end
 
     test "on a narrow screen the state gives way, the workspace stays" do
       state = %{tui(cwd: "/srv/app") | workspace: %{"git" => %{"branch" => "dev"}}}
-      line = Tui.status_line(state, 30)
+      line = StatusLine.line(state, 30)
       assert line == " ○ state idle… /srv/app (dev) "
       assert String.length(line) == 30
     end
@@ -1049,7 +928,7 @@ defmodule Xeito.TuiTest do
       state = init_with(socket: daemon([]), cwd: "/given")
       assert %{session: "ses-new", cwd: "/from/daemon", lines: lines} = state
       [header | banner] = Enum.reverse(lines)
-      assert Enum.reverse(banner) == Tui.banner("/from/daemon")
+      assert Enum.reverse(banner) == Banner.banner("/from/daemon")
       assert header =~ "session ses-new · /help"
     end
 
@@ -1059,7 +938,7 @@ defmodule Xeito.TuiTest do
 
       assert %{session: "ses-last", lines: ["> fix the test", "Fixed." | banner]} = state
       [header | _] = Enum.reverse(banner)
-      assert banner == Tui.banner("/w") ++ [header]
+      assert banner == Banner.banner("/w") ++ [header]
       assert header =~ "continuing session ses-last · /sessions"
     end
 
@@ -1089,14 +968,14 @@ defmodule Xeito.TuiTest do
              ] = state.lines
 
       [header | _] = Enum.reverse(banner)
-      assert banner == Tui.banner("/w") ++ [header]
+      assert banner == Banner.banner("/w") ++ [header]
       assert header =~ "session ses-old"
     end
 
     test "attaching without a history shows none; a session that cannot be opened is an error" do
       state = init_with(socket: daemon(:broken), cwd: "/w", session: "ses-old")
       [header | _] = Enum.reverse(state.lines)
-      assert state.lines == Tui.banner("/w") ++ [header]
+      assert state.lines == Banner.banner("/w") ++ [header]
       assert header =~ "session ses-old"
 
       assert_raise RuntimeError, "could not open a session: no such session", fn ->
@@ -1234,10 +1113,6 @@ defmodule Xeito.TuiTest do
         [cwd: dir] |> tui() |> typing("/skill:videos") |> Stream.iterate(&tab/1) |> Enum.take(4) |> Enum.map(&value/1)
 
       assert tabbed == ["/skill:videos", "/skill:videos-cut", "/skill:zz-video", "/skill:zz-search"]
-    end
-
-    test "the commands are the daemon's and the TUI's own" do
-      assert Tui.commands() == Enum.sort(~w(quit exit statusbar legend sessions skills) ++ Xeito.Session.commands())
     end
   end
 end

@@ -1,4 +1,4 @@
-defmodule Xeito.ChatWindowTest do
+defmodule Xeito.Chat.WindowTest do
   @moduledoc "The context window of a chat request: estimating it and fitting a conversation into it."
   use ExUnit.Case, async: true
   use ExUnitProperties

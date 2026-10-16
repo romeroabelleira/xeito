@@ -9,7 +9,7 @@ defmodule Xeito.Tui.SkillSearch do
 
   alias Xeito.Skills
   alias Xeito.Skills.Index
-  alias Xeito.Tui
+  alias Xeito.Tui.Transcript
 
   @shown 10
   @description 100
@@ -17,7 +17,7 @@ defmodule Xeito.Tui.SkillSearch do
   @doc "Runs `/skills` with its words, if any, appending the list to the TUI's lines."
   @spec command(String.t(), map()) :: map()
   def command(words, state),
-    do: Tui.append(state, words |> lines(Skills.discover(state.cwd)) |> Enum.map_join(&(&1 <> "\n")))
+    do: Transcript.append(state, words |> lines(Skills.discover(state.cwd)) |> Enum.map_join(&(&1 <> "\n")))
 
   defp lines("", skills),
     do: ["#{length(skills)} skills (/skills <words> finds one by what it does):" | rows(Enum.sort_by(skills, & &1.name))]

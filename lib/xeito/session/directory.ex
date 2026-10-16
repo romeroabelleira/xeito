@@ -7,7 +7,7 @@ defmodule Xeito.Session.Directory do
   """
 
   alias Xeito.Log
-  alias Xeito.Session
+  alias Xeito.Session.History
 
   @type session :: %{
           id: String.t(),
@@ -109,8 +109,7 @@ defmodule Xeito.Session.Directory do
     %{prompt: input[:request] || input[:prompt], answer: answer(machine, finished)}
   end
 
-  defp answer(machine, [{status, state, ctx} | _]),
-    do: Session.turn_answer(machine, %{status: status, state: state, ctx: ctx})
+  defp answer(machine, [{status, state, ctx} | _]), do: History.answer(machine, %{status: status, state: state, ctx: ctx})
 
   defp answer(_machine, []), do: nil
 

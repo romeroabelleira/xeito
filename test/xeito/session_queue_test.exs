@@ -122,13 +122,4 @@ defmodule Xeito.SessionQueueTest do
     :ok = Session.prompt(id, "/steer")
     assert %{"text" => "/steer <text>: a line for the running chat turn, taken at its next model call"} = event("error")
   end
-
-  test "release?/2: only a turn that ended done, not stopped, and without a question sends the queue" do
-    done = %{status: :done, ctx: %{}}
-    assert Session.release?(done, "The tests pass.")
-    refute Session.release?(done, "Which file did you mean?\n")
-    refute Session.release?(%{status: :done, ctx: %{stopped: true}}, "I ran out of steps.")
-    refute Session.release?(%{status: :halted, ctx: %{}}, "(halted)")
-    refute Session.release?(%{status: :failed, ctx: %{}}, "boom")
-  end
 end

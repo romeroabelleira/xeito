@@ -1,4 +1,4 @@
-defmodule Xeito.ChatClientTest do
+defmodule Xeito.ChatTest do
   # Chat calls run through the large tier's shared queue, so the stub is shared (serial).
   use ExUnit.Case, async: false
 

@@ -1,4 +1,4 @@
-defmodule Xeito.ChatMachineTest do
+defmodule Xeito.Machines.ChatTest do
   @moduledoc "Unit tests of the chat machine's guards and actions, on contexts, without a model."
   use ExUnit.Case, async: true
 
@@ -194,6 +194,14 @@ defmodule Xeito.ChatMachineTest do
       assert Chat.step_limit?(ctx(%{max_steps: 5, steps: 5}), nil)
     end
 
+    test "calls on the last allowed step of a turn that edited go to its checks" do
+      last = %{max_steps: 5, steps: 4}
+      edited = %{edited: true, verify: "mix test"}
+      assert Chat.calls_at_limit_edited?(ctx(Map.merge(last, edited)), good())
+      refute Chat.calls_at_limit_edited?(ctx(last), good())
+      refute Chat.calls_at_limit_edited?(ctx(Map.merge(edited, %{max_steps: 5, steps: 3})), good())
+    end
+
     test "a model call sends the system prompt and the prompt first, then the turn so far" do
       [first] = Chat.ask_model(ctx(%{system: "S"}))
       assert [%{role: "system", content: "S"}, %{role: "user", content: "p"}] = first.args.messages
@@ -201,6 +209,22 @@ defmodule Xeito.ChatMachineTest do
       turn = [%{role: "system", content: "S"}, %{role: "user", content: "p"}, %{role: "assistant", content: "a"}]
       [later] = Chat.ask_model(ctx(%{turn: turn}))
       assert later.args.messages == turn
+    end
+  end
+
+  describe "the step limit after a tool result" do
+    defp at_limit(extra), do: ctx(Map.merge(%{max_steps: 5, steps: 5, verify: "mix test", current: nil}, extra))
+    defp ok, do: %{ok: true}
+
+    test "a turn that edited, earlier or with this result, goes to its checks" do
+      assert Chat.step_limit_edited?(at_limit(%{edited: true}), ok())
+      assert Chat.step_limit_edited?(at_limit(%{current: call("write", %{"path" => "a"})}), ok())
+      refute Chat.step_limit_edited?(at_limit(%{}), ok())
+    end
+
+    test "not before the limit, and not without checks to run" do
+      refute Chat.step_limit_edited?(at_limit(%{edited: true, steps: 4}), ok())
+      refute Chat.step_limit_edited?(at_limit(%{edited: true, verify: nil}), ok())
     end
   end
 

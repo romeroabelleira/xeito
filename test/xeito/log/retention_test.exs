@@ -1,4 +1,4 @@
-defmodule Xeito.LogRetentionTest do
+defmodule Xeito.Log.RetentionTest do
   # Changes application env (log idle time) and uses the shared workspace-log supervisor.
   use Xeito.Case, async: false
 

@@ -1,4 +1,4 @@
-defmodule Xeito.RepoMapTest do
+defmodule Xeito.Source.RepoMapTest do
   use ExUnit.Case, async: true
 
   alias Xeito.Source.RepoMap

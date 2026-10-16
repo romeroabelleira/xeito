@@ -1,4 +1,4 @@
-defmodule Xeito.MiseEnvTest do
+defmodule Xeito.Effects.MiseEnvTest do
   @moduledoc "Commands run with the tool versions mise pins for the workspace."
   # Sets which executables are installed (application environment).
   use ExUnit.Case, async: false

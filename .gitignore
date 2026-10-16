@@ -39,3 +39,6 @@ xeito-*.tar
 
 # Xeito event logs
 .xeito/
+
+# Worktrees that agents work in.
+/.claude/worktrees/

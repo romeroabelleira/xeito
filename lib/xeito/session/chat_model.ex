@@ -17,6 +17,10 @@ defmodule Xeito.Session.ChatModel do
   @spec current(keyword()) :: atom()
   def current(chat_opts), do: Xeito.Chat.tier(chat_opts)
 
+  @doc "The configuration of the session's chat tier (`Xeito.Tiers.config/1`), or `[]` when it has none."
+  @spec config(keyword()) :: keyword()
+  def config(chat_opts), do: Tiers.config(current(chat_opts)) || []
+
   @doc "The tiers chat can run on."
   @spec tiers() :: [atom()]
   def tiers, do: @chat_tiers

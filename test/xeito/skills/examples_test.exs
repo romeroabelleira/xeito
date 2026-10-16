@@ -1,4 +1,4 @@
-defmodule Xeito.SkillExamplesTest do
+defmodule Xeito.Skills.ExamplesTest do
   @moduledoc "P4f step 4: example requests per skill, written by the local model, cached and logged."
   use ExUnit.Case, async: true
 

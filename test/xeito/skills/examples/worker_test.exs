@@ -1,4 +1,4 @@
-defmodule Xeito.SkillExamplesWorkerTest do
+defmodule Xeito.Skills.Examples.WorkerTest do
   @moduledoc "P4f step 4: the daemon writes missing examples in the background."
   # The worker makes the HTTP calls, so Req.Test stubs are shared (serial).
   use ExUnit.Case, async: false

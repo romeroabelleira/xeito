@@ -1,4 +1,4 @@
-defmodule Xeito.TaskRunnerTest do
+defmodule Xeito.Session.TaskRunnerTest do
   @moduledoc "A project's own task runner: just recipes and mise tasks name its test and check commands."
   # Sets which executables are installed (application environment).
   use ExUnit.Case, async: false

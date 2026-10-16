@@ -8,7 +8,8 @@ defmodule Xeito.Tui.Sessions do
 
   alias Xeito.Client
   alias Xeito.Client.StatusBar
-  alias Xeito.Tui
+  alias Xeito.Tui.Banner
+  alias Xeito.Tui.Transcript
 
   @doc "Runs `/sessions` with its argument: none, a number from the last list, or `new`."
   @spec command(String.t(), map()) :: map()
@@ -17,7 +18,7 @@ defmodule Xeito.Tui.Sessions do
 
   def command(number, state) do
     case pick(number, state.listed) do
-      nil -> Tui.append(state, "no session #{number}: /sessions lists them\n")
+      nil -> Transcript.append(state, "no session #{number}: /sessions lists them\n")
       id -> ask(state, :switched, %{"cmd" => "attach", "session" => id, "cwd" => state.cwd})
     end
   end
@@ -35,9 +36,9 @@ defmodule Xeito.Tui.Sessions do
   def reply(:switched, %{"ok" => true, "session" => id}, state), do: switch(id, state)
 
   def reply({:earlier, id}, %{"ok" => true, "turns" => turns}, %{session: id} = state),
-    do: %{state | lines: Tui.transcript_lines(turns) ++ state.lines}
+    do: %{state | lines: Banner.transcript_lines(turns) ++ state.lines}
 
-  def reply(_tag, %{"ok" => false, "error" => error}, state), do: Tui.append(state, "✗ #{error}\n")
+  def reply(_tag, %{"ok" => false, "error" => error}, state), do: Transcript.append(state, "✗ #{error}\n")
   def reply(_tag, _reply, state), do: state
 
   defp list(sessions, state) do
@@ -79,7 +80,7 @@ defmodule Xeito.Tui.Sessions do
     state = %{
       state
       | session: id,
-        lines: [Tui.header(id, false)],
+        lines: [Banner.header(id, false)],
         partial: "",
         scroll: 0,
         machine: nil,

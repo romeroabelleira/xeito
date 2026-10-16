@@ -9,6 +9,7 @@ opens, so it shows what changes to the code and its documents do, step by step (
 |---|---|---|---|---|---|
 | 2026-10-16 | 5a7bf89 | baseline | 845 | 112,151 | 18,857 |
 | 2026-10-16 | (P4i 1–5) | glossary, map, contract moduledocs, types | 2,433 | 121,460 | 11,774 |
+| 2026-10-17 | (P4i 6) | Session, Tui, chat machine split; tests mirrored | 2,433 | 98,722 | 10,181 |
 
 After steps 1–5 the prose an agent reads per task fell by 38% (18,857 to 11,774 tokens over the
 ten tasks), and the code and tests it reads by 6% (103,701 to 97,130). The total rose, by 8%,
@@ -16,3 +17,10 @@ because the glossary (about 1,500 tokens) is now read for every task. This proxy
 what the glossary and `mix xeito.map` replace: the searches and document reads an agent makes
 to find its way. Splitting the largest modules (step 6) is where the per-task cost falls most:
 `session.ex` and `tui.ex` are two thirds of the two dearest tasks.
+
+After step 6 the tasks name the modules they now need (a slash command: `Session.Commands` and
+`Session.Info` instead of all of `Session`; the step limit: `Machines.Chat` and `Chat.Limits`).
+Against the baseline: 12% fewer tokens per task in total, 46% less prose, and 28% less code and
+tests read, the glossary included in every task. The dearest tasks gained most: a slash command
+from 20,623 to 11,753 tokens, the chat machine's step limit from 13,447 to 7,600, a TUI key from
+25,822 to 18,537.

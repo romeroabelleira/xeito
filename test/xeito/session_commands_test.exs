@@ -383,23 +383,6 @@ defmodule Xeito.SessionCommandsTest do
     assert {:error, "no run is paused"} = reply(id, "/next")
   end
 
-  describe "settled/1: a halted turn's messages, without unanswered tool calls" do
-    defp calls(n), do: %{role: "assistant", content: "", tool_calls: List.duplicate(%{name: "bash"}, n)}
-    defp tool, do: %{role: "tool", content: "ok"}
-
-    test "complete exchanges are kept" do
-      done = [%{role: "user", content: "p"}, calls(2), tool(), tool(), %{role: "assistant", content: "a"}]
-      assert Session.settled(done) == done
-      assert Session.settled([%{role: "user", content: "p"}]) == [%{role: "user", content: "p"}]
-    end
-
-    test "the last calls, if not all answered, are dropped with their partial results" do
-      before = [%{role: "user", content: "p"}, calls(1), tool()]
-      assert Session.settled(before ++ [calls(2), tool()]) == before
-      assert Session.settled(before ++ [calls(1)]) == before
-    end
-  end
-
   test "/why lists the decisions of the session's runs, with their confidence", %{id: id, log: log} do
     assert {:notice, "no decisions yet"} = reply(id, "/why")
 
@@ -470,21 +453,6 @@ defmodule Xeito.SessionCommandsTest do
     :ok = Session.prompt(id, "/machine chat")
     assert_receive {:xeito, _, %{type: "run_started", run: run}}, 2_000
     assert [{_, "run_started", {:run_started, _, _, %{max_steps: 3}}} | _] = Xeito.Log.read_run(log, run)
-  end
-
-  test "breakpoint specs: a state, a decision type, a confidence; anything else is refused" do
-    assert {:ok, {:state, :verifying}} = Session.parse_breakpoint("state:verifying")
-    assert {:ok, {:decision, Risk}} = Session.parse_breakpoint("decision:risk")
-    assert {:ok, {:confidence_below, 0.5}} = Session.parse_breakpoint("conf<0.5")
-
-    for spec <- [
-          "state:no_such_state_#{System.unique_integer([:positive])}",
-          "decision:nope",
-          "conf<high",
-          "conf<0.5x",
-          "sideways"
-        ],
-        do: assert(Session.parse_breakpoint(spec) == :error, spec)
   end
 
   # The session waits on a review, as it would after a run entered `ask_human`.

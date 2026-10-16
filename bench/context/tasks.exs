@@ -8,7 +8,7 @@
   tasks: [
     %{
       name: "add a slash command",
-      files: ["lib/xeito/session.ex", "test/xeito/session_commands_test.exs"]
+      files: ["lib/xeito/session/commands.ex", "lib/xeito/session/info.ex", "test/xeito/session_commands_test.exs"]
     },
     %{
       name: "change a decision type's rules (Risk)",
@@ -28,11 +28,15 @@
     },
     %{
       name: "change the chat machine's step limit",
-      files: ["lib/xeito/machines/chat.ex", "test/xeito/chat_machine_test.exs"]
+      files: [
+        "lib/xeito/machines/chat.ex",
+        "lib/xeito/machines/chat/limits.ex",
+        "test/xeito/machines/chat/limits_test.exs"
+      ]
     },
     %{
       name: "change how requests fit the context window",
-      files: ["lib/xeito/chat/window.ex", "test/xeito/chat_window_test.exs"]
+      files: ["lib/xeito/chat/window.ex", "test/xeito/chat/window_test.exs"]
     },
     %{
       name: "add a TUI key binding",

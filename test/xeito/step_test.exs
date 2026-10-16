@@ -6,7 +6,6 @@ defmodule Xeito.StepTest do
   alias Xeito.Machines.FixFailingTest
   alias Xeito.Run
   alias Xeito.RunSupervisor
-  alias Xeito.Session
 
   @ctx %{cwd: "/tmp", test_cmd: "mix test"}
 
@@ -66,17 +65,5 @@ defmodule Xeito.StepTest do
     eventually(fn -> Run.whereis(id) && Run.snapshot(id).leaf == :planning end)
     refute Run.snapshot(id).paused
     Run.send_event(id, :give_up)
-  end
-
-  test "breakpoint specs parse without creating atoms from input" do
-    assert {:ok, {:state, :triage}} = Session.parse_breakpoint("state:triage")
-    assert {:ok, {:decision, Triage}} = Session.parse_breakpoint("decision:triage")
-    assert {:ok, {:confidence_below, 0.6}} = Session.parse_breakpoint("conf<0.6")
-
-    assert :error =
-             Session.parse_breakpoint("state:no_such_state_#{System.unique_integer([:positive])}")
-
-    assert :error = Session.parse_breakpoint("decision:Nope")
-    assert :error = Session.parse_breakpoint("whatever")
   end
 end
