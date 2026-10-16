@@ -17,6 +17,7 @@ defmodule Xeito.TestLayoutTest do
     "test/xeito/skill_keywords_test.exs" => "skill keywords from frontmatter and the overlay, in the index",
     "test/xeito/skills_per_turn_test.exs" => "a turn's skill shortlist, decision and suggestion",
     "test/xeito/step_test.exs" => "step mode and breakpoints across runs",
+    "test/xeito/test_git_config_test.exs" => "the tests' own git config, also through erlexec",
     "test/xeito/test_layout_test.exs" => "this layout",
     "test/xeito/undo_env_test.exs" => "undo inside a git hook's environment"
   }

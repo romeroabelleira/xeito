@@ -1,0 +1,11 @@
+# The git config the tests run with, instead of the developer's (config/config.exs sets
+# GIT_CONFIG_GLOBAL to this file and GIT_CONFIG_NOSYSTEM for the test environment).
+[user]
+	name = Xeito Test
+	email = test@xeito.invalid
+[init]
+	defaultBranch = main
+[commit]
+	gpgsign = false
+[tag]
+	gpgsign = false
