@@ -48,7 +48,10 @@ defmodule Xeito.Chat do
     do: Queue.run(tier, fn -> request(messages, tools, cfg, on_delta) end)
 
   defp chat(:openrouter, tier, {messages, tools}, cfg, on_delta) do
-    with :ok <- plan(messages, tools, cfg) do
+    price = Allowance.model_price(cfg)
+    cfg = Keyword.put_new(cfg, :max_tokens, answer_limit(price))
+
+    with :ok <- plan(messages, tools, cfg, price) do
       tier
       |> Queue.run(fn -> OpenRouter.complete(messages, tools, cfg, on_delta) end)
       |> charge(tier, cfg)
@@ -57,14 +60,18 @@ defmodule Xeito.Chat do
 
   defp chat(backend, _tier, _request, _cfg, _on_delta), do: {:error, {:no_chat_backend, backend}}
 
-  defp plan(messages, tools, cfg) do
+  # The longest answer asked for: 8192 tokens, or less where the model allows less.
+  defp answer_limit(%{output: output}) when is_integer(output), do: min(output, 8192)
+  defp answer_limit(_price), do: 8192
+
+  defp plan(messages, tools, cfg, price) do
     tokens = Window.estimate(messages, Window.default_chars_per_token()) + div(byte_size(JSON.encode!(tools)), 3)
 
     Allowance.verdict(%{
       run_spent: if(cfg[:run], do: Budget.get(cfg[:run], :usd), else: 0),
       run_max: Keyword.get_lazy(cfg, :max_usd, fn -> Policy.effective().max_usd_per_run end),
       left: Allowance.remaining(cfg),
-      worst: Allowance.worst_case(Allowance.model_price(cfg), tokens, Keyword.get(cfg, :max_tokens, 8192))
+      worst: Allowance.worst_case(price, tokens, cfg[:max_tokens])
     })
   end
 

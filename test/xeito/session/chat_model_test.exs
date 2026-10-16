@@ -26,11 +26,13 @@ defmodule Xeito.Session.ChatModelTest do
     end
   end
 
-  test "context/2: the local tier's window; a remote one's, or 128k" do
-    assert ChatModel.context(:local, @configs.local) == 81_920
-    assert ChatModel.context(:local, []) == nil
-    assert ChatModel.context(:remote_frontier, @configs.remote_frontier) == 131_072
-    assert ChatModel.context(:remote_frontier, context: 50_000) == 50_000
+  test "context/3: the local tier's window; a remote one's as configured, else the model's, at most 128k" do
+    assert ChatModel.context(:local, @configs.local, nil) == 81_920
+    assert ChatModel.context(:local, [], nil) == nil
+    assert ChatModel.context(:remote_frontier, @configs.remote_frontier, nil) == 131_072
+    assert ChatModel.context(:remote_frontier, @configs.remote_frontier, %{context: 32_768}) == 32_768
+    assert ChatModel.context(:remote_frontier, @configs.remote_frontier, %{context: 1_000_000}) == 131_072
+    assert ChatModel.context(:remote_frontier, [context: 50_000], %{context: 32_768}) == 50_000
   end
 
   test "config/1: the configuration of the session's tier, or none" do

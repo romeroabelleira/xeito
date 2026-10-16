@@ -47,10 +47,16 @@ defmodule Xeito.Session.ChatModel do
 
   defp configured(tier, _cfg), do: {:ok, tier}
 
-  @doc "The context window the chat machine fits its requests into on `tier`."
-  @spec context(atom(), keyword()) :: pos_integer() | nil
-  def context(:local, cfg), do: cfg[:context]
-  def context(_remote, cfg), do: Keyword.get(cfg, :context, @remote_context)
+  @doc """
+  The context window the chat machine fits its requests into on `tier`: the local tier's; for a
+  remote one, its configured window, else the model's (`price`, from `Xeito.Allowance`), at most
+  128k tokens, which bounds what a call costs.
+  """
+  @spec context(atom(), keyword(), map() | nil) :: pos_integer() | nil
+  def context(:local, cfg, _price), do: cfg[:context]
+
+  def context(_remote, cfg, price),
+    do: Keyword.get_lazy(cfg, :context, fn -> min(price[:context] || @remote_context, @remote_context) end)
 
   @doc "The answer to `/model`: the current tier, then every chat tier."
   @spec describe(atom(), %{atom() => keyword() | nil}, number() | nil) :: String.t()

@@ -56,8 +56,13 @@ defmodule Xeito.ChatTest do
           "/api/v1/models/m/chat/endpoints" ->
             Req.Test.json(conn, %{data: %{endpoints: [%{pricing: %{prompt: "0.000002", completion: "0.00001"}}]}})
 
+          "/api/v1/models/m/short/endpoints" ->
+            endpoint = %{pricing: %{prompt: "0.000002", completion: "0.00001"}, max_completion_tokens: 1000}
+            Req.Test.json(conn, %{data: %{endpoints: [endpoint]}})
+
           "/api/v1/chat/completions" ->
-            send(parent, :asked)
+            {:ok, raw, conn} = Plug.Conn.read_body(conn)
+            send(parent, {:asked, JSON.decode!(raw)["max_tokens"]})
 
             body =
               "data: " <>
@@ -91,10 +96,18 @@ defmodule Xeito.ChatTest do
       assert Xeito.Allowance.last(opts) == 9.75
     end
 
+    test "a model that answers in fewer tokens than 8192 is asked for no more", %{opts: opts} do
+      assert {:ok, _} = Chat.complete([%{role: "user", content: "hi"}], [], opts)
+      assert_received {:asked, 8192}
+
+      assert {:ok, _} = Chat.complete([%{role: "user", content: "hi"}], [], Keyword.put(opts, :model, "m/short"))
+      assert_received {:asked, 1000}
+    end
+
     test "once the run's budget is spent, no call is made", %{opts: opts, run: run} do
       Xeito.Budget.add(run, :usd, 1.0)
       assert {:error, {:budget, _}} = Chat.complete([%{role: "user", content: "hi"}], [], opts)
-      refute_received :asked
+      refute_received {:asked, _}
     end
 
     test "a call the allowance could not pay for at worst is not made", %{opts: opts} do
@@ -103,7 +116,7 @@ defmodule Xeito.ChatTest do
       Xeito.Allowance.remaining(opts)
       Xeito.Allowance.spent(opts, 9.95)
       assert {:error, {:allowance, _}} = Chat.complete([%{role: "user", content: "hi"}], [], opts)
-      refute_received :asked
+      refute_received {:asked, _}
     end
 
     test "a tier whose backend cannot chat is an error" do

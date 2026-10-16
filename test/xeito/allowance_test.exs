@@ -27,16 +27,43 @@ defmodule Xeito.AllowanceTest do
     end
   end
 
-  describe "price/1: the model's dearest endpoint, and its smallest window" do
-    test "prices per token and context" do
+  describe "price/1: the model's dearest endpoint, its smallest window and longest answer, and price tiers" do
+    test "prices per token, context and the longest answer" do
       endpoints = %{
         "endpoints" => [
-          %{"pricing" => %{"prompt" => "0.000002", "completion" => "0.00001"}, "context_length" => 1_000_000},
-          %{"pricing" => %{"prompt" => "0.0000022", "completion" => "0.000011"}, "context_length" => 200_000}
+          %{
+            "pricing" => %{"prompt" => "0.000002", "completion" => "0.00001"},
+            "context_length" => 1_000_000,
+            "max_completion_tokens" => 128_000
+          },
+          %{
+            "pricing" => %{"prompt" => "0.0000022", "completion" => "0.000011"},
+            "context_length" => 200_000,
+            "max_completion_tokens" => 64_000
+          }
         ]
       }
 
-      assert Allowance.price(endpoints) == %{prompt: 2.2e-6, completion: 1.1e-5, context: 200_000}
+      assert Allowance.price(endpoints) == %{
+               prompt: 2.2e-6,
+               completion: 1.1e-5,
+               context: 200_000,
+               output: 64_000,
+               tiers: []
+             }
+    end
+
+    test "dearer rates above a prompt size, the dearest per size across endpoints" do
+      tier = fn prompt -> %{"min_prompt_tokens" => 100_000, "prompt" => prompt, "completion" => "0.0000025"} end
+
+      endpoints = %{
+        "endpoints" => [
+          %{"pricing" => %{"prompt" => "0.0000001", "completion" => "0.0000005", "overrides" => [tier.("0.0000005")]}},
+          %{"pricing" => %{"prompt" => "0.0000001", "completion" => "0.0000005", "overrides" => [tier.("0.0000006")]}}
+        ]
+      }
+
+      assert %{tiers: [%{from: 100_000, prompt: 6.0e-7, completion: 2.5e-6}], output: nil} = Allowance.price(endpoints)
     end
 
     test "no endpoints, no price" do
@@ -44,9 +71,26 @@ defmodule Xeito.AllowanceTest do
     end
   end
 
-  test "worst_case/3: every input token uncached and the answer at its limit" do
-    assert_in_delta Allowance.worst_case(%{prompt: 2.0e-6, completion: 1.0e-5}, 10_000, 1000), 0.03, 1.0e-9
-    assert Allowance.worst_case(nil, 10_000, 1000) == 0.0
+  describe "worst_case/3: every input token uncached, at its tier's rate, and the answer at its limit" do
+    test "the base rate below every tier" do
+      assert_in_delta Allowance.worst_case(%{prompt: 2.0e-6, completion: 1.0e-5, tiers: []}, 10_000, 1000), 0.03, 1.0e-9
+      assert Allowance.worst_case(nil, 10_000, 1000) == 0.0
+    end
+
+    test "the rate of the highest tier the prompt reaches" do
+      price = %{
+        prompt: 1.0e-7,
+        completion: 5.0e-7,
+        tiers: [
+          %{from: 100_000, prompt: 5.0e-7, completion: 2.5e-6},
+          %{from: 500_000, prompt: 1.0e-6, completion: 5.0e-6}
+        ]
+      }
+
+      assert_in_delta Allowance.worst_case(price, 99_999, 0), 99_999 * 1.0e-7, 1.0e-9
+      assert_in_delta Allowance.worst_case(price, 100_000, 1000), 100_000 * 5.0e-7 + 1000 * 2.5e-6, 1.0e-9
+      assert_in_delta Allowance.worst_case(price, 600_000, 0), 600_000 * 1.0e-6, 1.0e-9
+    end
   end
 
   describe "verdict/1" do

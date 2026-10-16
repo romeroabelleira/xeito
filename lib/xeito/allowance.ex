@@ -31,26 +31,59 @@ defmodule Xeito.Allowance do
   end
 
   @doc "A model's price per token (USD) at its dearest endpoint, and its smallest context window."
-  @spec price(map()) :: %{prompt: float(), completion: float(), context: pos_integer() | nil} | nil
+  @spec price(map()) ::
+          %{
+            prompt: float(),
+            completion: float(),
+            context: pos_integer() | nil,
+            output: pos_integer() | nil,
+            tiers: [%{from: pos_integer(), prompt: float(), completion: float()}]
+          }
+          | nil
   def price(%{"endpoints" => [_ | _] = endpoints}) do
+    pricing = Enum.map(endpoints, & &1["pricing"])
+
     %{
-      prompt: endpoints |> Enum.map(&per_token(&1, "prompt")) |> Enum.max(),
-      completion: endpoints |> Enum.map(&per_token(&1, "completion")) |> Enum.max(),
-      context: endpoints |> Enum.map(& &1["context_length"]) |> Enum.reject(&is_nil/1) |> Enum.min(fn -> nil end)
+      prompt: pricing |> Enum.map(&per_token(&1, "prompt")) |> Enum.max(),
+      completion: pricing |> Enum.map(&per_token(&1, "completion")) |> Enum.max(),
+      context: smallest(endpoints, "context_length"),
+      output: smallest(endpoints, "max_completion_tokens"),
+      tiers: tiers(pricing)
     }
   end
 
   def price(_endpoints), do: nil
 
-  defp per_token(endpoint, kind) do
-    {value, _} = Float.parse(get_in(endpoint, ["pricing", kind]) || "0")
+  defp per_token(pricing, kind) do
+    {value, _} = Float.parse(pricing[kind] || "0")
     value
+  end
+
+  defp smallest(endpoints, key), do: endpoints |> Enum.map(& &1[key]) |> Enum.reject(&is_nil/1) |> Enum.min(fn -> nil end)
+
+  # Dearer rates from a prompt size on (`overrides`), the dearest per size across endpoints.
+  defp tiers(pricing) do
+    pricing
+    |> Enum.flat_map(&(&1["overrides"] || []))
+    |> Enum.group_by(& &1["min_prompt_tokens"])
+    |> Enum.map(fn {from, rates} ->
+      %{
+        from: from,
+        prompt: rates |> Enum.map(&per_token(&1, "prompt")) |> Enum.max(),
+        completion: rates |> Enum.map(&per_token(&1, "completion")) |> Enum.max()
+      }
+    end)
+    |> Enum.sort_by(& &1.from)
   end
 
   @doc "The most a call can cost: every input token at full price and the answer at its limit."
   @spec worst_case(map() | nil, non_neg_integer(), non_neg_integer()) :: float()
   def worst_case(nil, _tokens_in, _max_tokens), do: 0.0
-  def worst_case(price, tokens_in, max_tokens), do: tokens_in * price.prompt + max_tokens * price.completion
+
+  def worst_case(price, tokens_in, max_tokens) do
+    rate = price |> Map.get(:tiers, []) |> Enum.filter(&(&1.from <= tokens_in)) |> List.last(price)
+    tokens_in * rate.prompt + max_tokens * rate.completion
+  end
 
   @doc "Whether a call may go ahead, or why not (a message for the user)."
   @spec verdict(%{run_spent: number(), run_max: number(), left: number() | nil, worst: number()}) ::

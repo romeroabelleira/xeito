@@ -49,7 +49,7 @@ defmodule Xeito.Session.Input do
         messages: s.history,
         verify: Router.quick_check_command(s.cwd),
         system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(listed),
-        context: ChatModel.context(ChatModel.current(s.chat), ChatModel.config(s.chat)),
+        context: chat_context(s),
         skills: Enum.map(skills, &Map.take(&1, [:name, :dir])),
         skill_candidates: Enum.map(candidates, &Map.take(&1, [:name, :description]))
       },
@@ -82,4 +82,12 @@ defmodule Xeito.Session.Input do
     do:
       binary_part(text, 0, @agents_max_bytes) <>
         "\n\n[AGENTS.md continues: cut at #{@agents_max_bytes} bytes here. Read the file for the rest.]"
+
+  # The chat tier's window; a remote tier's from its model's data (`Xeito.Allowance`, cached).
+  defp chat_context(s) do
+    tier = ChatModel.current(s.chat)
+    cfg = ChatModel.config(s.chat)
+    price = if ChatModel.off_box?(tier) and cfg[:url], do: Xeito.Allowance.model_price(cfg)
+    ChatModel.context(tier, cfg, price)
+  end
 end
