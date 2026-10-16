@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-10-16 (P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included; P4g, P4h and PX planned; P4i done) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-10-16 (P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included; P4i done; P4j, P4g, P4h, P5b and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -29,7 +29,9 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4g · One-shot mode (planned) | `mix xeito.run`: a skill or machine on stdin, free prose out, streaming and pipes; per-skill tier, variables, named contexts, strategies as machines (ideas from Fabric) | — | after P4f | [P4g](#p4g--one-shot-mode-and-composable-skills) |
 | P4h · Scripts (planned) | a `script` tool: the model hands busywork to an Elixir script whose every call is a logged, gated effect; typed decisions and log objects from scripts; the MCP client with exposure levels (answer to pi's Codemode) | — | after P4g, before P5 | [P4h](#p4h--scripts) |
 | P4i · Code over docs (added) | a glossary, a generated module map, moduledocs as contracts, types for the data that crosses modules, tests mirrored to modules, smaller modules; the docs repository decided by measurement | — | done 2026-10-17; documents stay in this repository | [P4i](#p4i--code-over-docs) |
+| P4j · Robustness (added) | crash-safe replay of effects, robust remote model calls, model limits and prices from OpenRouter, idempotent client submissions; from a review of pi-durable, pi-ai and chord | — | before P4g | [P4j](#p4j--robustness) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
+| P5b · Client protocol v1 (added) | a versioned `hello`, closed error codes, per-request `cancel`, bounded output to slow clients | — | before P6 and P9 | [P5b](#p5b--client-protocol-v1) |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
 | P7 · Meta machine | mining-driven proposals, **promotion of skills and machines** (draft, benchmark, review, release, retire), counterfactual replay, graduating decisions, threshold tuning, **rollback-netcode ideas** (snapshots, prompt fingerprints, speculative decisions) | 2027-04-12 → 05-10 | ≈ 2026-12-14 → 2027-01-11 | — |
 | P8 · Packaging and v0.1 | Burrito binary, install script or setup machine, guides, benchmark write-up | 2027-05-10 → 05-31 | ≈ 2027-01-11 → 02-01 | — |
@@ -55,10 +57,12 @@ gantt
   P4b Context economy            :p4b, 2026-09-30, 12d
   P4d Tier names                 :p4d, 2026-10-12, 1w
   P4e Skills per turn            :done, p4e, 2026-10-04, 1d
-  P4g One-shot mode              :p4g, after p4e, 1w
+  P4j Robustness                 :p4j, after p4e, 1w
+  P4g One-shot mode              :p4g, after p4j, 1w
   section Insight
   P5 OCEL, mining, portability   :p5, after p4d, 4w
-  P6 Web inspector               :p6, after p5, 5w
+  P5b Client protocol v1         :p5b, after p5, 1w
+  P6 Web inspector               :p6, after p5b, 5w
   P7 Meta machine loop           :p7, after p6, 4w
   section Release
   P8 Packaging & v0.1            :p8, after p7, 3w
@@ -354,7 +358,7 @@ Added 2026-10-03. The tiers grew one per backend: `system_one`, `small`, `large`
 3. **Choose the remote models (deferred until remote tiers are wanted).** A P3b-style benchmark on the eval sets measures accuracy, calibration, cost per decision and latency. It spends OpenRouter credit, so it runs only once remote tiers are to be used; until then the candidates below are notes, not defaults.
    - For `remote`: `qwen/qwen3.8-27b`, an off-box twin of `local` (12 of its 17 endpoints offered logprobs and JSON schema on 2026-10-03), against `z-ai/glm-5.3` and `moonshotai/kimi-k3`.
    - For `remote_frontier`: `anthropic/claude-sonnet-5.5` against `claude-opus-5.5`. The benchmark checks that structured output works under `zdr: true`, which routes Claude away from Anthropic's own endpoints.
-   - For `remote_decision`: Jev is not callable through OpenRouter (checked 2026-10-03). `~typesafe/jev-latest` is listed with the modality `text->decisions` but has no endpoints. `typesafe/jev-router` is a router that uses Jev to choose a language model, which then answers in text. It returns no decision with probabilities, so it cannot serve this tier. The tier stays unset until Jev has an OpenRouter endpoint or a TypeSafe account is chosen; it would be the one remote tier not on OpenRouter.
+   - For `remote_decision`: Jev is not callable through OpenRouter (checked 2026-10-03). `~typesafe/jev-latest` is listed with the modality `text->decisions` but has no endpoints. `typesafe/jev-router` is a router that uses Jev to choose a language model, which then answers in text. It returns no decision with probabilities, so it cannot serve this tier. The tier stays unset until Jev has an OpenRouter endpoint or a TypeSafe account is chosen; it would be the one remote tier not on OpenRouter. **Update 2026-10-17:** Jev now has one. pi-ai's catalogue lists 23 decision models reachable through OpenRouter's `/api/v1/systemone` with the same key (Jev 1.13 and 1.14, Perplexity's decider, Cloudflare's Clef, Microsoft's, Upstage's and others, about $0.02–0.15 per million input tokens), and OpenRouter's live API confirms an endpoint for `typesafe/jev-1.14`, served by TypeSafe (`~typesafe/jev-latest` is still an alias without one). So `remote_decision` can use the OpenRouter backend after all; the step 3 benchmark adds `typesafe/jev-1.14` and the decision models with zero-retention endpoints as candidates.
 4. **Chat on a remote tier** (built 2026-10-16, so that real work can go to a frontier model while decisions stay local).
    - **Decision.** The chat tier is chosen by a person: per session with `/model <tier>` (`Xeito.Session.ChatModel`), or for every session with `XEITO_CHAT_TIER`; default `local`. The choice is the rule for which workspaces may leave the box: a remote chat sends the whole conversation and every file the model reads, so it is a choice per workspace and session, not a decision per input. Decisions (intent, skill, Risk) stay on their own tiers and policy.
    - **Client.** `Xeito.Chat` dispatches by the chat tier's backend. `Xeito.Chat.OpenRouter` speaks OpenAI's streamed chat completions with tool calls: Xeito's conversation (tool results paired with calls by position, as in Ollama's form) gets stable call ids, every call gets an answer, and a result whose call was dropped becomes a note. Requests keep `require_parameters`, `data_collection: "deny"` and `zdr`; they send `temperature` only when the tier sets one, since Claude Sonnet 5.5's endpoints take none (with `require_parameters`, that left no endpoint). Anthropic models get OpenRouter's automatic `cache_control`. `XEITO_<TIER>_REASONING` sets an effort.
@@ -505,6 +509,8 @@ Added 2026-10-09, from pi's built-in MCP and Codemode (2026-09-29). The concept,
 5. **The MCP client, with exposure levels** (brought forward from P9). Servers from `.xeito/mcp.json` and the user's configuration, stdio and streamable HTTP. A tool's exposure is `script` (default: reachable from scripts only), `deferred`, `direct` or `hidden`, per server and per tool, as in pi. Scripts find tools with `search_tools/1`, which reuses the skills' BM25 index (P4f). Each call is an effect. The tool annotations feed Risk's rules: read-only and closed-world is safe by rule, destructive goes to review. An open-world server counts as off-box for the data-locality policy. The protocol comes from a library, not Xeito's own code: anubis_mcp or arbor_mcp, tried side by side ([PX](#adopting-existing-libraries)).
 6. **Benchmark** (`bench/`): busywork requests on real repositories (classify the TODO comments by urgency; group the failures of the last CI logs by cause; rate each issue of a tracker export), run with plain tools, with Elixir scripts, with JavaScript scripts, and with pi's Codemode on the same local model. Measured: success, model turns, tokens, wall time, the share of calls decided by rules.
 
+**Recovery of a script** (added 2026-10-17, from pi-durable's "code mode", which runs QuickJS scripts durably): every result a script receives is logged before the script sees it, as the concept already plans, and nested calls are matched by a key. After a crash the script runs again from the start against the logged results; a call that differs from the logged one at the same key, or a changed sandbox (a fingerprint of the allow-list and limits, logged with the script), ends the call with an error instead of continuing. The sandbox gives scripts a virtual clock and no randomness, so a replay sees what the first run saw.
+
 **Exit:**
 - On the benchmark set, scripts take at least five times fewer model turns than plain tools, at equal or better success.
 - Elixir scripts succeed within ten percentage points of JavaScript ones on the same model; otherwise the language decision is reopened before step 5.
@@ -542,6 +548,30 @@ Step 7 done 2026-10-17: **the documents stay in this repository.** Four question
 
 **Exit:** the always-read surface is under ~4k tokens; no module in `lib/` refers to a plan phase or a bench report; every public function has a spec; the benchmark shows fewer tokens per task than the baseline, and step 7's decision is recorded with its numbers.
 
+## P4j · Robustness
+
+Added 2026-10-17, from a review of Earendil's pi-durable (announced 2026-10-01), pi-ai and chord (npm, 1.3.0, MIT; their source maps carry the full sources). pi-durable runs many durable LLM conversations: tasks with phases and checkpoints, tools that declare whether they may run again after a crash, exactly-once submissions, typed documents committed with the transcript. pi-ai is a multi-provider model layer with a model catalogue; chord is a typed runtime for plugins, replicated state and RPC between processes. Xeito is ahead where its design differs: an append-only log with every transition (pi-durable overwrites task and submission records in place, so it keeps no history to mine), effects as data behind a policy-checked runner (pi-durable's phases are code that acts), typed decisions with an escalation ladder, human review, undo, and the cost OpenRouter bills (pi-ai computes it from list prices). What it lacked, and this phase adds, is mostly what happens when something fails. Each claim about Xeito below was checked against its code.
+
+1. **Safe replay after a crash** (from pi-durable's per-tool `replay` policy, recorded with the intent). `Xeito.Run.Recovery` re-dispatches every effect without a logged result, at least once, `bash` included: a daemon that dies during `git push` or a migration runs it twice. Each effect kind declares whether it may run again: `read`, `decide`, `tier`, `probe` and `chat` may; `write` may (it writes the same content); `edit` may not; `bash` only when `Risk`'s rules alone call the command safe; a child `machine` is recovered from its own log, not restarted. The policy is logged with `effect_requested`, and recovery re-runs an effect only when both the logged and the current policy allow it. Otherwise it logs an `effect_completed` that says the effect was interrupted, with any partial output, and the machine (the chat model, in the chat machine) is told. Test-first: kill a run during a `bash` effect, restart, and the command does not run again.
+2. **Robust remote model calls** (from pi-ai's `isContextOverflow`, `retryProviderRequest` and its list of quota errors). Every request runs with `retry: false`, so any failure ends the turn. A call's error is classified: context overflow, including a silent one (input past the window, or a stop for length with no output); retryable (408, 409, 429, 5xx), retried a bounded number of times, honouring `retry-after` and failing fast when it asks for more than a minute; quota or billing, never retried, reported like the allowance gate. An overflow leads to a summary and one retry (as P4c's summarising does), not a failed turn.
+3. **Token estimates and model limits** (from pi-ai's `estimateContextTokens` and `personalizeOpenRouterCatalog`). `Xeito.Chat.Window` calibrates one characters-per-token ratio and estimates the whole request; it anchors on the last real `prompt_tokens` instead and estimates only the messages after it, unless a summary was inserted before them. A remote tier's context window and longest answer come from OpenRouter (`GET /api/v1/models/user`, the models this key may use, and the model's endpoints), cached like the allowance, instead of the hand-set 128k; the worst-case cost gate uses the price tiers OpenRouter reports for long prompts, where the flat price underestimates.
+4. **Idempotent submissions** (from pi-durable's `requestId`). A client may send a `request_id` with a prompt, an approval or a line; the session keeps it, unique per session, and logs it with what it admitted. A request repeated, say after a daemon restart, gets the first answer back instead of being admitted twice.
+
+**Exit:** a run killed during a non-replayable effect resumes without running it again, and the model is told; a 429 from OpenRouter is retried and a quota error is reported, both in tests; a remote tier's window and prices come from OpenRouter; a submission repeated with the same `request_id` is admitted once.
+
+### Considered and not adopted (2026-10-17)
+
+| Idea | From | Why not |
+|---|---|---|
+| Hot reload with code versions, prepare/commit and migration of live objects, the two-version rule | chord | The BEAM loads code and keeps an old and a current version; machines are versioned, and a run on a changed version is P7's business. |
+| Distributed object references, relays, a host manager, context values for cancellation (`AbortSignal`) | chord | OTP gives links, monitors, supervisors and process-group kills, which JavaScript has to simulate. |
+| Extensions stored by name, so a running conversation picks up new tool code | pi-durable | A tool call made under one version could run under another; Xeito's versioned machines are more predictable. |
+| Task and submission records overwritten in place; a single writer that fails the harness on any storage error; phases as imperative code that must commit | pi-durable | Xeito's log keeps every transition (what P5 mines), and effects stay data behind the runner. |
+| pi-ai as a library, its 40 providers, OAuth flows, deferred and batch requests | pi-ai | Xeito talks to Ollama and OpenRouter only; the rules above are ported as small functions instead. |
+| Cost computed from catalogue prices | pi-ai | Xeito records `usage.cost`, what OpenRouter bills. |
+| pi-ai's model catalogue (1,714 entries, generated from models.dev) as a dependency or a vendored copy | pi-ai | Stale between releases, not per key, and its file layout is an internal of the npm package; OpenRouter's own API is authoritative for the remote tiers (step 3). It stays a reference: it pointed to the decision models now on OpenRouter ([P4d](#p4d--tier-names) step 3) and records quirks such as models that take no `temperature`. |
+| req_llm for remote chat | — | The OpenRouter path is narrow and tested; a general client would have to be verified for tool ids and caching. For typed decisions, see [PX](#px--libraries-for-the-ecosystem). |
+
 ## P5 · OCEL export and process mining (≈4 weeks)
 
 1. Validate the SQLite layout against the OCEL 2.0 spec, and add JSON export.
@@ -570,13 +600,25 @@ Step 7 done 2026-10-17: **the documents stay in this repository.** Four question
 
 **Exit:** a weekly mining report generated from the dogfood logs, with ≥ 3 actionable proposals. PM4Py loads `.xeito/log.sqlite` without conversion. A dogfood session exports to pi's session format and resumes in pi, and logged decisions export as a dataset that trains a classifier outside Xeito.
 
+## P5b · Client protocol v1
+
+Added 2026-10-17, from chord's protocol (`PROTOCOL_VERSION` in its `hello`, the closed `WireError` codes, `cancel` frames, coalescing for slow readers). Before the web inspector (P6) and the bridges (P9) become clients of the daemon, the protocol they speak gets a version and the edges a protocol needs. Today `Xeito.Api.Connection` writes every event straight to the socket, errors are free text, nothing names a protocol version, and only a whole turn can be halted (checked).
+
+1. **A versioned `hello`:** the first message names the protocol version; a client with another closes with a message saying which. Additive changes (a new event, a new optional field) keep the version.
+2. **Closed error codes:** every error reply carries a `code` from a fixed set (`invalid`, `unknown_session`, `busy`, `not_found`, `unavailable`, `aborted`, …) and a human `message`.
+3. **Per-request `cancel`:** a request in progress can be cancelled by its id; for a turn, it maps to halting the run. MCP and ACP both expect cancellation.
+4. **Bounded output to slow clients:** a connection holds at most a bounded backlog; past it, what is behind collapses to a snapshot of the session (step 1 of P6's view state, until then a resync notice), while replies are never held back. A Unix socket already pushes back on the writer, so no acknowledgements are needed.
+
+**Exit:** the TUI and line client speak v1; a test client with another version is refused; a cancelled request ends with `aborted`; a client that stops reading does not grow the daemon's memory.
+
 ## P6 · Web inspector (≈5 weeks)
 
 1. **Spike (1 week):** build the machine view in **Hologram** and, as a fallback, in **Phoenix LiveView**. Pick one using the criteria in [08](architecture/08-tech-stack.md#decision-procedure).
 2. Build the views in the order given in [06](architecture/06-observability.md#views-web-inspector): timeline → machine view → step debugger → decision table → mining dashboard.
 3. Relabelling a decision in the UI writes to the eval set, closing the labelling loop.
 4. Bind the inspector to `127.0.0.1` only. Remote access goes through an SSH tunnel or a private VPN.
-5. **Browser tests** (noted 2026-10-03). Test the views with the chosen framework's own tools (`Phoenix.LiveViewTest`, or Hologram's). Anthropic's `webapp-testing` skill (Playwright in Python, Apache-2.0) was considered; adopt it under the skill convention ([.agents/skills/README.md](../.agents/skills/README.md)) only if an end-to-end check in a real browser is needed that those tools cannot do.
+5. **The session's view state as a snapshot plus changes** (added 2026-10-17, from chord's replicated state and pi-durable's `viewState`): the status a client shows (status bar, current run, pending review, queue) is sent once whole and then as small changes, with appended text for streamed output, beside the raw events the transcript needs. A client that joins late or falls behind gets the snapshot. Test against the resulting value, not the changes, which are exact but not canonical.
+6. **Browser tests** (noted 2026-10-03). Test the views with the chosen framework's own tools (`Phoenix.LiveViewTest`, or Hologram's). Anthropic's `webapp-testing` skill (Playwright in Python, Apache-2.0) was considered; adopt it under the skill convention ([.agents/skills/README.md](../.agents/skills/README.md)) only if an end-to-end check in a real browser is needed that those tools cannot do.
 
 **Exit:** a run started in the TUI can be watched, paused, stepped and replayed from the browser. A decision can be relabelled and shows up in the next `mix xeito.eval`.
 
@@ -600,6 +642,8 @@ Step 7 done 2026-10-17: **the documents stay in this repository.** Four question
      - a rule suggests stopping after two passes in a row with only low-severity findings, and the human decides.
 
    The machine itself ([05](architecture/05-event-log-and-process-mining.md#promotion-from-free-chat-to-skills-and-machines)), on top of the P5 candidates: `PromotionTarget` with a model behind the rules, drafting of skills and machines, benchmarking by replaying the cluster's requests, human review, release, monitoring and retirement. Exit addition: at least one skill and one machine promoted from the dogfood log, each beating its baseline.
+8. **Delegation with exact shutdown rules** (added 2026-10-17, from pi-durable's task ownership): a parent's cleanup runs only after its children are finished; waiting on children is either "stop at the first failure" or "wait for all"; a parent done while children still run waits in a `completing` state; a wait cycle is refused; a step that neither requests an effect nor moves the run is a fault. These are states and guards in the machines that delegate.
+9. **Runs that survive a machine change** (added 2026-10-17, from pi-durable's `migrate`): recovery refuses a changed machine version today. A machine may declare how to convert its older logged events (upcasting), or recovery starts from a snapshot (item 6) with the context migrated; otherwise the refusal stays.
 
 **Exit:** at least one decision type has graduated to a classifier with equal or better F1. At least one machine revision was proposed by mining, accepted and benchmarked. The determinism budget of the dogfood machines has measurably increased since P4.
 
@@ -650,7 +694,8 @@ Added 2026-10-09, after a review of which parts of Xeito would fill a gap in the
 1. **Typed decisions as a package** (after P4h, alongside P5). Built on req_llm, the most used model client, rather than as one more client.
    - First a contribution to req_llm: its Ollama provider does not request log-probabilities (its OpenAI, Azure, OpenRouter and Anthropic providers do), and the local tiers need them. If it is declined, the package keeps its own Ollama backend.
    - Contents: the decision DSL with its compile-time checks, rendering to chat messages and JSON Schema, scoring from log-probabilities, a cascade over tiers by threshold, and the eval with the gate test. Not in it: the escalation machine, policy and budgets, which stay in Xeito and call the package.
-   - The README is written first, and fixes the name and the API.
+   - The README is written first, and fixes the name and the API. It places the package against prior art: pi-ai's classifier (questions as `choice`, `score` or `bool`, answered with probabilities and a confidence; checked 2026-10-17), which P4h's `classify` already follows.
+   - Before building on req_llm, check that it gives token log-probabilities and JSON-schema output for both Ollama and OpenRouter; without them the package keeps its own two backends.
    - Xeito depends on the package like any other dependency; its decision types do not change.
 2. **ex_crap contributions:** a mode that runs as the `test_coverage` tool (no separate coverage export) and a baseline file. If both are accepted, `Xeito.Crap` is replaced by ex_crap with the maximum at 6.
 3. **A mutation-testing spike:** muex and mutare on the sources in `test/mutate.exs`, compared with `Xeito.Mutate` for mutants killed, survivors and wall time. Switch if a tool kills at least the same mutants and can fail `mix ci` on a survivor; mutare's test selection may also shorten `mix ci`.
