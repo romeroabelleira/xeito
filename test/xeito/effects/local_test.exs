@@ -133,6 +133,46 @@ defmodule Xeito.Effects.LocalTest do
       assert text =~ "$0.00"
     end
 
+    test "a remote call waiting to be tried again is announced to the run's clients" do
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+      Req.Test.stub(:local_retrying, fn conn ->
+        case conn.request_path do
+          "/api/v1/key" ->
+            Req.Test.json(conn, %{data: %{limit_remaining: 10.0}})
+
+          "/api/v1/chat/completions" ->
+            if Agent.get_and_update(calls, &{&1, &1 + 1}) == 0 do
+              conn |> Plug.Conn.put_resp_header("retry-after", "0") |> Plug.Conn.send_resp(429, "slow down")
+            else
+              body = "data: " <> JSON.encode!(%{choices: [%{delta: %{content: "ok"}}], usage: %{cost: 0.0}}) <> "\n\n"
+              conn |> Plug.Conn.put_resp_content_type("text/event-stream") |> Plug.Conn.send_resp(200, body)
+            end
+
+          _ ->
+            Plug.Conn.send_resp(conn, 404, "")
+        end
+      end)
+
+      run = "r-#{System.unique_integer([:positive])}"
+      Xeito.Events.subscribe(run)
+
+      chat = [
+        tier: :remote,
+        url: "http://retrying.test/api",
+        model: "m/r",
+        api_key: "k",
+        plug: {Req.Test, :local_retrying}
+      ]
+
+      effect = %{Effect.chat([%{role: "user", content: "hi"}]) | id: "e1"}
+
+      assert %{content: "ok"} = Local.run(effect, run_id: run, chat: chat)
+
+      assert_received {:xeito, ^run,
+                       %{type: "retrying", attrs: %{"attempt" => 2, "of" => 3, "status" => 429, "effect_id" => "e1"}}}
+    end
+
     test "an ordinary request carries no error" do
       refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
     end

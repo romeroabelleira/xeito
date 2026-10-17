@@ -126,6 +126,7 @@ defmodule Xeito.AllowanceTest do
             "/api/v1/key" -> %{data: %{limit_remaining: 5.0}}
             "/api/v1/credits" -> %{data: %{total_credits: 30, total_usage: 0}}
             "/api/v1/models/m/x/endpoints" -> %{data: %{endpoints: [%{pricing: %{prompt: "1", completion: "2"}}]}}
+            "/api/v1/models/user" -> %{data: [%{id: "m/x", reasoning: %{mandatory: true, default_effort: "high"}}]}
           end
 
         Req.Test.json(conn, body)
@@ -160,11 +161,20 @@ defmodule Xeito.AllowanceTest do
       assert {:reply, :stale, ^s} = Allowance.handle_call({:remaining, :other, 0}, self(), s)
     end
 
-    test "a model's price is fetched once", %{cfg: cfg} do
-      assert %{prompt: 1.0, completion: 2.0} = Allowance.model_price(cfg)
+    test "a model's price, and how it reasons, are fetched once", %{cfg: cfg} do
+      assert %{prompt: 1.0, completion: 2.0, reasoning: %{default: "high", mandatory: true}} = Allowance.model_price(cfg)
       assert %{prompt: 1.0} = Allowance.model_price(cfg)
       assert_received {:get, "/api/v1/models/m/x/endpoints"}
+      assert_received {:get, "/api/v1/models/user"}
       refute_received {:get, _}
+    end
+
+    test "reasoning/1: the model's default effort and whether it always reasons" do
+      assert Allowance.reasoning(%{"reasoning" => %{"mandatory" => true, "default_effort" => "high"}}) ==
+               %{default: "high", mandatory: true}
+
+      assert Allowance.reasoning(%{"id" => "m"}) == nil
+      assert Allowance.reasoning(nil) == nil
     end
 
     test "when OpenRouter cannot be asked, the allowance is unknown", %{cfg: cfg} do

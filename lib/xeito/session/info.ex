@@ -46,10 +46,20 @@ defmodule Xeito.Session.Info do
     }
   end
 
-  # `Allowance.last/1` makes no request.
+  # The chat tier for the status bar: its window and, for a remote tier, its reasoning effort and
+  # what the key has left. `Allowance.last/1` makes no request; the model's data is fetched once.
   defp chat_attrs(tier, cfg) do
-    left = if ChatModel.off_box?(tier) and cfg[:url], do: Allowance.last(cfg)
-    %{"tier" => tier, "model" => cfg[:model], "off_box" => ChatModel.off_box?(tier), "left_usd" => left}
+    remote? = ChatModel.off_box?(tier) and cfg[:url] != nil
+    price = if remote?, do: Allowance.model_price(cfg)
+
+    %{
+      "tier" => tier,
+      "model" => cfg[:model],
+      "off_box" => ChatModel.off_box?(tier),
+      "left_usd" => if(remote?, do: Allowance.last(cfg)),
+      "context" => ChatModel.context(tier, cfg, price),
+      "reasoning" => cfg[:reasoning] || get_in(price || %{}, [:reasoning, :default])
+    }
   end
 
   defp why(s) do

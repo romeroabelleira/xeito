@@ -279,8 +279,18 @@ defmodule Xeito.SessionCommandsTest do
   end
 
   test "/model lists the chat tiers and switches this session's chat", %{id: id} do
+    Req.Test.set_req_test_to_shared(%{})
+    Req.Test.stub(:session_model_list, &Plug.Conn.send_resp(&1, 500, "down"))
     tiers = Application.get_env(:xeito, :tiers, [])
-    frontier = [backend: :openrouter, url: "http://or.test/api", model: "anthropic/claude-x", api_key: "k"]
+
+    frontier = [
+      backend: :openrouter,
+      url: "http://or.test/api",
+      model: "anthropic/claude-x",
+      api_key: "k",
+      plug: {Req.Test, :session_model_list}
+    ]
+
     Application.put_env(:xeito, :tiers, Keyword.put(tiers, :remote_frontier, frontier))
     on_exit(fn -> Application.put_env(:xeito, :tiers, tiers) end)
 

@@ -56,6 +56,9 @@ defmodule Xeito.ChatTest do
           "/api/v1/models/m/chat/endpoints" ->
             Req.Test.json(conn, %{data: %{endpoints: [%{pricing: %{prompt: "0.000002", completion: "0.00001"}}]}})
 
+          "/api/v1/models/user" ->
+            Req.Test.json(conn, %{data: []})
+
           "/api/v1/models/m/short/endpoints" ->
             endpoint = %{pricing: %{prompt: "0.000002", completion: "0.00001"}, max_completion_tokens: 1000}
             Req.Test.json(conn, %{data: %{endpoints: [endpoint]}})

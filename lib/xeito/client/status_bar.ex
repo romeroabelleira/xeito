@@ -22,6 +22,8 @@ defmodule Xeito.Client.StatusBar do
           ctx: non_neg_integer() | nil,
           last_decision: map() | nil,
           last_reply: map() | nil,
+          cache_in: non_neg_integer(),
+          cached: non_neg_integer(),
           usd: float(),
           joules: float(),
           det: {non_neg_integer(), non_neg_integer()}
@@ -39,7 +41,9 @@ defmodule Xeito.Client.StatusBar do
       joules: 0.0,
       det: {0, 0},
       last_decision: nil,
-      last_reply: nil
+      last_reply: nil,
+      cache_in: 0,
+      cached: 0
     }
 
   @doc "Counts one daemon event (string keys, as decoded from the API)."
@@ -59,14 +63,17 @@ defmodule Xeito.Client.StatusBar do
     |> Map.put(:last_decision, decision)
   end
 
-  defp count_event(usage, "effect_completed", %{"attrs" => %{"kind" => kind, "result" => r}})
-       when kind in ["chat", :chat] and is_map(r) do
+  defp count_event(usage, "effect_completed", %{"attrs" => %{"kind" => kind, "result" => %{} = r}})
+       when kind in ["chat", :chat] do
     usage
     |> call("chat")
     |> add_cost(r)
     |> Map.put(:ctx, context(r, usage))
+    |> add_cache(r)
     |> Map.put(:last_reply, %{ms: r["latency_ms"], first_ms: r["first_token_ms"]})
   end
+
+  defp count_event(usage, "retrying", %{"attrs" => a}), do: %{usage | last_reply: %{retry: a}}
 
   defp count_event(usage, "transition", %{"attrs" => %{"actor" => actor}}),
     do: %{usage | det: determinism(usage.det, actor)}
@@ -77,6 +84,12 @@ defmodule Xeito.Client.StatusBar do
   defp decision_type(_type, attrs), do: short_type(attrs["decision_type"])
 
   defp context(reply, usage), do: reply["tokens_in"] || usage.ctx
+
+  # Remote replies report their cache reads; local ones do not, and are left out of the share.
+  defp add_cache(usage, %{"cached_tokens" => cached} = r) when is_number(cached),
+    do: %{usage | cache_in: usage.cache_in + num(r["tokens_in"]), cached: usage.cached + cached}
+
+  defp add_cache(usage, _reply), do: usage
 
   defp determinism({code, total}, actor) when actor in [:code, :rule, "code", "rule"], do: {code + 1, total + 1}
   defp determinism({code, total}, _actor), do: {code, total + 1}
@@ -179,6 +192,7 @@ defmodule Xeito.Client.StatusBar do
 
   defp segment(name, _u, m, _w) when name in [:gpu, :models, :cpu, :queue], do: machine_segment(name, m)
   defp segment(name, _u, _m, w) when name in [:git, :budget], do: workspace_segment(name, w)
+  defp segment(:tokens, u, m, w), do: tokens(u, m, w)
   defp segment(name, u, m, _w), do: usage_segment(name, u, m)
 
   defp machine_segment(:gpu, nil), do: "status: waiting for the daemon's monitor…"
@@ -196,7 +210,6 @@ defmodule Xeito.Client.StatusBar do
   defp workspace_segment(:budget, w), do: join([budget(w && w["budget"]), chat(w && w["chat"])])
 
   defp usage_segment(:calls, u, _m), do: calls(u)
-  defp usage_segment(:tokens, u, m), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, m)
   defp usage_segment(:det, u, _m), do: det(u.det)
   defp usage_segment(:decision, u, _m), do: last_decision(u.last_decision)
   defp usage_segment(:reply, u, _m), do: last_reply(u.last_reply)
@@ -220,6 +233,8 @@ defmodule Xeito.Client.StatusBar do
   defp last_decision(%{ms: ms} = d) when is_number(ms), do: "#{d.type} #{d.actor} #{duration(ms)}"
 
   defp last_decision(_), do: ""
+
+  defp last_reply(%{retry: r}), do: "retry #{r["attempt"]}/#{r["of"]} in #{duration(num(r["wait_ms"]))} (#{r["status"]})"
 
   defp last_reply(%{ms: ms, first_ms: first}) when is_number(ms),
     do: "reply #{duration(ms)}" <> if(is_number(first), do: " (first #{duration(first)})", else: "")
@@ -245,9 +260,14 @@ defmodule Xeito.Client.StatusBar do
   end
 
   defp chat(%{"off_box" => true, "model" => model} = chat),
-    do: "chat #{model |> to_string() |> String.split("/") |> List.last()}" <> key_left(chat["left_usd"])
+    do:
+      "chat #{model |> to_string() |> String.split("/") |> List.last()}" <>
+        effort(chat["reasoning"]) <> key_left(chat["left_usd"])
 
   defp chat(_chat), do: ""
+
+  defp effort(effort) when is_binary(effort), do: " · " <> effort
+  defp effort(_effort), do: ""
 
   defp key_left(left) when is_number(left), do: " · key $#{:erlang.float_to_binary(left * 1.0, decimals: 2)}"
   defp key_left(_left), do: ""
@@ -296,12 +316,22 @@ defmodule Xeito.Client.StatusBar do
 
   defp cpu(_), do: ""
 
-  defp ctx(nil, _monitor), do: ""
+  defp tokens(u, m, w), do: "#{k(u.tokens_in)}→#{k(u.tokens_out)} tok" <> ctx(u.ctx, window(m, w)) <> cache(u)
 
-  defp ctx(tokens, %{"models" => %{"local" => %{"loaded" => [%{"context" => window} | _]}}})
-       when is_integer(window) and window > 0, do: " · ctx #{k(tokens)}/#{k(window)}"
+  # The chat tier's window from the session, else the window of the model loaded locally.
+  defp window(_m, %{"chat" => %{"context" => window}}) when is_integer(window), do: window
 
-  defp ctx(tokens, _monitor), do: " · ctx #{k(tokens)}"
+  defp window(%{"models" => %{"local" => %{"loaded" => [%{"context" => window} | _]}}}, _w) when is_integer(window),
+    do: window
+
+  defp window(_m, _w), do: nil
+
+  defp ctx(nil, _window), do: ""
+  defp ctx(tokens, window) when is_integer(window) and window > 0, do: " · ctx #{k(tokens)}/#{k(window)}"
+  defp ctx(tokens, _window), do: " · ctx #{k(tokens)}"
+
+  defp cache(%{cache_in: 0}), do: ""
+  defp cache(u), do: " · cache #{round(100 * u.cached / u.cache_in)}%"
 
   defp queues(%{"queues" => q}) do
     busy =

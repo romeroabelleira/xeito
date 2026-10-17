@@ -132,13 +132,26 @@ defmodule Xeito.Effects.Local do
   defp chat(%Effect{args: %{error: reason}}, _opts), do: %{error: {:context_window, reason}}
 
   defp chat(%Effect{args: args} = effect, opts) do
-    on_delta = &Xeito.Events.delta(streamed_to(args, opts), effect.id, &1)
+    run = streamed_to(args, opts)
+    on_delta = &Xeito.Events.delta(run, effect.id, &1)
+    chat = Keyword.put(chat_options(opts), :on_retry, &retrying(run, effect.id, &1))
 
-    case Chat.complete(args.messages, specs(args.tools), chat_options(opts), on_delta) do
+    case Chat.complete(args.messages, specs(args.tools), chat, on_delta) do
       {:ok, message} -> message
       {:error, reason} -> %{error: reason}
     end
   end
+
+  # A remote call waiting to be tried again, for clients (not logged).
+  defp retrying(nil, _effect_id, _retry), do: :ok
+
+  defp retrying(run, effect_id, retry),
+    do:
+      Xeito.Events.transient(
+        run,
+        "retrying",
+        retry |> Map.new(fn {k, v} -> {Atom.to_string(k), v} end) |> Map.put("effect_id", effect_id)
+      )
 
   defp chat_options(opts) do
     policy = Policy.effective(Keyword.take(Keyword.get(opts, :decider, []), [:policy]))

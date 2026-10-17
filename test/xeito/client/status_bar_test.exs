@@ -51,4 +51,51 @@ defmodule Xeito.Client.StatusBarTest do
     assert only(~w(budget), nil, %{"budget" => budget, "chat" => %{"off_box" => false, "model" => "q"}}) ==
              "budget $0.40/0.50"
   end
+
+  defp with_events(events), do: Enum.reduce(events, StatusBar.new(), &StatusBar.count(&2, &1))
+
+  defp chat_reply(result), do: %{"event" => "effect_completed", "attrs" => %{"kind" => "chat", "result" => result}}
+
+  defp tokens_line(usage, monitor, workspace),
+    do: StatusBar.line(usage, monitor, workspace, StatusBar.segments() -- ~w(tokens), 500)
+
+  describe "the tokens segment" do
+    test "the context is measured against the chat tier's window, else the local model's" do
+      usage = with_events([chat_reply(%{"tokens_in" => 12_000, "tokens_out" => 300})])
+      loaded = %{"models" => %{"local" => %{"loaded" => [%{"context" => 81_920}]}}}
+      remote = %{"chat" => %{"context" => 131_072}}
+
+      assert tokens_line(usage, loaded, remote) =~ "ctx 12.0k/131.1k"
+      assert tokens_line(usage, loaded, %{"chat" => %{}}) =~ "ctx 12.0k/81.9k"
+      assert tokens_line(usage, nil, remote) =~ "ctx 12.0k/131.1k"
+    end
+
+    test "remote replies' cache reads, as a share of their input" do
+      usage =
+        with_events([
+          chat_reply(%{"tokens_in" => 10_000, "tokens_out" => 100, "cached_tokens" => 0}),
+          chat_reply(%{"tokens_in" => 10_000, "tokens_out" => 100, "cached_tokens" => 9_000}),
+          chat_reply(%{"tokens_in" => 5_000, "tokens_out" => 100})
+        ])
+
+      assert tokens_line(usage, nil, nil) =~ "cache 45%"
+      refute tokens_line(with_events([chat_reply(%{"tokens_in" => 5_000})]), nil, nil) =~ "cache"
+    end
+  end
+
+  describe "the reply segment" do
+    test "a call waiting to be tried again says so until the next reply" do
+      retrying = %{"event" => "retrying", "attrs" => %{"attempt" => 2, "of" => 3, "wait_ms" => 3_000, "status" => 429}}
+      reply = fn usage -> StatusBar.line(usage, nil, nil, StatusBar.segments() -- ~w(reply), 500) end
+
+      assert reply.(with_events([retrying])) == "retry 2/3 in 3.0 s (429)"
+      assert reply.(with_events([retrying, chat_reply(%{"latency_ms" => 900})])) == "reply 900 ms"
+    end
+  end
+
+  test "a remote chat shows its reasoning effort, when it has one" do
+    budget = %{"off_box" => true, "max_usd_per_run" => 0.5, "spent_usd" => 0.0}
+    chat = %{"off_box" => true, "model" => "anthropic/claude-x", "reasoning" => "high", "left_usd" => 29.0}
+    assert only(~w(budget), nil, %{"budget" => budget, "chat" => chat}) =~ "chat claude-x · high · key $29.00"
+  end
 end

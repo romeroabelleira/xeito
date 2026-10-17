@@ -74,31 +74,35 @@ defmodule Xeito.Backends.Failure do
 
   @doc """
   Makes `call` (returning `{:ok, value}`, `{:failed, status, body, headers}`, `{:error, reason}`, or
-  `{:final, reason}` for a failure not to retry, such as one after output was streamed) with retries. Options: `:attempts` (default #{@attempts}), `:sleep` (`fun(ms)`, for tests).
+  `{:final, reason}` for a failure not to retry, such as one after output was streamed) with retries.
+  Options: `:attempts` (default #{@attempts}), `:on_retry` (`fun(%{attempt, of, wait_ms, status})`,
+  called before each wait; `status` is `"connection"` for a transport error), `:sleep` (`fun(ms)`,
+  for tests).
   """
   @spec run((-> outcome()), keyword()) :: {:ok, term()} | {:error, term()}
-  def run(call, opts \\ []),
-    do: attempt(call, 1, Keyword.get(opts, :attempts, @attempts), Keyword.get(opts, :sleep, &Process.sleep/1))
+  def run(call, opts \\ []) do
+    attempt(%{
+      call: call,
+      n: 1,
+      max: Keyword.get(opts, :attempts, @attempts),
+      sleep: Keyword.get(opts, :sleep, &Process.sleep/1),
+      on_retry: Keyword.get(opts, :on_retry, fn _ -> :ok end)
+    })
+  end
 
-  defp attempt(call, n, max, sleep) do
-    case call.() do
-      {:ok, value} ->
-        {:ok, value}
-
-      {:failed, status, body, headers} ->
-        failed(classify(status, body, headers, n), {status, body}, {call, n, max, sleep})
-
-      {:error, reason} ->
-        failed(classify(:transport, inspect(reason), [], n), reason, {call, n, max, sleep})
-
-      {:final, reason} ->
-        {:error, reason}
+  defp attempt(again) do
+    case again.call.() do
+      {:ok, value} -> {:ok, value}
+      {:failed, status, body, headers} -> failed(classify(status, body, headers, again.n), {status, body}, again)
+      {:error, reason} -> failed(classify(:transport, inspect(reason), [], again.n), reason, again)
+      {:final, reason} -> {:error, reason}
     end
   end
 
-  defp failed({:retry, ms}, _failure, {call, n, max, sleep}) when n < max do
-    sleep.(ms)
-    attempt(call, n + 1, max, sleep)
+  defp failed({:retry, ms}, failure, %{n: n, max: max} = again) when n < max do
+    again.on_retry.(%{attempt: n + 1, of: max, wait_ms: ms, status: cause(failure)})
+    again.sleep.(ms)
+    attempt(%{again | n: n + 1})
   end
 
   defp failed(:overflow, {_status, body}, _again), do: {:error, overflow(body)}
@@ -111,4 +115,7 @@ defmodule Xeito.Backends.Failure do
 
   defp failed(_meaning, {status, body}, _again) when is_integer(status), do: {:error, {:http, status, body}}
   defp failed(_meaning, reason, _again), do: {:error, reason}
+
+  defp cause({status, _body}) when is_integer(status), do: status
+  defp cause(_reason), do: "connection"
 end

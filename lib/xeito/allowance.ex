@@ -145,9 +145,24 @@ defmodule Xeito.Allowance do
     end
   end
 
+  # Its endpoints, and the key's model list for how it reasons (which the endpoints do not say).
   defp fetch_price(cfg) do
-    with {:ok, data} <- get(cfg, "/v1/models/#{cfg[:model]}/endpoints"), do: price(data)
+    with {:ok, data} <- get(cfg, "/v1/models/#{cfg[:model]}/endpoints"),
+         %{} = price <- price(data) do
+      models =
+        case get(cfg, "/v1/models/user") do
+          {:ok, list} when is_list(list) -> list
+          _ -> []
+        end
+
+      Map.put(price, :reasoning, reasoning(Enum.find(models, &(&1["id"] == cfg[:model]))))
+    end
   end
+
+  @doc "How a model reasons, from its entry in OpenRouter's model list: its default effort and whether it always does; `nil` if it does not."
+  @spec reasoning(map() | nil) :: %{default: String.t() | nil, mandatory: boolean()} | nil
+  def reasoning(%{"reasoning" => %{} = r}), do: %{default: r["default_effort"], mandatory: r["mandatory"] == true}
+  def reasoning(_entry), do: nil
 
   defp get(cfg, path) do
     case Req.request([method: :get, url: path] ++ Backends.req_options(Keyword.put(cfg, :timeout, 5_000))) do

@@ -74,6 +74,24 @@ defmodule Xeito.Backends.FailureTest do
       refute_received {:slept, _}
     end
 
+    test "each retry is announced before the wait, with its attempt, wait and cause" do
+      parent = self()
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+      call = fn ->
+        case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+          0 -> {:failed, 429, "slow", [{"retry-after", "3"}]}
+          1 -> {:error, :timeout}
+          _ -> {:ok, :answer}
+        end
+      end
+
+      on_retry = &send(parent, {:retry, &1})
+      assert Failure.run(call, sleep: sleeps(), on_retry: on_retry) == {:ok, :answer}
+      assert_received {:retry, %{attempt: 2, of: 3, wait_ms: 3_000, status: 429}}
+      assert_received {:retry, %{attempt: 3, of: 3, wait_ms: 2_000, status: "connection"}}
+    end
+
     test "a transport error is retried like a transient failure" do
       {:ok, calls} = Agent.start_link(fn -> 0 end)
 

@@ -43,7 +43,7 @@ defmodule Xeito.Chat.OpenRouter do
         into: &into(&1, &2, on_delta)
       ] ++ Backends.req_options(Keyword.put_new(cfg, :timeout, 600_000))
 
-    with {:ok, message} <- Failure.run(fn -> attempt(opts) end, Keyword.take(cfg, [:sleep, :attempts])),
+    with {:ok, message} <- Failure.run(fn -> attempt(opts) end, Keyword.take(cfg, [:sleep, :attempts, :on_retry])),
          do: done(message, cfg, started)
   end
 
