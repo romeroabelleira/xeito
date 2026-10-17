@@ -201,8 +201,8 @@ defmodule Xeito.UndoTest do
     assert Undo.undo(ws, "ses-a", 2) ==
              {:ok,
               [
-                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: [], git: nil, outside: []},
-                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: [], git: nil, outside: []}
+                %{id: "ses-a/t1/e2", label: "bash rm a.txt", skipped: [], created: [], git: nil, outside: []},
+                %{id: "ses-a/t1/e1", label: "write a.txt", skipped: [], created: [], git: nil, outside: []}
               ]}
 
     assert get(ws, "a.txt") == {:error, :enoent}
@@ -361,7 +361,8 @@ defmodule Xeito.UndoTest do
       assert {get(ws, "3.txt"), get(ws, "4.txt")} == {{:ok, "3\n"}, {:error, :enoent}}
     end
 
-    test "a file over max_file_bytes is not captured, and the step names it", %{ws: ws} do
+    test "a file over max_file_bytes is not captured, and the step names it; one it created, undo removes",
+         %{ws: ws} do
       write = fn ->
         put(ws, "small.txt", "s\n")
         put(ws, "edge.bin", String.duplicate("e", 1_000))
@@ -374,7 +375,46 @@ defmodule Xeito.UndoTest do
       assert {:ok, [%{skipped: ["big.bin"]}]} = Undo.undo(ws, "ses-a", 1)
       assert get(ws, "small.txt") == {:error, :enoent}
       assert get(ws, "edge.bin") == {:error, :enoent}
-      assert get(ws, "big.bin") == {:ok, String.duplicate("x", 1_001)}
+      assert get(ws, "big.bin") == {:error, :enoent}
+
+      # Redo cannot bring back what was never captured: it says so, and restores the rest.
+      assert {:ok, [%{skipped: ["big.bin"]}]} = Undo.redo(ws, "ses-a", 1)
+      assert get(ws, "small.txt") == {:ok, "s\n"}
+      assert get(ws, "big.bin") == {:error, :enoent}
+    end
+
+    test "an oversized file a step created and that changed since stops the undo, and nothing changes",
+         %{ws: ws} do
+      write = fn ->
+        put(ws, "small.txt", "s\n")
+        put(ws, "big.bin", String.duplicate("x", 1_001))
+      end
+
+      step(ws, "ses-a/t1/e1", "bash make", write, max_file_bytes: 1_000)
+      put(ws, "big.bin", String.duplicate("y", 1_002))
+
+      assert {:error, {:created_changed, %{id: "ses-a/t1/e1", label: "bash make"}, "big.bin"}} = Undo.undo(ws, "ses-a", 1)
+      assert get(ws, "small.txt") == {:ok, "s\n"}
+      assert get(ws, "big.bin") == {:ok, String.duplicate("y", 1_002)}
+
+      # Gone already, it is no obstacle.
+      File.rm!(Path.join(ws, "big.bin"))
+      assert {:ok, [_]} = Undo.undo(ws, "ses-a", 1)
+      assert get(ws, "small.txt") == {:error, :enoent}
+    end
+
+    test "an oversized file that existed before the step is not removed by its undo", %{ws: ws} do
+      put(ws, "big.bin", String.duplicate("x", 1_001))
+
+      grow = fn ->
+        put(ws, "small.txt", "s\n")
+        put(ws, "big.bin", String.duplicate("z", 1_003))
+      end
+
+      step(ws, "ses-a/t1/e1", "bash grow", grow, max_file_bytes: 1_000)
+      assert {:ok, [%{skipped: ["big.bin"]}]} = Undo.undo(ws, "ses-a", 1)
+      assert get(ws, "small.txt") == {:error, :enoent}
+      assert get(ws, "big.bin") == {:ok, String.duplicate("z", 1_003)}
     end
 
     test "a captured file that grew over the limit cannot be undone, and nothing changes", %{ws: ws} do

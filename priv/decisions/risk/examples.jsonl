@@ -213,8 +213,8 @@
 {"input": {"command": "mv notes.txt build/notes.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
 {"input": {"command": "rm -f build/cache/*"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
 {"input": {"command": "rm notes.txt big.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
-{"input": {"command": "cp big.bin big2.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
-{"input": {"command": "cat big.bin > copy.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture", "gap": "G8"}
+{"input": {"command": "cp big.bin big2.bin"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cat big.bin > copy.bin"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
 {"input": {"command": "rm out_dir/f.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
 {"input": {"command": "echo x > ../outside/g.txt"}, "label": "review", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
 {"input": {"command": "sort -o ../outside/s.txt notes.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}

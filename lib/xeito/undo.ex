@@ -11,12 +11,15 @@ defmodule Xeito.Undo do
   * Captured: tracked files and small ignored files (`.env`). Not captured: ignored directories,
     `Xeito.Tools.protected_dirs/0`, files over `:max_file_bytes`, and workspaces over
     `:max_files` (the step then runs without undo). Outside files only via `:outside`.
+  * An oversized file a step created is removed by its undo while still as the step left it
+    (`Xeito.Undo.Created`); redo cannot bring it back.
   * Undo bookkeeping never fails a step. Steps are serialized per workspace.
   * A session keeps at least `:max_steps` steps (trimmed back past twice that). `forget/2` drops
     a session's steps; `gc/1` frees file versions no step holds.
   """
 
   alias Xeito.Undo.Branch
+  alias Xeito.Undo.Created
   alias Xeito.Undo.Outside
   alias Xeito.Undo.Store
 
@@ -25,7 +28,7 @@ defmodule Xeito.Undo do
   @stale_lock_s 10
   @config [{"gc.auto", "0"}, {"core.autocrlf", "false"}, {"advice.addEmbeddedRepo", "false"}]
   @max_file_bytes 5_000_000
-  @type step :: %{id: String.t(), label: String.t(), skipped: [Path.t()], git: Branch.change()}
+  @type step :: %{id: String.t(), label: String.t(), skipped: [Path.t()], created: [Path.t()], git: Branch.change()}
 
   @doc """
   Runs `fun` (effect `id`) and returns its result, recording any change as a step labelled `label`.
@@ -123,7 +126,11 @@ defmodule Xeito.Undo do
   defp locked(cwd, fun), do: :global.trans({{__MODULE__, cwd}, self()}, fun)
 
   defp public(step),
-    do: step |> Map.take([:id, :label, :skipped, :git]) |> Map.put(:outside, Enum.map(step.outside, & &1.path))
+    do:
+      step
+      |> Map.take([:id, :label, :skipped, :git])
+      |> Map.put(:outside, Enum.map(step.outside, & &1.path))
+      |> Map.put(:created, Enum.map(step.created, & &1.path))
 
   # --- snapshots ---
 
@@ -261,6 +268,7 @@ defmodule Xeito.Undo do
         before: before,
         after: after_tree,
         skipped: Enum.sort(skipped),
+        created: Created.find(cwd, {before, big_before}, big_after),
         git: Branch.change(cwd, head, Branch.head(cwd)),
         outside: outside
       }
@@ -269,7 +277,7 @@ defmodule Xeito.Undo do
     end
   end
 
-  defp record(_cwd, _step, %{before: tree, after: tree, git: nil, outside: []}, _opts), do: :unchanged
+  defp record(_cwd, _step, %{before: tree, after: tree, git: nil, outside: [], created: []}, _opts), do: :unchanged
 
   defp record(cwd, {id, label}, change, opts) do
     session = id |> String.split("/") |> hd()
@@ -301,7 +309,10 @@ defmodule Xeito.Undo do
         _ -> []
       end
 
-    lines = Enum.map(step.skipped, &"skipped: #{&1}") ++ git_line(step.git) ++ Outside.lines(step.outside)
+    lines =
+      Enum.map(step.skipped, &"skipped: #{&1}") ++
+        git_line(step.git) ++ Outside.lines(step.outside) ++ Created.lines(step.created)
+
     message = Enum.join(["#{step.label}\n\nid: #{step.id}\nbefore: #{step.before}\nafter: #{step.after}" | lines], "\n")
 
     {commit, 0} = git(cwd, ["commit-tree", commit_tree(cwd, step), "-m", message | parent])
@@ -340,7 +351,8 @@ defmodule Xeito.Undo do
         after: after_tree,
         skipped: skipped,
         git: parse_git(git),
-        outside: Outside.parse(meta)
+        outside: Outside.parse(meta),
+        created: Created.parse(meta)
       }
     else
       _ -> nil
@@ -366,18 +378,25 @@ defmodule Xeito.Undo do
 
   # Everything is checked before anything is written: on an error, nothing has changed.
   defp revert(cwd, steps, direction, opts) do
-    with {:ok, branch, outside} <- plans(cwd, steps, direction),
+    with {:ok, branch, outside, created} <- plans(cwd, steps, direction),
          {:ok, current} <- current(cwd, opts),
          {:ok, target} <- target(cwd, current, steps, direction),
          :ok <- apply_patch(cwd, current, target),
-         :ok <- Outside.restore(cwd, outside),
+         :ok <- restore_files(cwd, outside, created),
          do: Branch.move(cwd, branch)
   end
 
+  defp restore_files(cwd, outside, created) do
+    Outside.restore(cwd, outside)
+    Created.remove(created)
+  end
+
+  # Redo cannot recreate an oversized file it never captured: only undo removes them.
   defp plans(cwd, steps, direction) do
     with {:ok, branch} <- Branch.plan(cwd, steps, direction),
          {:ok, outside} <- Outside.plan(cwd, steps, direction),
-         do: {:ok, branch, outside}
+         {:ok, created} <- if(direction == :undo, do: Created.plan(cwd, steps), else: {:ok, []}),
+         do: {:ok, branch, outside, created}
   end
 
   defp enough([], _n, :undo), do: {:error, :nothing_to_undo}

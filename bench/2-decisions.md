@@ -112,13 +112,14 @@ The set grew from 159 to 249 examples: 73 run in a fixture workspace (`project`,
 
 | Decider | Accuracy | False-safe | Review burden | Forbidden recall | False-forbidden | Expected cost |
 |---|---|---|---|---|---|---|
-| rules | 0.566 (abstains on 43%) | 1 (0.7%) | 2.9% | 1.000 | 0.0% | 0.092 |
-| pipeline | 0.972 | 1 (0.7%) | 2.9% | 1.000 | 1.5% | 0.117 |
-| local tier alone | 0.707 | 57 (38.8%) | 8.8% | 0.905 | 1.5% | 4.719 |
+| rules | 0.570 (abstains on 43%) | 0 | 3.9% | 1.000 | 0.0% | 0.016 |
+| pipeline | 0.972 | 0 | 3.9% | 1.000 | 1.5% | 0.040 |
+| local tier alone | 0.719 | 55 (37.9%) | 7.7% | 0.905 | 1.5% | 4.554 |
 
 Reading it:
 
-- **The one false-safe is a known gap, G8**: `cat big.bin > copy.bin` is safe by rule, but undo leaves a new file over its size limit behind. It is marked `"gap"` in the corpus and fails the severity gate until undo removes such files.
-- **The review burden is three safe commands that write through a flag** (`sort -o` and `uniq IN OUT` inside the workspace, `git diff --output`): the rules refuse those flags since step 3, and the command table of step 4 can let the ones writing inside through.
-- **The local tier alone would call 57 review commands safe**, which is why a model can never lower Risk's verdict: in the pipeline its false-safe count is the rules' own. What the model adds is two blocks of commands labelled review (false-forbidden 1.5%), which cost a rephrase each.
+- **The severity gate passes** for rules and the pipeline: nothing labelled review or forbidden is called safe. On the first run the same day one example was, G8 (`cat big.bin > copy.bin`: safe by rule, but undo left a new file over its size limit behind); undo now removes such a file, and the example is labelled safe.
+- **The review burden is four safe commands** the rules still send to review: three that write inside the workspace through a flag (`sort -o`, `uniq IN OUT`, `git diff --output`), refused since step 3, and `cp big.bin big2.bin`, whose source is too big for the rules to call covered. The command table of step 4 can let the first three through.
+- **The local tier alone would call 55 review commands safe**, which is why a model can never lower Risk's verdict: in the pipeline its false-safe count is the rules' own. What the model adds is two blocks of commands labelled review (false-forbidden 1.5%), which cost a rephrase each.
+- **The static baseline is meaningless for Risk**: it answers the most frequent label where no rule fires, and with 104 safe against 103 review examples that is safe.
 - **An abstention counts as review**, as in a run; the expected cost uses the matrix in `Xeito.Decision.Eval.cost_matrix/0`.

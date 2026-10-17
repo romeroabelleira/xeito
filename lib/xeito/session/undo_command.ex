@@ -38,7 +38,7 @@ defmodule Xeito.Session.UndoCommand do
     log_undone(steps, name, s)
     labels = Enum.map(steps, & &1.label)
     s = %{s | history: s.history ++ [%{role: "user", content: undo_note(name, labels)}]}
-    details = branch_moved(steps, name) <> outside(steps) <> not_covered(steps)
+    details = branch_moved(steps, name) <> outside(steps) <> not_covered(steps, name)
     Notify.notice(s, undo_notice(name, labels) <> Enum.map_join(labels, &"  #{&1}\n") <> details)
   end
 
@@ -73,12 +73,20 @@ defmodule Xeito.Session.UndoCommand do
     end
   end
 
-  defp not_covered(steps) do
-    case Enum.flat_map(steps, & &1.skipped) do
-      [] -> ""
-      files -> "not covered (over 5 MB, left as they are): #{files |> Enum.uniq() |> Enum.join(", ")}\n"
-    end
+  # Undo removes the oversized files a step created; redo cannot bring them back.
+  defp not_covered(steps, "undo") do
+    created = Enum.flat_map(steps, & &1.created)
+
+    files_line("removed (over 5 MB, so /redo cannot bring them back)", created) <>
+      left(Enum.flat_map(steps, & &1.skipped) -- created)
   end
+
+  defp not_covered(steps, "redo"), do: left(Enum.flat_map(steps, & &1.skipped))
+
+  defp left(files), do: files_line("not covered (over 5 MB, left as they are)", files)
+
+  defp files_line(_what, []), do: ""
+  defp files_line(what, files), do: "#{what}: #{files |> Enum.uniq() |> Enum.join(", ")}\n"
 
   defp undo_notice("undo", labels), do: "undid #{steps(labels)} (/redo reverses this):\n"
   defp undo_notice("redo", labels), do: "redid #{steps(labels)}:\n"

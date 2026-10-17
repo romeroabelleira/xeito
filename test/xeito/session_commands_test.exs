@@ -97,18 +97,27 @@ defmodule Xeito.SessionCommandsTest do
       refute File.exists?(Path.join(ws, "x.txt"))
     end
 
-    test "files a step left out for their size are named, and left as they are", %{id: id, ws: ws} do
+    test "files a step left out for their size are named: those it created are removed, others left as they are",
+         %{id: id, ws: ws} do
+      File.write!(Path.join(ws, "old.bin"), :binary.copy("o", 5_000_001))
+
       Xeito.Undo.step(ws, "#{id}/t1/e1", "bash make", fn ->
         File.write!(Path.join(ws, "a.txt"), "a\n")
         File.write!(Path.join(ws, "big.bin"), :binary.copy("x", 5_000_001))
+        File.write!(Path.join(ws, "old.bin"), :binary.copy("p", 5_000_002))
       end)
 
       assert reply(id, "/undo") ==
                {:notice,
                 "undid 1 step (/redo reverses this):\n  bash make\n" <>
-                  "not covered (over 5 MB, left as they are): big.bin\n"}
+                  "removed (over 5 MB, so /redo cannot bring them back): big.bin\n" <>
+                  "not covered (over 5 MB, left as they are): old.bin\n"}
 
-      assert File.exists?(Path.join(ws, "big.bin"))
+      refute File.exists?(Path.join(ws, "big.bin"))
+      assert File.exists?(Path.join(ws, "old.bin"))
+
+      assert reply(id, "/redo") ==
+               {:notice, "redid 1 step:\n  bash make\nnot covered (over 5 MB, left as they are): big.bin, old.bin\n"}
     end
 
     test "undo and redo are logged, each against the step's effect and the session", %{id: id, ws: ws, log: log} do
