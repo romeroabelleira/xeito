@@ -19,7 +19,7 @@ defmodule Mix.Tasks.XeitoTest do
     end
   end
 
-  @tasks ~w(xeito.candidates xeito.chat xeito.context xeito.daemon xeito.eval xeito.export xeito.log xeito.map
+  @tasks ~w(xeito.candidates xeito.chat xeito.context xeito.daemon xeito.eval xeito.export xeito.log xeito.map xeito.models.check
             xeito.skills.bench xeito.skills.examples xeito.tui)
 
   test "mix xeito, with --help, -h or help, says what Xeito is and lists every xeito task" do
