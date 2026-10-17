@@ -322,7 +322,7 @@ With StreamData, generate commands from a small grammar: a command from the list
 
 ### (a) Concept and architecture documents
 
-Applied with this note, on 2026-10-17. The documents now describe the intended rule; the code catches up in P4k steps 1 and 2.
+Applied with this note, on 2026-10-17. P4k steps 1 and 2 brought the code in line the same day: G1 and G2 are fixed.
 
 - **[10 · Security](../architecture/10-security-and-sandboxing.md), the paragraph on writes inside the workspace.** Replace "the premise is that the workspace is under version control, so such a write can be undone" with: a write is safe by rule only when its paths are literal, inside the workspace, and covered by an undo snapshot (`Xeito.Undo.covers?/3`). Then list what is not covered: ignored directories, files over the size limit, large workspaces, protected directories, paths outside, and externalized effects (network, pushes, installs). Add one sentence on trust: build, test and `git` commands run code the repository supplies, so they are safe by rule only in a workspace the user already trusts; a workspace from elsewhere starts in review for them.
 - **[10 · Security](../architecture/10-security-and-sandboxing.md), the threat model.** Add a row: *"A flag that writes or runs: `sort -o`, `rg --pre`, `git … --output`. Mitigation: per-flag cases in the command table."*

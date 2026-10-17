@@ -83,22 +83,28 @@ defmodule Xeito.Undo do
     end
   end
 
+  # A listing git refuses (it does for paths two levels inside an ignored directory) covers nothing.
   defp uncaptured(cwd, paths, opts) do
-    {ignored, 0} =
-      git(cwd, [
-        "--literal-pathspecs",
-        "ls-files",
-        "-z",
-        "--others",
-        "--ignored",
-        "--exclude-standard",
-        "--directory",
-        "--" | paths
-      ])
+    with {ignored, 0} <-
+           git(cwd, [
+             "--literal-pathspecs",
+             "ls-files",
+             "-z",
+             "--others",
+             "--ignored",
+             "--exclude-standard",
+             "--directory",
+             "--" | paths
+           ]),
+         {files, 0} <-
+           git(cwd, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--" | paths]) do
+      too_big_or_ignored(cwd, ignored, files, opts)
+    else
+      _ -> paths
+    end
+  end
 
-    {files, 0} =
-      git(cwd, ["--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--" | paths])
-
+  defp too_big_or_ignored(cwd, ignored, files, opts) do
     entries = String.split(ignored, <<0>>, trim: true)
     dirs = Enum.filter(entries, &String.ends_with?(&1, "/"))
     max = max_bytes(opts)

@@ -335,6 +335,10 @@ defmodule Xeito.DecisionTest do
     end
 
     test "anything undo would not hold, or that reaches outside, stays for review", %{ws: ws} do
+      # Git lists nothing under .git and so calls it covered; the store never snapshots it.
+      File.mkdir_p!(Path.join(ws, ".git/hooks"))
+      File.write!(Path.join(ws, ".git/hooks/pre-commit"), "x")
+
       for command <- [
             "rm -rf build",
             "rm -rf build/*",
@@ -361,7 +365,9 @@ defmodule Xeito.DecisionTest do
             "rm -rf buil[d]",
             "sed -i 's/a/b/w /tmp/x' lib/*.ex",
             "npm install",
-            "rm -rf lib && curl http://x"
+            "rm -rf lib && curl http://x",
+            "rm -f build/cache/*",
+            "rm -rf .git/hooks"
           ],
           do: assert(undoable(command, ws) == nil, command)
 
@@ -436,6 +442,26 @@ defmodule Xeito.DecisionTest do
             "ls > out.txt && cat out.txt"
           ],
           do: assert(write_risk(command, ws) == :safe, command)
+    end
+
+    test "a write undo could not take back is not safe: into an ignored directory, or a file over the size limit",
+         %{ws: ws} do
+      File.write!(Path.join(ws, ".gitignore"), "build/\n")
+      File.mkdir_p!(Path.join(ws, "build/cache"))
+      File.write!(Path.join(ws, "build/cache/x"), "x")
+      File.write!(Path.join(ws, "big.bin"), :binary.copy("b", 5_000_001))
+
+      for command <- [
+            "rm -rf build",
+            "rm build/cache/x",
+            "rm big.bin",
+            "echo x > build/log.txt",
+            "mv a.txt build/a.txt",
+            "rm a.txt big.bin"
+          ],
+          do: assert(write_risk(command, ws) == nil, command)
+
+      for command <- ["rm a.txt", "echo x > new.txt", "rm -rf lib"], do: assert(write_risk(command, ws) == :safe, command)
     end
 
     test "sed -i with one plain substitution is safe; scripts that could write or run something are not", %{ws: ws} do

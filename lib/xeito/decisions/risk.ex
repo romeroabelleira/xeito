@@ -152,16 +152,16 @@ defmodule Xeito.Decisions.Risk do
     do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
 
   # --- writes inside the workspace ---------------------------------------------------------
-  # Safe only if every write is visible in the text and every path is a literal word inside the
-  # workspace after symlinks: not its root, not .git, not a protected dir. Anything else goes to review.
+  # Safe only if every write is visible in the text, every path is a literal word inside the
+  # workspace after symlinks (not its root, not .git, not a protected dir), and an undo snapshot
+  # would hold every path. Anything else goes to review.
 
   @writers ~w(touch mkdir rm mv cp tee)
 
-  defp writes_inside?(_command, ""), do: false
-
+  # Without a workspace, `Xeito.Undo.covers?/3` covers nothing.
   defp writes_inside?(command, cwd) do
     with false <- String.contains?(command, @excluded), {:ok, paths} <- written_paths(command) do
-      Enum.all?(paths, &inside?(&1, cwd))
+      Enum.all?(paths, &inside?(&1, cwd)) and Xeito.Undo.covers?(cwd, paths)
     else
       _ -> false
     end

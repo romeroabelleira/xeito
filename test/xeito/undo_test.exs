@@ -225,6 +225,11 @@ defmodule Xeito.UndoTest do
 
       refute Undo.covers?(ws, ["build"])
       refute Undo.covers?(ws, ["build/out.bin"])
+      # Deeper down, git refuses to list (exit 128): still not covered, and no raise.
+      put(ws, "build/cache/x", "x\n")
+      refute Undo.covers?(ws, ["build/cache/x"])
+      refute Undo.covers?(ws, ["build/cache"])
+      refute Undo.covers?(ws, ["src/a.ex", "build/new/file.txt"])
       put(ws, "src/edge.bin", String.duplicate("e", 10))
       assert Undo.covers?(ws, ["src/a.ex", "src/edge.bin"], max_file_bytes: 10)
       refute Undo.covers?(ws, ["src"], max_file_bytes: 10)
