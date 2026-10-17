@@ -25,7 +25,7 @@ defmodule Xeito.Machines.Chat do
   - `skills: [skill]`: adds the `skill` tool.
   - `skill_candidates: [%{name, description}]`: `Xeito.Decisions.Skill` picks one (or none) in
     `choosing_skill`; it is suggested in the turn's user message, never in the system prompt.
-  - `tools: false`: a plain answer with no tools.
+  - `tools: false`: a plain answer with no tools; `tools: [name]`: only those tools.
   - `context`: the context window in tokens (default `Chat.Request`'s `@default_context`).
 
   Output: ends in `answered` with `ctx.answer` and `ctx.turn` (the turn's full message list,

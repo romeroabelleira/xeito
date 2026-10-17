@@ -132,6 +132,19 @@ defmodule Xeito.Skills do
     end
   end
 
+  @doc "The prompt of a chat turn that runs `skill` for `request` (`/skill:name request`)."
+  @spec invocation(t(), String.t()) :: String.t()
+  def invocation(skill, request) do
+    """
+    Use the skill "#{skill.name}". Its directory is #{skill.dir}; paths in it are relative to
+    that directory, and the skill tool reads its files. Instructions:
+
+    #{body(skill)}
+
+    Request: #{if request == "", do: "(none; follow the instructions)", else: request}
+    """
+  end
+
   @doc "The workspace's skills as `listed`, and up to three user skills as `candidates` (`shortlist/2`)."
   @spec for_turn([t()], Path.t(), String.t()) :: %{listed: [t()], candidates: [t()]}
   def for_turn(skills, cwd, request) do

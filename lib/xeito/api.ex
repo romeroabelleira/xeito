@@ -9,13 +9,15 @@ defmodule Xeito.Api do
                                     live or rebuilt from the log, or a new one; "continued" says which)
       {"id": 2, "cmd": "prompt", "session": "ses-…", "text": "the checkout test is red"}
                                     (optional "request_id": a repeat of an admitted one, as a client
-                                     retrying after a daemon restart, is answered and ignored)
+                                     retrying after a daemon restart, is answered and ignored;
+                                     "skill", "machine" or "tools": false | true | ["read", …]
+                                     start a one-shot turn, `Xeito.Session.one_shot/3`)
       {"id": 3, "cmd": "approve", "session": "ses-…"}       (also "deny"; "allow": "session" or "always"
                                     approves and does not ask about this command again)
       {"id": 4, "cmd": "attach", "session": "ses-…", "cwd": "/path"}
                                     (follow a session; if the daemon restarted, rebuild it from
                                      the workspace log)
-      {"id": 5, "cmd": "status", "session": "ses-…"}        (also "history")
+      {"id": 5, "cmd": "status", "session": "ses-…"}        (also "history"; "close" stops an idle one)
       {"id": 6, "cmd": "sessions"}                          (the daemon's live sessions; with "cwd": that
                                     directory's sessions from its log, last updated first)
       {"id": 6, "cmd": "prompts", "cwd": "/path"}           (the prompts typed there, newest first, for Up/Down)

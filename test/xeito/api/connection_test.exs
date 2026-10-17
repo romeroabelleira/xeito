@@ -99,6 +99,22 @@ defmodule Xeito.Api.ConnectionTest do
     assert %{"ok" => true, "prompts" => ["/help"]} = req(client, "prompts", %{"cwd" => ws})
   end
 
+  test "a prompt with a skill, a machine or tools starts its turn directly; close ends the session",
+       %{client: client, ws: ws} do
+    id = start(client, ws)
+    run = &req(client, "prompt", Map.merge(%{"session" => id, "text" => "true"}, &1))
+    assert %{"ok" => true} = run.(%{"machine" => "shell", "tools" => false})
+    assert_receive {:xeito_event, %{"event" => "run_selected", "attrs" => %{"reason" => "one-shot machine:shell"}}}, 2_000
+    assert_receive {:xeito_event, %{"event" => "turn_finished"}}, 5_000
+
+    assert %{"ok" => false, "error" => "no skill named \"nope\""} = run.(%{"skill" => "nope"})
+    assert %{"ok" => false, "error" => "unknown tool \"fly\"" <> _} = run.(%{"tools" => ["fly"]})
+
+    assert %{"ok" => true} = req(client, "close", %{"session" => id})
+    eventually(fn -> Registry.lookup(Xeito.SessionRegistry, id) == [] end)
+    assert %{"ok" => false, "error" => "no such session"} = req(client, "close", %{"session" => new_id()})
+  end
+
   test "unknown or incomplete commands", %{client: client} do
     assert %{"ok" => false, "error" => "unknown or incomplete command fly"} = req(client, "fly")
     assert %{"ok" => false, "error" => "unknown or incomplete command prompt"} = req(client, "prompt")

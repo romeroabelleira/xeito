@@ -91,4 +91,14 @@ defmodule Xeito.ToolsTest do
     assert Tools.result_text(%{ok: false, error: :enoent}) == "error: :enoent"
     assert Tools.result_text(%{something: 1}) == "%{something: 1}"
   end
+
+  test "names_for/1: the core tools, skill with skills, none when off, only those listed" do
+    assert Tools.names_for(%{}) == ~w(read write edit bash)
+    assert Tools.names_for(%{skills: [%{name: "a"}]}) == ~w(read write edit bash skill)
+    assert Tools.names_for(%{tools: false}) == []
+    assert Tools.names_for(%{tools: ~w(bash read)}) == ~w(read bash)
+    assert Tools.names_for(%{tools: ~w(skill read), skills: [%{name: "a"}]}) == ~w(read skill)
+    assert Tools.names_for(%{tools: ~w(skill)}) == []
+    assert {:error, "unknown tool \"bash\"; available: read"} = effect("bash", %{"command" => "ls"}, %{tools: ["read"]})
+  end
 end

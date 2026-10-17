@@ -84,6 +84,8 @@ defmodule Xeito.Api.Connection do
   defp handle(cmd, req, s) when cmd in ~w(monitor machines sessions), do: daemon_request(cmd, req, s)
   defp handle(cmd, req, s) when cmd in ~w(prompts transcript), do: directory_request(cmd, req, s)
 
+  defp handle("close", %{"session" => id}, s), do: {close(id), s}
+
   defp handle(cmd, %{"session" => id} = req, s) when cmd in ~w(prompt approve deny status history workspace),
     do: session_request(cmd, id, req, s)
 
@@ -186,9 +188,20 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  defp session_cmd("prompt", id, req), do: result(Session.prompt(id, req["text"] || "", req["request_id"]))
+  defp session_cmd("prompt", id, req) do
+    if one_shot?(req),
+      do: result(Session.one_shot(id, req["text"] || "", one_shot_opts(req))),
+      else: result(Session.prompt(id, req["text"] || "", req["request_id"]))
+  end
+
   defp session_cmd(cmd, id, req) when cmd in ~w(approve deny), do: result(answer(cmd, id, req))
   defp session_cmd(cmd, id, _req), do: query(cmd, id)
+
+  defp close(id), do: if(exists?(id), do: result(Session.close(id)), else: %{ok: false, error: "no such session"})
+
+  defp one_shot?(req), do: Enum.any?(~w(skill machine tools), &Map.has_key?(req, &1))
+
+  defp one_shot_opts(req), do: [skill: req["skill"], machine: req["machine"], tools: Map.get(req, "tools", false)]
 
   # `approve` with `"allow": "session" | "always"` also remembers the command (`Xeito.Session.Allowed`).
   defp answer("approve", id, req), do: Session.approve(id, req["allow"])

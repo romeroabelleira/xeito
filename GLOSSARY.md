@@ -36,6 +36,7 @@ for the details; `mix xeito.map` lists every module with its public functions.
 - **daemon** (`xeitod`): the long-running process that owns runs, logs and the client socket. `Xeito.Api`
 - **session**: a workspace, a conversation and the runs started from it; clients talk to it. `Xeito.Session`
 - **turn**: one user request and the run it starts (`<session>/t<n>`). `Xeito.Session`
+- **one-shot turn**: a turn whose machine or skill the caller names, with its tools chosen (off by default), started without routing; `mix xeito.run` sends one and prints the answer. `Xeito.Session.OneShot`
 - **chat machine**: the free agent loop (think, call tools, verify) for requests no other machine takes. `Xeito.Machines.Chat`
 - **chat tier**: the tier chat runs on: `local`, or a remote one chosen with `/model`. `Xeito.Session.ChatModel`
 - **chat client**: one streamed model call with tools, by the chat tier's backend. `Xeito.Chat`

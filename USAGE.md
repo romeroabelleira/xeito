@@ -125,6 +125,14 @@ mix xeito.tui --cwd ~/src/my-project --session ses-abc123
 
 Prefer plain lines (logs, pipes, a minimal SSH session)? `mix xeito.chat` takes the same options, and you answer reviews with `y` / `n`.
 
+One request, as a Unix filter: `mix xeito.run` sends the text from its arguments and/or stdin as one turn, prints only the answer on stdout and puts everything else on stderr. Tools are off unless `--tools` allows them; `mix xeito.run --help` lists the options.
+
+```bash
+git diff | mix xeito.run "review this diff" -o review.md
+echo "some notes" | mix xeito.run --skill summarize
+mix xeito.run --json "say ok" | tail -1      # the result: answer, run, tier, tokens, cost
+```
+
 ## 5. Everyday examples
 
 ### Fix a failing test

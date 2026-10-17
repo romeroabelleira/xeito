@@ -120,16 +120,7 @@ defmodule Xeito.Session.Commands do
         Notify.error(s, "no skill named #{inspect(name)}")
 
       skill ->
-        prompt = """
-        Use the skill "#{skill.name}". Its directory is #{skill.dir}; paths in it are relative to
-        that directory, and the skill tool reads its files. Instructions:
-
-        #{Skills.body(skill)}
-
-        Request: #{if request == "", do: "(none; follow the instructions)", else: request}
-        """
-
-        input = Map.put(Input.for_machine(Chat, prompt, s), :skill_candidates, [])
+        input = Map.put(Input.for_machine(Chat, Skills.invocation(skill, request), s), :skill_candidates, [])
         Session.start_machine(Chat, input, "/skill:#{name}", s)
     end
   end

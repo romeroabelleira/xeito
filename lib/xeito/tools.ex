@@ -45,10 +45,14 @@ defmodule Xeito.Tools do
 
   @doc """
   The tools offered in a run with context `ctx`: none when `ctx.tools == false`, else the core
-  tools, plus `skill` when the run has skills.
+  tools, plus `skill` when the run has skills; with `ctx.tools` a list of names, only those of them.
   """
   @spec names_for(map()) :: [String.t()]
   def names_for(%{tools: false}), do: []
+
+  def names_for(%{tools: names} = ctx) when is_list(names),
+    do: Enum.filter(names_for(Map.delete(ctx, :tools)), &(&1 in names))
+
   def names_for(%{skills: [_ | _]}), do: @names ++ ["skill"]
   def names_for(_ctx), do: @names
 

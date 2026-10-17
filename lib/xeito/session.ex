@@ -12,7 +12,8 @@ defmodule Xeito.Session do
 
   - A run waiting in `ask_human` is answered with `approve/2` or `deny/1`; a scope
     (`"session"`, `"always"`) also remembers the command (`Xeito.Session.Allowed`).
-  - A prompt typed while a turn runs is queued.
+  - A prompt typed while a turn runs is queued. A one-shot turn (`one_shot/3`) names its machine
+    or skill and skips steps 1 and 2; it is refused while a turn runs.
   - Step-mode settings (`/step`, `/break`, ...) apply to live and future runs; escalation runs never pause.
   - With no run and no activity for `:idle_timeout` (`config :xeito, :session_idle_timeout`,
     default 2 h) the session stops; its turns stay in the log and an id with logged turns is resumed.
@@ -42,6 +43,7 @@ defmodule Xeito.Session do
   alias Xeito.Session.Info
   alias Xeito.Session.Input
   alias Xeito.Session.Notify
+  alias Xeito.Session.OneShot
   alias Xeito.Session.Queue
   alias Xeito.Session.Review
   alias Xeito.Session.Router
@@ -90,6 +92,18 @@ defmodule Xeito.Session do
   """
   @spec prompt(String.t(), String.t(), String.t() | nil) :: :ok | {:error, term()}
   def prompt(id, text, request_id \\ nil), do: GenServer.call(via(id), {:prompt, text, request_id})
+
+  @doc """
+  Starts a turn of `text` with the machine or skill `opts` name and the tools they allow, without
+  routing (`Xeito.Session.OneShot`). `{:error, :busy}` while a turn runs, `{:error, message}` for
+  what cannot start.
+  """
+  @spec one_shot(String.t(), String.t(), keyword()) :: :ok | {:error, :busy | String.t()}
+  def one_shot(id, text, opts), do: GenServer.call(via(id), {:when_idle, {:one_shot, text, opts}})
+
+  @doc "Stops an idle session, as its idle timeout would; `{:error, :busy}` while a turn runs."
+  @spec close(String.t()) :: :ok | {:error, :busy}
+  def close(id), do: GenServer.call(via(id), {:when_idle, :close})
 
   @doc """
   Approves the command a run is waiting on; with scope `"session"` or `"always"`, also remembers it.
@@ -188,6 +202,11 @@ defmodule Xeito.Session do
 
   # Every request counts as activity for the idle timeout.
   @impl true
+  def handle_call({:when_idle, request}, _from, s) do
+    s = %{s | active_at: now()}
+    if busy?(s), do: {:reply, {:error, :busy}, s}, else: when_idle(request, s)
+  end
+
   def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
 
   defp handle_request({:prompt, text, request_id}, _from, s) do
@@ -220,6 +239,21 @@ defmodule Xeito.Session do
     attrs = Info.workspace(s)
     Notify.emit(s, "workspace", nil, attrs)
     {:reply, attrs, s}
+  end
+
+  defp when_idle(:close, s), do: {:stop, :normal, :ok, s}
+
+  defp when_idle({:one_shot, text, opts}, s) do
+    case OneShot.input(text, opts, s) do
+      {:ok, machine, input, reason} ->
+        log_prompt(String.trim(text), text, nil, s)
+        s = %{s | turn: s.turn + 1, prompt: text}
+        Notify.emit(s, "prompt", nil, %{"text" => text})
+        {:reply, :ok, start_machine(machine, input, reason, s)}
+
+      {:error, message} ->
+        {:reply, {:error, message}, s}
+    end
   end
 
   # A prompt whose request id was admitted before is answered and ignored.
