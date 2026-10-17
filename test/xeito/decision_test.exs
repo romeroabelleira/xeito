@@ -281,7 +281,8 @@ defmodule Xeito.DecisionTest do
             "cat ~/.ssh/id_rsa",
             "cat ~/.aws/credentials",
             "cat ~/.netrc",
-            "cat .env"
+            "cat .env",
+            "npm test --force"
           ],
           do: assert(risk(command) == nil, command)
     end
@@ -380,6 +381,107 @@ defmodule Xeito.DecisionTest do
 
       proved = Decider.decide(Risk, %{command: "rm lib/a.ex", cwd: ws}, deciders: [])
       assert proved.model == "rule:classify"
+    end
+  end
+
+  describe "Risk: flags with which a read-only command writes a file or runs a program" do
+    test "are not safe, nor repeatable" do
+      for command <- [
+            "rg --pre sh x",
+            "rg --pre=sh x",
+            "rg --pre-glob '*.pdf' --pre pdftotext x",
+            "rg -z x",
+            "rg -iz x",
+            "rg --search-zip x",
+            "rg --hostname-bin ./h x",
+            "rg '--pre' sh x",
+            "sort -o out.txt in.txt",
+            "sort -uo out.txt in.txt",
+            "sort --output=out.txt in.txt",
+            "sort --out=out.txt in.txt",
+            "sort --compress-program=sh in.txt",
+            "tree -o out.txt",
+            "tree -R -H . lib",
+            "less -o log.txt a",
+            "less -O log.txt a",
+            "less --log-file=log.txt a",
+            "less --LOG-FILE=log.txt a",
+            "file -C -m magic",
+            "file --compile -m magic",
+            "uniq in.txt out.txt",
+            "git diff --output=x.txt",
+            "git diff --out=x.txt",
+            "git log --output=x.txt",
+            "git show --output=../x",
+            "git diff --ext-diff",
+            "git log -p --textconv",
+            "git branch -D main",
+            "git branch -d old",
+            "git branch -m main old",
+            "git branch -M main",
+            "git branch -c a b",
+            "git branch --delete old",
+            "git branch --del old",
+            "git branch new-feature",
+            "git branch -u origin/main",
+            "git branch --set-upstream-to=origin/main",
+            "git branch --edit-description",
+            "git branch --abbrev 7",
+            "git branch -f main HEAD~1",
+            "ls && sort -o a.txt a.txt",
+            "find . -name '*.txt' | xargs rg --pre sh x"
+          ] do
+        assert risk(command) == nil, command
+        refute Risk.repeatable?(command), command
+      end
+    end
+
+    test "their reading forms stay safe" do
+      for command <- [
+            "rg -i foo lib",
+            "rg --pretty x",
+            "rg --no-pre x",
+            "sort -u a.txt",
+            "sort -n -k 2 a.txt",
+            "tree -L 2 lib",
+            "less -N a",
+            "file -b a",
+            "uniq -c a.txt",
+            "uniq a.txt",
+            "git diff --stat",
+            "git diff --output-indicator-new=+",
+            "git diff --text a b",
+            "git diff --no-ext-diff",
+            "git log --oneline -5",
+            "git show HEAD --no-textconv",
+            "git branch",
+            "git branch -a",
+            "git branch -vv",
+            "git branch -av",
+            "git branch --list 'feat*'",
+            "git branch -l 'feat*'",
+            "git branch --contains abc123",
+            "git branch --merged main",
+            "git branch --sort=-committerdate",
+            "git branch --format='%(refname)'",
+            "git branch --show-current",
+            "rg --pre-glob '*.pdf' x",
+            "git branch --all",
+            "git branch --remotes",
+            "git branch --verbose",
+            "git branch --color=always",
+            "git branch --no-color",
+            "git branch --column",
+            "git branch --no-column",
+            "git branch --list --ignore-case 'f*'",
+            "git branch --omit-empty",
+            "git branch -v --abbrev=7",
+            "git branch -v --no-abbrev",
+            "git branch --no-contains abc123",
+            "git branch --no-merged main",
+            "git branch --points-at HEAD"
+          ],
+          do: assert(risk(command) == :safe, command)
     end
   end
 

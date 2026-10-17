@@ -130,8 +130,73 @@ defmodule Xeito.Decisions.Risk do
 
     (word in @safe_commands or Enum.any?(@safe_prefixes, &String.starts_with?(segment, &1)) or
        read_only?(word, segment)) and
-      not String.contains?(segment, @excluded)
+      not String.contains?(segment, @excluded) and not flag_effect?(arguments(segment))
   end
+
+  # --- flags that write or run -------------------------------------------------------------
+  # Options with which a read-only command writes a file or runs a program. Long options match
+  # by prefix too, as getopt and git accept unambiguous abbreviations; quotes are dropped, as the
+  # shell drops them. A false match only sends a command to review.
+
+  defp arguments(segment),
+    do: segment |> String.split(~r/\s+/, trim: true) |> Enum.map(&String.replace(&1, ~r/['"\\]/, ""))
+
+  # Command → {long options, short option letters}.
+  @flags %{
+    "rg" => {~w(pre search-zip hostname-bin), "z"},
+    "sort" => {~w(output compress-program), "o"},
+    "tree" => {[], "oR"},
+    "less" => {~w(log-file LOG-FILE), "oO"},
+    "file" => {~w(compile), "C"}
+  }
+
+  defp flag_effect?([command | args]) when is_map_key(@flags, command) do
+    {long, short} = @flags[command]
+    flagged?(args, long, short)
+  end
+
+  # `uniq INPUT OUTPUT` writes OUTPUT.
+  defp flag_effect?(["uniq" | args]), do: args |> Enum.reject(&String.starts_with?(&1, "-")) |> length() > 1
+  defp flag_effect?(["git" | args]), do: git_flag_effect?(args)
+  defp flag_effect?(_words), do: false
+
+  defp git_flag_effect?(["branch" | args]), do: not branch_listing?(args, Enum.any?(args, &(&1 in ["-l", "--list"])))
+
+  defp git_flag_effect?([command | args]) when command in ~w(diff log show),
+    do: Enum.any?(args, &(long?(&1, ~w(output ext-diff textconv)) and &1 != "--text"))
+
+  defp git_flag_effect?(_args), do: false
+
+  defp flagged?(args, long, short), do: Enum.any?(args, &(long?(&1, long) or short?(&1, short)))
+
+  # `--name` or `--name=value`, `name` a prefix of one of `names`.
+  defp long?("--" <> option, names) do
+    name = option |> String.split("=", parts: 2) |> hd()
+    name != "" and Enum.any?(names, &String.starts_with?(&1, name))
+  end
+
+  defp long?(_arg, _names), do: false
+
+  # A cluster of short options (`-iz`) holding any of `letters`.
+  defp short?("-" <> cluster, letters),
+    do: not String.starts_with?(cluster, "-") and String.contains?(cluster, String.graphemes(letters))
+
+  defp short?(_arg, _letters), do: false
+
+  # `--abbrev` and `--color` take a value only as `--abbrev=7`: in `--abbrev 7`, 7 names a new branch.
+  @branch_options ~w(--all --remotes --list --verbose --show-current --color --no-color --column --no-column --ignore-case --omit-empty --abbrev --no-abbrev)
+  @branch_valued ~w(--contains --no-contains --merged --no-merged --points-at --sort --format)
+
+  # Only the forms of `git branch` that list: known options, and patterns after `--list`.
+  defp branch_listing?([], _list), do: true
+  defp branch_listing?([option, _value | rest], list) when option in @branch_valued, do: branch_listing?(rest, list)
+  defp branch_listing?(["-" <> _ = option | rest], list), do: branch_option?(option) and branch_listing?(rest, list)
+  defp branch_listing?([_pattern | rest], list), do: list and branch_listing?(rest, list)
+
+  defp branch_option?("--" <> _ = option),
+    do: (option |> String.split("=", parts: 2) |> hd()) in (@branch_options ++ @branch_valued)
+
+  defp branch_option?("-" <> letters), do: Regex.match?(~r/^[arlvi]+$/, letters)
 
   # `find` without writing actions; `sed -n` line ranges only (never `-i` or scripts); `cd` into a subdirectory.
   defp read_only?("find", segment), do: not String.contains?(segment, ["-ok", "-fprint", "-fls"])

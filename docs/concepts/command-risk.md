@@ -183,7 +183,7 @@ The same deletion gets a different verdict depending on how it is spelled. [10](
   - the model tier never runs;
   - `mix xeito.eval` calls `Decider.apply_rules/2` directly (`lib/xeito/decision/eval.ex:74-79`), so one such example would abort the whole evaluation.
 
-**G3. Allow-listed commands write or execute through flags, and count as repeatable.**
+**G3. Allow-listed commands write or execute through flags, and count as repeatable.** Fixed in P4k step 3, with more such flags than listed here (`sort --compress-program`, `tree -R`, `less -o`, `file -C`, `uniq IN OUT`).
 
 `@safe_commands` and `@safe_prefixes` (`lib/xeito/decisions/risk.ex:71-97`) match the first word or a prefix. `@excluded` (`:100`) knows only `-delete`, `-exec`, `--force` and secret names. Observed `:safe` and `repeatable?: true`:
 
