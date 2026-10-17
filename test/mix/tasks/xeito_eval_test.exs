@@ -32,6 +32,25 @@ defmodule Mix.Tasks.Xeito.EvalTest do
     assert [_ | _] = dir |> Path.join("risk.rules.jsonl") |> File.read!() |> String.split("\n", trim: true)
   end
 
+  test "risk: errors weighed by severity, and the severity gate against an earlier report", %{dir: dir} do
+    Eval.run(~w(risk --deciders rules --out #{dir}))
+    out = output()
+    assert out =~ ~r/^  severity rules\s+false-safe 0 \(0\.000\)\s+review burden \d\.\d{3}/m
+    assert out =~ "  severity gate rules: PASS (false-safe 0, cost "
+
+    report = dir |> Path.join("risk.json") |> File.read!() |> JSON.decode!()
+    assert %{"severity" => %{"rules" => %{"false_safe" => 0, "expected_cost" => cost}}} = report
+
+    # A rise in expected cost against the earlier report fails the gate.
+    earlier = Path.join(dir, "earlier.json")
+    File.write!(earlier, JSON.encode!(put_in(report, ["severity", "rules", "expected_cost"], cost - 1)))
+    Eval.run(~w(risk --deciders rules --against #{earlier}))
+    assert output() =~ "  severity gate rules: fail (false-safe 0, cost "
+
+    Eval.run(~w(triage --deciders rules --limit 2))
+    refute output() =~ "severity"
+  end
+
   test "off-box tiers are skipped for a type whose policy forbids them, and only then" do
     Eval.run(~w(risk --deciders rules,remote,remote_frontier --limit 2))
     assert output() =~ "risk: skipping remote, remote_frontier (policy remote: :forbidden)"

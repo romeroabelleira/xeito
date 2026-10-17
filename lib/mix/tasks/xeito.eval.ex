@@ -20,6 +20,11 @@ defmodule Mix.Tasks.Xeito.Eval do
   (`"local_decision→local"`, …;
   `Xeito.Decision.Eval.cascade/3`, tolerance `--epsilon`, default 0.01).
 
+  For a type with a severity order (Risk), the report adds errors weighed by severity per decider
+  (`Xeito.Decision.Eval.severity_metrics/2`) and the severity gate for rules and the pipeline:
+  no false-safe answer, and with `--against REPORT` (an earlier `--out` report) no rise in
+  expected cost.
+
   Remote tiers are skipped for types whose policy forbids them (Risk).
   """
 
@@ -37,7 +42,8 @@ defmodule Mix.Tasks.Xeito.Eval do
     out: :string,
     margin: :float,
     predictions: :string,
-    epsilon: :float
+    epsilon: :float,
+    against: :string
   ]
 
   @impl true
@@ -75,6 +81,7 @@ defmodule Mix.Tasks.Xeito.Eval do
 
     results = Map.new(deciders, &{&1, Eval.run(module, &1, examples)})
     metrics = Map.new(results, fn {d, rs} -> {d, Eval.metrics(rs, Type.values(type))} end)
+    severity = severity(results, type)
 
     report = %{
       type: type.name,
@@ -85,6 +92,8 @@ defmodule Mix.Tasks.Xeito.Eval do
       metrics: metrics,
       gate: Eval.gate(metrics, Keyword.get(opts, :margin, 0.02)),
       cascade: cascades(results, Keyword.get(opts, :epsilon, 0.01)),
+      severity: severity,
+      severity_gate: severity && Eval.severity_gate(severity, previous_costs(opts[:against])),
       dangerous_missed:
         (
           for_result =
@@ -100,6 +109,18 @@ defmodule Mix.Tasks.Xeito.Eval do
     }
 
     {report, Map.new(results, fn {d, rs} -> {d, Enum.zip(examples, rs)} end)}
+  end
+
+  defp severity(_results, %Type{severity: nil}), do: nil
+  defp severity(results, type), do: Map.new(results, fn {d, rs} -> {d, Eval.severity_metrics(rs, type.severity)} end)
+
+  # Decider → expected cost in an earlier report.
+  defp previous_costs(nil), do: %{}
+
+  defp previous_costs(path) do
+    for {decider, m} <- path |> File.read!() |> JSON.decode!() |> Map.get("severity", %{}),
+        into: %{},
+        do: {String.to_existing_atom(decider), m["expected_cost"]}
   end
 
   defp write_predictions(dir, type, tier, results) do
@@ -189,9 +210,30 @@ defmodule Mix.Tasks.Xeito.Eval do
       )
     end
 
+    print_severity(report)
+
     for g <- report.gate do
       Mix.shell().info(
         "  gate #{g.candidate}: #{if g.passes, do: "PASS", else: "fail"} (#{g.accuracy} vs local #{inspect(g.local)}, baseline #{inspect(g.baseline)}, margin #{g.margin})"
+      )
+    end
+  end
+
+  defp print_severity(%{severity: nil}), do: :ok
+
+  defp print_severity(report) do
+    for {decider, m} <- Enum.sort_by(report.severity, &elem(&1, 0)) do
+      Mix.shell().info(
+        "  severity #{decider}  false-safe #{m.false_safe} (#{format(m.false_safe_rate)})  " <>
+          "review burden #{format(m.review_burden)}  forbidden recall #{format(m.forbidden_recall)}  " <>
+          "false-forbidden #{format(m.false_forbidden_rate)}  cost #{format(m.expected_cost)}"
+      )
+    end
+
+    for g <- report.severity_gate do
+      Mix.shell().info(
+        "  severity gate #{g.decider}: #{if g.passes, do: "PASS", else: "fail"} " <>
+          "(false-safe #{g.false_safe}, cost #{format(g.expected_cost)} vs before #{format(g.previous_cost)})"
       )
     end
   end

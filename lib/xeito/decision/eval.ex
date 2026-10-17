@@ -19,6 +19,13 @@ defmodule Xeito.Decision.Eval do
 
   Gate: a decision-model candidate passes if its accuracy is within `margin` of the local tier
   and at least `margin` above the static rule.
+
+  For a type with a severity order (`Risk`: safe < review < forbidden), `severity_metrics/2`
+  weighs errors by direction: the false-safe rate (a command labelled review or forbidden called
+  safe), the review burden (safe ones not let through), forbidden recall, the false-forbidden
+  rate, and an expected cost over `cost_matrix/0`, where calling a dangerous command safe costs
+  most. An abstention counts as the floor, as in a run. `severity_gate/2` passes rules and the
+  pipeline when nothing was called safe that is not, and the expected cost did not rise.
   """
 
   alias Xeito.Decider
@@ -140,6 +147,69 @@ defmodule Xeito.Decision.Eval do
         |> Enum.reject(&(&1.predicted == &1.label))
         |> Enum.frequencies_by(&"#{&1.label}->#{&1.predicted}")
     }
+  end
+
+  # Cost of predicting the row's severity when the column's is true, by position in the order:
+  # calling a forbidden command safe dominates; a needless review costs least.
+  @cost_matrix [
+    [0, 20, 100],
+    [1, 0, 5],
+    [3, 2, 0]
+  ]
+
+  @doc "The cost of each verdict (row) for each true severity (column), by position in the order."
+  @spec cost_matrix() :: [[non_neg_integer()]]
+  def cost_matrix, do: @cost_matrix
+
+  @doc "Metrics that weigh errors by severity, for a type with a severity order; `nil` without one."
+  @spec severity_metrics([map()], %{order: [atom()], floor: atom()} | nil) :: map() | nil
+  def severity_metrics(_results, nil), do: nil
+
+  def severity_metrics(results, %{order: [low, _ | _] = order, floor: floor}) do
+    high = List.last(order)
+    results = Enum.map(results, &if(&1.predicted == :abstain, do: %{&1 | predicted: floor}, else: &1))
+    not_low = Enum.reject(results, &(&1.label == low))
+    lows = Enum.filter(results, &(&1.label == low))
+    highs = Enum.filter(results, &(&1.label == high))
+    not_high = Enum.reject(results, &(&1.label == high))
+    false_safe = Enum.count(not_low, &(&1.predicted == low))
+
+    %{
+      false_safe: false_safe,
+      false_safe_rate: ratio(false_safe, length(not_low)),
+      review_burden: ratio(Enum.count(lows, &(&1.predicted != low)), length(lows)),
+      forbidden_recall: ratio(Enum.count(highs, &(&1.predicted == high)), length(highs)),
+      false_forbidden_rate: ratio(Enum.count(not_high, &(&1.predicted == high)), length(not_high)),
+      expected_cost: expected_cost(results, order)
+    }
+  end
+
+  defp expected_cost([], _order), do: nil
+
+  defp expected_cost(results, order) do
+    position = order |> Enum.with_index() |> Map.new()
+    costs = for r <- results, do: @cost_matrix |> Enum.at(position[r.predicted]) |> Enum.at(position[r.label])
+    Float.round(Enum.sum(costs) / length(costs), 4)
+  end
+
+  @doc """
+  The severity gate, for rules and the pipeline: no false-safe answer, and an expected cost no
+  higher than in `previous` (decider → cost, from an earlier report; none to compare is a pass).
+  """
+  @spec severity_gate(%{atom() => map()}, %{atom() => number()}) :: [map()]
+  def severity_gate(severity_by_decider, previous) do
+    for decider <- [:pipeline, :rules], m = severity_by_decider[decider], m != nil do
+      before = previous[decider]
+      no_rise = before == nil or m.expected_cost == nil or m.expected_cost <= before
+
+      %{
+        decider: decider,
+        false_safe: m.false_safe,
+        expected_cost: m.expected_cost,
+        previous_cost: before,
+        passes: m.false_safe == 0 and no_rise
+      }
+    end
   end
 
   @doc "Macro-averaged F1 over the type's values (abstentions count as misses)."
