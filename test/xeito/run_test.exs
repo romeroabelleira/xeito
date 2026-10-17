@@ -183,9 +183,9 @@ defmodule Xeito.RunTest do
 
     Process.exit(Run.whereis(id), :kill)
 
-    await_exit(id)
+    # Right after the kill no process is registered yet: wait for the recovered run's result.
+    eventually(fn -> match?({:ok, %{status: :failed}}, Run.result(log, id)) end)
     refute_received {:effect_called, ^effect_id}
-    assert {:ok, %{status: :failed}} = Run.result(log, id)
 
     assert [[output]] =
              Log.query(log, "SELECT json_extract(result, '$.output') FROM event_effect_completed WHERE effect_id = ?1", [
