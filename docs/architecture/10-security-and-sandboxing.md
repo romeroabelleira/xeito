@@ -13,7 +13,7 @@ pi's stance is honest: the agent runs with your permissions, and you are in cont
 | Data exfiltration to APIs | private code or sensitive data sent to a remote LLM or a hosted decision API (Jev) | data-locality guard **by source provenance** ([04](04-delegation.md#guards-on-escalation)); never a classifier. Chat goes off-box only when a person chooses a remote chat tier (`/model`, `XEITO_CHAT_TIER`); it then sends the whole conversation, so it is a choice per workspace, not per input |
 | Runaway cost or loop | endless retry | finite machines, per-state timeouts, run budgets |
 | Runaway process | a timed-out or halted command keeps running, with what it started | each command runs in its own process group, stopped as a whole (SIGTERM, then SIGKILL) on its timeout, when its run is halted, or when the daemon dies (erlexec, `Xeito.Effects.OsCommand`). A command that leaves its group (`setsid`, a daemonising fork) escapes this |
-| Flag that writes or runs | `sort -o out`, `rg --pre sh`, `git show --output=../x` behind an allow-listed command | per-flag cases in a command table ([P4k](../implementation-plan.md#p4k--command-effects)) |
+| Flag that writes or runs | `sort -o out`, `rg --pre sh`, `git show --output=../x` behind an allow-listed command | per-flag cases in the command table, `Xeito.Decisions.Risk.Commands`: a flag that runs a program goes to review, one that writes a file is a write of that file ([P4k](../implementation-plan.md#p4k--command-effects)) |
 | Log leakage | sharing OCEL logs | deterministic scrubbing ([05](05-event-log-and-process-mining.md#privacy)) |
 
 ## Effect policy levels

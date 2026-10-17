@@ -8,6 +8,8 @@ defmodule Xeito.Decisions.Risk do
 
   use Xeito.Decision, version: "2"
 
+  alias Xeito.Decisions.Risk.Commands
+
   instructions("Is this shell command safe to run automatically inside a software project's workspace?")
 
   input :command, max_bytes: 1_000
@@ -68,36 +70,8 @@ defmodule Xeito.Decisions.Risk do
     ]
   end
 
-  @safe_commands ~w(ls cat head tail grep rg pwd echo wc which tree stat du df diff less file sort uniq cut)
-  @safe_prefixes [
-    "git status",
-    "git diff",
-    "git log",
-    "git show",
-    "git branch",
-    "git blame",
-    "mix test",
-    "mix compile",
-    "mix format",
-    "mix deps.get",
-    "mix credo",
-    "npm test",
-    "npm run test",
-    "npm run lint",
-    "pytest",
-    "python -m pytest",
-    "python3 -m pytest",
-    "cargo test",
-    "cargo build",
-    "cargo check",
-    "go test",
-    "go build",
-    "make test",
-    "bundle exec rspec"
-  ]
-
-  # Never safe by rule: actions that delete or run something, forcing, and secrets.
-  @excluded ["-delete", "-exec", "--force", ".env", ".ssh", "credentials", ".netrc"]
+  # Never safe by rule, whatever the command: forcing, and secrets.
+  @excluded ["--force", ".env", ".ssh", "credentials", ".netrc"]
 
   @doc false
   def classify(%{command: command} = input) do
@@ -131,103 +105,13 @@ defmodule Xeito.Decisions.Risk do
     end
   end
 
-  defp safe_segment?(segment) do
-    [word | _] = String.split(segment, ~r/\s+/, parts: 2) ++ [""]
-
-    (word in @safe_commands or Enum.any?(@safe_prefixes, &String.starts_with?(segment, &1)) or
-       read_only?(word, segment)) and
-      not String.contains?(segment, @excluded) and not flag_effect?(arguments(segment))
-  end
-
-  # --- flags that write or run -------------------------------------------------------------
-  # Options with which a read-only command writes a file or runs a program. Long options match
-  # by prefix too, as getopt and git accept unambiguous abbreviations; quotes are dropped, as the
-  # shell drops them. A false match only sends a command to review.
-
-  defp arguments(segment),
-    do: segment |> String.split(~r/\s+/, trim: true) |> Enum.map(&String.replace(&1, ~r/['"\\]/, ""))
-
-  # Command → {long options, short option letters}.
-  @flags %{
-    "rg" => {~w(pre search-zip hostname-bin), "z"},
-    "sort" => {~w(output compress-program), "o"},
-    "tree" => {[], "oR"},
-    "less" => {~w(log-file LOG-FILE), "oO"},
-    "file" => {~w(compile), "C"}
-  }
-
-  defp flag_effect?([command | args]) when is_map_key(@flags, command) do
-    {long, short} = @flags[command]
-    flagged?(args, long, short)
-  end
-
-  # `uniq INPUT OUTPUT` writes OUTPUT.
-  defp flag_effect?(["uniq" | args]), do: args |> Enum.reject(&String.starts_with?(&1, "-")) |> length() > 1
-  defp flag_effect?(["git" | args]), do: git_flag_effect?(args)
-  defp flag_effect?(_words), do: false
-
-  defp git_flag_effect?(["branch" | args]), do: not branch_listing?(args, Enum.any?(args, &(&1 in ["-l", "--list"])))
-
-  defp git_flag_effect?([command | args]) when command in ~w(diff log show),
-    do: Enum.any?(args, &(long?(&1, ~w(output ext-diff textconv)) and &1 != "--text"))
-
-  defp git_flag_effect?(_args), do: false
-
-  defp flagged?(args, long, short), do: Enum.any?(args, &(long?(&1, long) or short?(&1, short)))
-
-  # `--name` or `--name=value`, `name` a prefix of one of `names`.
-  defp long?("--" <> option, names) do
-    name = option |> String.split("=", parts: 2) |> hd()
-    name != "" and Enum.any?(names, &String.starts_with?(&1, name))
-  end
-
-  defp long?(_arg, _names), do: false
-
-  # A cluster of short options (`-iz`) holding any of `letters`.
-  defp short?("-" <> cluster, letters),
-    do: not String.starts_with?(cluster, "-") and String.contains?(cluster, String.graphemes(letters))
-
-  defp short?(_arg, _letters), do: false
-
-  # `--abbrev` and `--color` take a value only as `--abbrev=7`: in `--abbrev 7`, 7 names a new branch.
-  @branch_options ~w(--all --remotes --list --verbose --show-current --color --no-color --column --no-column --ignore-case --omit-empty --abbrev --no-abbrev)
-  @branch_valued ~w(--contains --no-contains --merged --no-merged --points-at --sort --format)
-
-  # Only the forms of `git branch` that list: known options, and patterns after `--list`.
-  defp branch_listing?([], _list), do: true
-  defp branch_listing?([option, _value | rest], list) when option in @branch_valued, do: branch_listing?(rest, list)
-  defp branch_listing?(["-" <> _ = option | rest], list), do: branch_option?(option) and branch_listing?(rest, list)
-  defp branch_listing?([_pattern | rest], list), do: list and branch_listing?(rest, list)
-
-  defp branch_option?("--" <> _ = option),
-    do: (option |> String.split("=", parts: 2) |> hd()) in (@branch_options ++ @branch_valued)
-
-  defp branch_option?("-" <> letters), do: Regex.match?(~r/^[arlvi]+$/, letters)
-
-  # `find` without writing actions; `sed -n` line ranges only (never `-i` or scripts); `cd` into a subdirectory.
-  defp read_only?("find", segment), do: not String.contains?(segment, ["-ok", "-fprint", "-fls"])
-
-  defp read_only?("sed", segment), do: Regex.match?(~r/^sed\s+-n\s+'?\d+(,(\d+|\$))?p'?(\s+[^\s-][^\s;]*)*$/, segment)
-
-  defp read_only?("cd", segment), do: into_subdirectory?(segment)
-
-  # `xargs` feeding a read-only command (`find … | xargs grep -l x`) is as safe as that command.
-  defp read_only?("xargs", segment) do
-    rest = Regex.replace(~r/^xargs(\s+-(0|r|t|[nLP]\s*\d+|I\s*\S+|d\s*\S+))*\s+/, segment, "")
-    rest != segment and safe_segment?(rest)
-  end
-
-  defp read_only?(_word, _segment), do: false
-
-  defp into_subdirectory?(segment),
-    do: Regex.match?(~r/^cd\s+[\w.\/-]+$/, segment) and not Regex.match?(~r/^cd\s+(\/|~|-|\.\.)|\.\./, segment)
+  # Read-only by the command table (`Xeito.Decisions.Risk.Commands`), and nothing excluded.
+  defp safe_segment?(segment), do: not String.contains?(segment, @excluded) and Commands.effect(segment) == :read
 
   # --- writes inside the workspace ---------------------------------------------------------
   # Safe only if every write is visible in the text, every path is a literal word inside the
   # workspace after symlinks (not its root, not .git, not a protected dir), and an undo snapshot
   # would hold every path. Anything else goes to review.
-
-  @writers ~w(touch mkdir rm mv cp tee)
 
   # Without a workspace, `Xeito.Undo.covers?/3` covers nothing.
   defp writes_inside?(command, cwd) do
@@ -266,40 +150,12 @@ defmodule Xeito.Decisions.Risk do
 
   # The paths a segment writes ([] for a read-only one), or :error if that is not provable.
   defp segment_paths(segment) do
-    if safe_segment?(segment),
-      do: {:ok, []},
-      else: with({:ok, [command | args]} <- words(segment), do: command_paths(command, args))
+    case {String.contains?(segment, @excluded), Commands.effect(segment)} do
+      {false, :read} -> {:ok, []}
+      {_, {:writes, paths}} -> {:ok, paths}
+      _ -> :error
+    end
   end
-
-  defp command_paths("sed", args), do: args |> sed_options(%{in_place: false, script: nil}) |> sed_files()
-
-  defp command_paths(command, args) when command in @writers do
-    {options, paths} = Enum.split_with(args, &String.starts_with?(&1, "-"))
-    if paths != [] and Enum.all?(options, &Regex.match?(~r/^-[a-zA-Z]+$/, &1)), do: {:ok, paths}, else: :error
-  end
-
-  defp command_paths(_command, _args), do: :error
-
-  # `sed -i[SUFFIX] [-i ''] [-E|-r] [-e SCRIPT] [SCRIPT] FILE...`; any other option fails below.
-  defp sed_options(["-i", "" | rest], acc), do: sed_options(rest, %{acc | in_place: true})
-  defp sed_options(["-i" <> _suffix | rest], acc), do: sed_options(rest, %{acc | in_place: true})
-  defp sed_options([flag | rest], acc) when flag in ["-E", "-r"], do: sed_options(rest, acc)
-  defp sed_options(["-e", script | rest], %{script: nil} = acc), do: sed_options(rest, %{acc | script: script})
-  defp sed_options(rest, acc), do: {acc, rest}
-
-  defp sed_files({%{in_place: true, script: nil} = acc, [script | files]}),
-    do: sed_files({%{acc | script: script}, files})
-
-  # Every file is a path: an option after the script is refused, not guessed.
-  defp sed_files({%{in_place: true, script: script}, [_ | _] = files}) do
-    if one_substitution?(script) and not Enum.any?(files, &String.starts_with?(&1, "-")), do: {:ok, files}, else: :error
-  end
-
-  defp sed_files(_parsed), do: :error
-
-  # One `s` command with no flag that writes a file or runs a command (`w`, `e`).
-  defp one_substitution?(script),
-    do: Regex.match?(~r/^s([^\w\s\\])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gIi0-9]*$/, script)
 
   # --- writes undo can take back (undo stage 3) ---------------------------------------------
   # Globs, unknown options and `find … -delete` are safe when every expanded path is inside and a
@@ -337,13 +193,12 @@ defmodule Xeito.Decisions.Risk do
   defp confined_segment(segment) do
     if safe_segment?(segment),
       do: {:ok, []},
-      else: with({:ok, [command | args]} <- glob_words(segment), do: confined_command(command, args))
+      else: with({:ok, [command | args]} <- Commands.words(segment, :glob), do: confined_command(command, args))
   end
 
-  defp confined_command(command, args) when command in @writers, do: writer_paths(args)
-  defp confined_command("sed", args), do: command_paths("sed", Enum.map(args, &sed_long_option/1))
+  defp confined_command("sed", args), do: Commands.sed_writes(Enum.map(args, &sed_long_option/1))
   defp confined_command("find", args), do: find_paths(args)
-  defp confined_command(_command, _args), do: :error
+  defp confined_command(command, args), do: if(Commands.writer?(command), do: writer_paths(args), else: :error)
 
   defp writer_paths(args) do
     {_options, paths} = Enum.split_with(args, &String.starts_with?(&1, "-"))
@@ -378,38 +233,6 @@ defmodule Xeito.Decisions.Risk do
     if glob?(pattern),
       do: cwd |> Path.join(pattern) |> Path.wildcard() |> Enum.map(&Path.relative_to(&1, cwd)),
       else: [pattern]
-  end
-
-  # Shell words: plain ones without anything the shell would expand or interpret, or single-quoted.
-  defp words(segment), do: shell_words(segment, &literal/1)
-
-  # The same, globs (`*`, `?`, `[…]`) allowed.
-  defp glob_words(segment), do: shell_words(segment, &glob_literal/1)
-
-  defp shell_words(segment, literal) do
-    ~r/(?:'[^']*'|[^\s'])+/
-    |> Regex.scan(segment)
-    |> Enum.map(fn [word] -> literal.(word) end)
-    |> Enum.reduce_while({:ok, []}, fn
-      {:ok, word}, {:ok, acc} -> {:cont, {:ok, acc ++ [word]}}
-      :error, _ -> {:halt, :error}
-    end)
-  end
-
-  defp glob_literal(word) do
-    cond do
-      Regex.match?(~r/^'[^']*'$/, word) -> {:ok, String.slice(word, 1..-2//1)}
-      Regex.match?(~r/[$`~{}\\"'()!#]/, word) -> :error
-      true -> {:ok, word}
-    end
-  end
-
-  defp literal(word) do
-    cond do
-      Regex.match?(~r/^'[^']*'$/, word) -> {:ok, String.slice(word, 1..-2//1)}
-      Regex.match?(~r/[$`~*?\[\]{}\\"'()!#]/, word) -> :error
-      true -> {:ok, word}
-    end
   end
 
   defp inside?(path, cwd) do

@@ -68,4 +68,5 @@ for the details; `mix xeito.map` lists every module with its public functions.
 - **risk oracle**: runs a command in a fresh fixture workspace, undoes it and runs it twice, to check `Risk`'s labels and claims against what happens (`mix ci` runs it: `cmd mix test --only oracle`). `Xeito.RiskOracle` (`test/support`)
 - **fixture**: a named workspace an evaluation example runs in. `Xeito.Decision.Eval.Fixtures`
 - **false-safe**: a command labelled review or forbidden that a decider calls safe; Risk's gate allows none. `Xeito.Decision.Eval`
+- **command table**: what each shell command Risk knows does (reads, writes these paths, runs a program, unknown), per subcommand and flag. `Xeito.Decisions.Risk.Commands`
 - **read cost**: the tokens an agent reads for a task (`mix xeito.context`). `Xeito.Source.ReadCost`

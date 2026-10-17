@@ -577,6 +577,22 @@ defmodule Xeito.DecisionTest do
       for command <- ["rm a.txt", "echo x > new.txt", "rm -rf lib"], do: assert(write_risk(command, ws) == :safe, command)
     end
 
+    test "a flag that writes a file inside is a write like any other; outside, it is not safe", %{ws: ws} do
+      for command <- [
+            "sort -o sorted.txt a.txt",
+            "sort -uo lib/s.txt a.txt",
+            "uniq a.txt u.txt",
+            "git diff --output=d.txt",
+            "tree -o t.txt lib"
+          ],
+          do: assert(write_risk(command, ws) == :safe, command)
+
+      for command <- ["sort -o ../x a.txt", "sort -o .git/x a.txt", "git show --output=/tmp/x", "uniq a.txt ../u.txt"],
+          do: assert(write_risk(command, ws) == nil, command)
+
+      assert Risk.written_paths("sort -o out.txt in.txt > log.txt") == {:ok, ["log.txt", "out.txt"]}
+    end
+
     test "sed -i with one plain substitution is safe; scripts that could write or run something are not", %{ws: ws} do
       for command <- [
             "sed -i 's/foo/bar/g' lib/a.ex",

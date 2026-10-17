@@ -12,6 +12,11 @@
   # What the model gets to see: the system prompt must never be cut.
   "lib/xeito/chat/window.ex" => ["test/xeito/chat/window_test.exs"],
   "lib/xeito/decisions/risk.ex" => ["test/xeito/decision_test.exs"],
+  # Which commands and flags read, write or run: a wrong case lets a write or a program through.
+  "lib/xeito/decisions/risk/commands.ex" => [
+    "test/xeito/decisions/risk/commands_test.exs",
+    "test/xeito/decision_test.exs"
+  ],
   # When a chat turn runs a call, stops, or checks and fixes its edits: the machine's guards and
   # the logic behind them.
   "lib/xeito/machines/chat.ex" => [
