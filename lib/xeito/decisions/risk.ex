@@ -102,7 +102,7 @@ defmodule Xeito.Decisions.Risk do
   @doc false
   def classify(%{command: command} = input) do
     cond do
-      Enum.any?(forbidden_patterns(), &Regex.match?(&1, command)) -> :forbidden
+      forbidden?(command) -> :forbidden
       all_segments_safe?(command) -> :safe
       writes_inside?(command, Map.get(input, :cwd) || "") -> :safe
       true -> nil
@@ -115,8 +115,14 @@ defmodule Xeito.Decisions.Risk do
   workspace is safe to run once, not twice.
   """
   @spec repeatable?(String.t()) :: boolean()
-  def repeatable?(command),
-    do: not Enum.any?(forbidden_patterns(), &Regex.match?(&1, command)) and all_segments_safe?(command)
+  def repeatable?(command), do: not forbidden?(command) and all_segments_safe?(command)
+
+  # Each part counts as well as the whole, so a command after a forbidden one hides nothing
+  # (`rm -rf ~/ ; ls`). The split ignores quotes on purpose: a false match only blocks.
+  defp forbidden?(command) do
+    parts = [command | String.split(command, ~r/;|&&|\|\||\||\n/)]
+    Enum.any?(parts, fn part -> Enum.any?(forbidden_patterns(), &Regex.match?(&1, part)) end)
+  end
 
   defp all_segments_safe?(command) do
     case segments(command) do

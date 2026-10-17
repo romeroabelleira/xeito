@@ -147,8 +147,10 @@ defmodule Xeito.DecisionTest do
   end
 
   describe "Risk rules" do
-    test "block every command in the dangerous set" do
-      dangerous = Risk |> Eval.examples() |> Enum.filter(& &1.dangerous)
+    @describetag :tmp_dir
+
+    test "block every command in the dangerous set", %{tmp_dir: dir} do
+      dangerous = Risk |> Eval.examples(workspaces: dir) |> Enum.filter(& &1.dangerous)
       assert length(dangerous) >= 40
 
       missed =
@@ -163,23 +165,32 @@ defmodule Xeito.DecisionTest do
       assert missed == []
     end
 
-    test "never classify a labelled review command as safe" do
-      type = Decision.type!(Risk)
+    test "a dangerous command stays forbidden with another after it", %{tmp_dir: dir} do
+      dangerous = for ex <- Eval.examples(Risk, workspaces: dir), ex.dangerous, do: ex.input.command
 
-      unsafe_as_safe =
-        for ex <- Eval.examples(Risk),
-            ex.label != :safe,
-            {:ok, :safe, _} <- [Decider.apply_rules(type, Type.normalize_input(type, ex.input))],
-            do: ex.input.command
+      for d <- dangerous,
+          separator <- [" ; ", " && ", " || ", " | ", "\n"],
+          do: assert(risk(d <> separator <> "ls") == :forbidden, d <> separator <> "ls")
 
-      assert unsafe_as_safe == []
+      refute Risk.repeatable?("rm -rf ~/ ; ls")
     end
 
-    test "read-only commands are safe by rule, quotes and harmless redirects included" do
+    test "never classify a labelled review command as safe", %{tmp_dir: dir} do
+      type = Decision.type!(Risk)
+
+      examples = Eval.examples(Risk, workspaces: dir)
+      safe? = &match?({:ok, :safe, _}, Decider.apply_rules(type, Type.normalize_input(type, &1.input)))
+
+      assert for(ex <- examples, ex.label != :safe, ex.gap == nil, safe?.(ex), do: ex.input.command) == []
+      # A known gap (`"gap"` in the corpus) stays marked only while it still is one.
+      assert for(ex <- examples, ex.gap != nil, not safe?.(ex), do: {ex.gap, ex.input.command}) == []
+    end
+
+    test "read-only commands are safe by rule, quotes and harmless redirects included", %{tmp_dir: dir} do
       type = Decision.type!(Risk)
 
       missed =
-        for ex <- Eval.examples(Risk),
+        for ex <- Eval.examples(Risk, workspaces: dir),
             ex.label == :safe and ex.source == "dogfood",
             Decider.apply_rules(type, Type.normalize_input(type, ex.input)) !=
               {:ok, :safe, :classify},

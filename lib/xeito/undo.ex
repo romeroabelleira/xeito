@@ -35,6 +35,10 @@ defmodule Xeito.Undo do
   @spec step(Path.t(), String.t(), String.t(), (-> result), keyword()) :: result when result: term()
   def step(cwd, id, label, fun, opts \\ []), do: locked(cwd, fn -> snapshotted(cwd, id, label, fun, opts) end)
 
+  @doc "The default size over which a file is left out of snapshots (`:max_file_bytes`)."
+  @spec max_file_bytes() :: pos_integer()
+  def max_file_bytes, do: @max_file_bytes
+
   @doc "A session's steps that can be undone, newest first."
   @spec steps(Path.t(), String.t()) :: [step()]
   def steps(cwd, session), do: cwd |> stack(undo_ref(session)) |> Enum.map(&public/1)

@@ -2,7 +2,8 @@ defmodule Xeito.Decision.Eval do
   @moduledoc """
   Evaluates deciders on a decision type's labelled examples and applies the gate test.
 
-  Examples come from `priv/decisions/<type>/examples.jsonl`.
+  Examples come from `priv/decisions/<type>/examples.jsonl`; one with a `fixture` runs in a copy
+  of that workspace.
 
   Deciders:
 
@@ -30,29 +31,58 @@ defmodule Xeito.Decision.Eval do
 
   alias Xeito.Decider
   alias Xeito.Decision
+  alias Xeito.Decision.Eval.Fixtures
   alias Xeito.Decision.Type
 
-  @doc "Loads the labelled examples of a decision type."
-  @spec examples(module()) :: [map()]
-  def examples(type_module) do
+  @doc """
+  Loads the labelled examples of a decision type. An example with a `fixture` gets a fresh copy of
+  that workspace (`Xeito.Decision.Eval.Fixtures`) as its `cwd`, one per fixture, under
+  `opts[:workspaces]`, which such a set requires and the caller removes. `undoable` and `repeatable` are the
+  example's labels for those properties, `nil` when it has none; `gap` names a known gap the
+  example shows (the decision gets it wrong), until it is fixed. `opts[:path]` reads another file.
+  """
+  @spec examples(module(), keyword()) :: [map()]
+  def examples(type_module, opts \\ []) do
     type = Decision.type!(type_module)
-    path = Application.app_dir(:xeito, ["priv", "decisions", type.name, "examples.jsonl"])
 
-    path
-    |> File.stream!()
-    |> Enum.map(&JSON.decode!/1)
-    |> Enum.map(fn ex ->
+    path =
+      Keyword.get_lazy(opts, :path, fn ->
+        Application.app_dir(:xeito, ["priv", "decisions", type.name, "examples.jsonl"])
+      end)
+
+    examples = path |> File.stream!() |> Enum.map(&JSON.decode!/1)
+    workspaces = workspaces(examples, opts)
+
+    Enum.map(examples, fn ex ->
       {:ok, label} = Type.cast(type, ex["label"])
 
       %{
-        input: atomize(ex["input"], type),
+        input: ex["input"] |> atomize(type) |> in_workspace(workspaces[ex["fixture"]]),
         label: label,
         lang: ex["lang"],
         source: ex["source"],
-        dangerous: ex["dangerous"] == true
+        dangerous: ex["dangerous"] == true,
+        fixture: ex["fixture"],
+        undoable: ex["undoable"],
+        repeatable: ex["repeatable"],
+        gap: ex["gap"]
       }
     end)
   end
+
+  defp workspaces(examples, opts) do
+    case examples |> Enum.map(& &1["fixture"]) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
+      [] ->
+        %{}
+
+      names ->
+        root = Keyword.get(opts, :workspaces) || raise(ArgumentError, "examples with fixtures need opts[:workspaces]")
+        Map.new(names, &{&1, Fixtures.build(&1, root)})
+    end
+  end
+
+  defp in_workspace(input, nil), do: input
+  defp in_workspace(input, cwd), do: Map.put(input, :cwd, cwd)
 
   defp atomize(input, type) do
     names = Map.new(type.inputs, &{Atom.to_string(&1.name), &1.name})

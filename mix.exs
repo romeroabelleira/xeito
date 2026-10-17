@@ -75,6 +75,9 @@ defmodule Xeito.MixProject do
         "dialyzer",
         # With coverage: the CRAP gate (test/support/xeito/crap.ex).
         "test --cover",
+        # The Risk oracle: runs, undoes and repeats each fixture example (test/xeito/risk_oracle_test.exs).
+        # Its own VM: Mix runs a task once per invocation, so a second `test` would be skipped.
+        "cmd mix test --only oracle",
         # No surviving mutants in the sources listed in test/mutate.exs. Its own VM: it reloads
         # the test modules it runs.
         "cmd mix xeito.mutate"

@@ -61,23 +61,31 @@ defmodule Mix.Tasks.Xeito.Eval do
       |> String.split(",", trim: true)
       |> Enum.map(&String.to_existing_atom/1)
 
-    for name <- names do
-      module = Xeito.Decisions.fetch!(name)
-      {report, results} = evaluate(module, deciders, opts)
-      print(report)
-      if out = opts[:out], do: write(out, report)
+    workspaces = Path.join(System.tmp_dir!(), "xeito-eval-#{System.unique_integer([:positive])}")
 
-      tier = opts[:predictions]
-
-      if tier && Map.has_key?(results, String.to_existing_atom(tier)),
-        do: write_predictions(opts[:out] || ".", report.type, tier, results)
+    try do
+      for name <- names, do: evaluate_type(name, deciders, Keyword.put(opts, :workspaces, workspaces))
+    after
+      File.rm_rf(workspaces)
     end
+  end
+
+  defp evaluate_type(name, deciders, opts) do
+    module = Xeito.Decisions.fetch!(name)
+    {report, results} = evaluate(module, deciders, opts)
+    print(report)
+    if out = opts[:out], do: write(out, report)
+
+    tier = opts[:predictions]
+
+    if tier && Map.has_key?(results, String.to_existing_atom(tier)),
+      do: write_predictions(opts[:out] || ".", report.type, tier, results)
   end
 
   defp evaluate(module, deciders, opts) do
     type = Decision.type!(module)
     deciders = permitted(type, deciders)
-    examples = module |> Eval.examples() |> maybe_limit(opts[:limit])
+    examples = module |> Eval.examples(workspaces: opts[:workspaces]) |> maybe_limit(opts[:limit])
 
     results = Map.new(deciders, &{&1, Eval.run(module, &1, examples)})
     metrics = Map.new(results, fn {d, rs} -> {d, Eval.metrics(rs, Type.values(type))} end)

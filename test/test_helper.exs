@@ -8,4 +8,5 @@ for var <- ~w(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIR
               GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE),
     do: System.delete_env(var)
 
-ExUnit.start()
+# Xeito.RiskOracleTest runs real commands; `mix ci` runs it with `--only oracle`.
+ExUnit.start(exclude: [:oracle])

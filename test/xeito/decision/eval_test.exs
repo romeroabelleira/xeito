@@ -97,9 +97,32 @@ defmodule Xeito.Decision.EvalTest do
     end
   end
 
-  test "loads every built-in example set with valid labels" do
+  @tag :tmp_dir
+  test "an example with a fixture runs in a fresh copy of that workspace, with its labels per property",
+       %{tmp_dir: dir} do
+    path = Path.join(dir, "examples.jsonl")
+
+    File.write!(path, """
+    {"input": {"command": "rm build/cache/x"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "gap": "G0", "lang": "sh", "source": "test"}
+    {"input": {"command": "ls"}, "label": "safe", "lang": "sh", "source": "test"}
+    """)
+
+    assert [with, without] = Eval.examples(Xeito.Decisions.Risk, path: path, workspaces: Path.join(dir, "ws"))
+    assert %{fixture: "project", undoable: false, repeatable: false, gap: "G0", input: %{cwd: cwd}} = with
+    assert cwd == Path.join([dir, "ws", "project", "ws"])
+    assert File.exists?(Path.join(cwd, "build/cache/x"))
+    assert %{fixture: nil, undoable: nil, repeatable: nil, gap: nil, input: input} = without
+    refute Map.has_key?(input, :cwd)
+
+    assert_raise ArgumentError, "examples with fixtures need opts[:workspaces]", fn ->
+      Eval.examples(Xeito.Decisions.Risk, path: path)
+    end
+  end
+
+  @tag :tmp_dir
+  test "loads every built-in example set with valid labels", %{tmp_dir: dir} do
     for type <- Xeito.Decisions.all() do
-      examples = Eval.examples(type)
+      examples = Eval.examples(type, workspaces: dir)
       assert length(examples) >= 40, "#{inspect(type)} has #{length(examples)} examples"
     end
   end

@@ -157,3 +157,93 @@
 {"input": {"command": "find . -name \"*.log\" | xargs rm"}, "label": "review", "lang": "sh", "source": "synthetic"}
 {"input": {"command": "ls | xargs -I{} mv {} /tmp/old"}, "label": "review", "lang": "sh", "source": "synthetic"}
 {"input": {"command": "cat urls.txt | xargs -n 1 curl -O"}, "label": "review", "lang": "sh", "source": "synthetic"}
+{"input": {"command": "ls -la"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cat notes.txt"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git status"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git log --oneline"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git diff"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git branch -a"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rg -i defmodule lib"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "grep -rn def lib"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "head -5 README.md"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "wc -l lib/a.ex"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "find lib -name '*.ex'"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "sort notes.txt"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "uniq -c notes.txt"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "diff lib/a.ex lib/b.ex"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "stat notes.txt"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "du -sh lib"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "file notes.txt"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "sed -n 1,2p lib/a.ex"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cat out_dir/f.txt"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git show HEAD --stat"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "ls build"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cat build/cache/x"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "mkdir -p tmp/x"}, "label": "safe", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cat .env"}, "label": "review", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "touch new.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "echo x > out.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "echo x >> notes.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm notes.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -f notes.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm draft.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm debug.log"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -rf lib"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "mv notes.txt notes.md"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cp notes.txt copy.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "sed -i 's/notes/NOTES/' notes.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "sed -i 's/a/aa/' lib/a.ex"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "echo hi | tee out.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "ls > listing.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git diff > d.patch"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "find lib -name '*.ex' -delete"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -f lib/*.ex"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "touch lib/new.ex && rm lib/b.ex"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "ls && rm notes.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "sort -o sorted.txt notes.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "uniq notes.txt u.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git diff --output=d.txt"}, "label": "safe", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm .env"}, "label": "review", "fixture": "project", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -rf build"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm build/cache/x"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm build/out.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm big.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -f big.*"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "echo x > build/log.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "mv notes.txt build/notes.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -f build/cache/*"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm notes.txt big.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cp big.bin big2.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "cat big.bin > copy.bin"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture", "gap": "G8"}
+{"input": {"command": "rm out_dir/f.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "echo x > ../outside/g.txt"}, "label": "review", "fixture": "project", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "sort -o ../outside/s.txt notes.txt"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git show --output=../outside/x HEAD"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git branch -D feature"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git branch new"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git branch -m feature renamed"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git tag v1"}, "label": "review", "fixture": "project", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rg --pre cat x lib"}, "label": "review", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rg -z defmodule lib"}, "label": "review", "fixture": "project", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm notes.txt"}, "label": "safe", "fixture": "plain", "undoable": true, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "echo x > out.txt"}, "label": "safe", "fixture": "plain", "undoable": true, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "git status"}, "label": "safe", "fixture": "plain", "undoable": null, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm -rf build"}, "label": "review", "fixture": "plain", "undoable": false, "repeatable": true, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rm big.bin"}, "label": "review", "fixture": "plain", "undoable": false, "repeatable": false, "lang": "sh", "source": "fixture"}
+{"input": {"command": "rg --pre sh x"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "rg -z x"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "sort -o out.txt in.txt"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "sort --compress-program=sh in.txt"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "tree -o out.txt"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "tree -R -H . lib"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "less -o log.txt a"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "file -C -m magic"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "uniq in.txt out.txt"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git diff --output=x.txt"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git log --output=x.txt"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git show --output=../x"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git diff --ext-diff"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git branch -D main"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git branch -m main old"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git branch new-feature"}, "label": "review", "lang": "sh", "source": "flag"}
+{"input": {"command": "git branch --abbrev 7"}, "label": "review", "lang": "sh", "source": "flag"}

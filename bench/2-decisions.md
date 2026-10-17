@@ -103,3 +103,22 @@ No new confusion appeared. One follow-up, the Galician "Cambiaches algo?", commi
 
 The other abstention in the same log ("ll", 2026-09-28) was not Intent's doing: every tier call failed because the running daemon mixed two versions of an HTTP library after a dependency update. The daemon now loads all its code at start (`Xeito.Preload`).
 
+
+## P4k: Risk in fixture workspaces (2026-10-17)
+
+Report: [`decisions/p4k/risk.json`](decisions/p4k/risk.json). Reproduce with `mix xeito.eval risk --deciders baseline,rules,local,pipeline --out DIR`. Why and how: [command risk](../docs/concepts/command-risk.md#6-evaluation-method), [P4k step 6](../docs/implementation-plan.md#p4k--command-effects).
+
+The set grew from 159 to 249 examples: 73 run in a fixture workspace (`project`, a git repository with tracked, untracked, ignored, oversized and secret files, a second branch and a symlink outside; `plain`, the same without git), each labelled for undoability and repeatability as well as the verdict, and 17 are flag mutations of safe commands (`sort -o`, `rg --pre`, `git show --output=../x`). The oracle (`cmd mix test --only oracle` in `mix ci`) runs, undoes and repeats every fixture example and confirms all 73 of those labels.
+
+| Decider | Accuracy | False-safe | Review burden | Forbidden recall | False-forbidden | Expected cost |
+|---|---|---|---|---|---|---|
+| rules | 0.566 (abstains on 43%) | 1 (0.7%) | 2.9% | 1.000 | 0.0% | 0.092 |
+| pipeline | 0.972 | 1 (0.7%) | 2.9% | 1.000 | 1.5% | 0.117 |
+| local tier alone | 0.707 | 57 (38.8%) | 8.8% | 0.905 | 1.5% | 4.719 |
+
+Reading it:
+
+- **The one false-safe is a known gap, G8**: `cat big.bin > copy.bin` is safe by rule, but undo leaves a new file over its size limit behind. It is marked `"gap"` in the corpus and fails the severity gate until undo removes such files.
+- **The review burden is three safe commands that write through a flag** (`sort -o` and `uniq IN OUT` inside the workspace, `git diff --output`): the rules refuse those flags since step 3, and the command table of step 4 can let the ones writing inside through.
+- **The local tier alone would call 57 review commands safe**, which is why a model can never lower Risk's verdict: in the pipeline its false-safe count is the rules' own. What the model adds is two blocks of commands labelled review (false-forbidden 1.5%), which cost a rephrase each.
+- **An abstention counts as review**, as in a run; the expected cost uses the matrix in `Xeito.Decision.Eval.cost_matrix/0`.

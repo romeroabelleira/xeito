@@ -214,6 +214,10 @@ The same deletion gets a different verdict depending on how it is spelled. [10](
 - The gate is symmetric accuracy (`lib/xeito/decision/eval.ex:221-241`).
 - `dangerous_missed` (`lib/mix/tasks/xeito.eval.ex:88-97`) counts only the rules tier's misses of `:forbidden`. Nothing counts a review command called safe, except one test (`test/xeito/decision_test.exs:166`).
 
+**G8. A new file over the snapshot limit** (found by the oracle, P4k step 6). `cat big.bin > copy.bin` is safe by rule: its one written path does not exist yet, so `covers?/3` holds. Undo then leaves the 5 MB copy behind, since a step records oversized files only as skipped. Undo should remove a file the step created and could not capture.
+
+**G9. A forbidden command followed by another was only reviewed** (found by the property tests, fixed in P4k step 6). Patterns anchored at the end of the line (`rm -rf ~/`, `rm /`) no longer matched once a command followed: `rm -rf ~/ ; ls` went to review. Each pattern now also runs on each part of the command.
+
 **G7. `ls -la notes.txt; rm -v notes.txt` is safe by rule.** By design: a literal deletion inside the workspace. After the fix for G1 it stays safe only when the file is captured.
 
 ## 4. Text rules versus observed effects

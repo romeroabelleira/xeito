@@ -20,6 +20,7 @@ mix ci
 | `credo --strict` | design and complexity findings Styler cannot fix |
 | `dialyzer` | type and spec errors. The first run builds the PLT and takes minutes; later runs take seconds |
 | `test --cover` | the tests, then the CRAP gate on every function (§3) |
+| `cmd mix test --only oracle` | Risk's labels and claims against what commands really do: each example with a fixture runs, is undone and runs twice in a throwaway workspace (`test/xeito/risk_oracle_test.exs`; tagged `:oracle`, so plain `mix test` leaves it out) |
 | `cmd mix xeito.mutate` | surviving mutants in the sources listed in `test/mutate.exs` (§4) |
 
 It runs in the test environment and takes under a minute on a warm build. A red step stops it; the output above the error says which.
@@ -40,7 +41,7 @@ Where the tests are:
 - `test/xeito/harness_test.exs` drives whole sessions against a scripted model: a `Req.Test` stub speaking Ollama's API. It is the integration test of routing, the chat loop and the client API.
 - `test/mix/tasks/` holds the mix tasks, run against real temporary workspaces and logs.
 - `test/xeito/architecture_test.exs` checks the dependency rules between the client, the edges, the core and the machines on the compiled code ([08](architecture/08-tech-stack.md#code-style)).
-- `test/support/` holds the helpers (`Xeito.Case`: `start_log!/0`, `scripted_runner/2`, `eventually/2`) and the CRAP and mutation tools.
+- `test/support/` holds the helpers (`Xeito.Case`: `start_log!/0`, `scripted_runner/2`, `eventually/2`), the CRAP and mutation tools, and `Xeito.RiskOracle`.
 
 Tests never touch your real configuration. Logs and workspaces go to temporary directories, and the TUI's preferences file is passed into `Xeito.Tui.new/1`.
 

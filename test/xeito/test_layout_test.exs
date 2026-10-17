@@ -11,6 +11,7 @@ defmodule Xeito.TestLayoutTest do
     "test/xeito/harness_test.exs" => "the tools, a client and its transcript against a running session",
     "test/xeito/machines_test.exs" => "the built-in machines, skills and tool refusals through the runner",
     "test/xeito/repo_skills_test.exs" => "the repository's own skills, AGENTS.md and CLAUDE.md",
+    "test/xeito/risk_property_test.exs" => "Risk's rules over generated commands, in a fixture workspace",
     "test/xeito/run_property_test.exs" => "the log alone reproduces a run, for random event sequences",
     "test/xeito/session_commands_test.exs" => "a session's slash commands",
     "test/xeito/session_queue_test.exs" => "lines typed while a turn runs",
