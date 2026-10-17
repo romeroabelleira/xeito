@@ -18,6 +18,7 @@
 - **Process mining of agent traces is emerging but small**: IBM 2025, COMPASS, ProcessTBench, AgentLTL 2026, the 2026 BlueSky agenda. *None closes the full loop of mine → propose → benchmark → release a new machine version.* That loop is Xeito's contribution.
 - **OTel GenAI conventions are still in Development.** Xeito emits OTel spans but keeps its own OCEL-mappable schema as the source of truth.
 - **System One models** (Jev, Sept 2026, and open clones such as Laya, Kev, SemIf and GLiNER2.5-Decide) turned typed decisions into a product category. Xeito speaks their `/v1/systemone` contract, and it adds the state machine, cascade, log and gate around them ([§7](#7-system-one-decision-models-jev-and-open-clones)).
+- **Command effects** are written down per command and per flag (PaSh, CoLiS) or observed by running the command contained (try, hS, Riker). Xeito keeps text rules, requires undo coverage for a safe write, and measures the rules with an asymmetric cost and a run-and-undo oracle ([§8](#8-shell-command-effects-undo-and-agent-safety)).
 - **pi** shows that a minimal core is viable: 4 tools, a system prompt under 1k tokens, and extensions for everything else.
 
 ## 1. LLMs inside state machines and controlled workflows
@@ -132,9 +133,58 @@ From the separate "Jev alternatives" research, late Sept 2026. Most accuracy num
 - an event log that makes them auditable,
 - a gate-and-graduate loop that makes local models earn their place.
 
+## 8. Shell command effects, undo and agent safety
+
+Added 2026-10-17 for [command risk](../concepts/command-risk.md); verified that day against primary sources unless marked *(unverified)*.
+
+| Work | Relevance |
+|---|---|
+| Vasilakis, Kallas, Mamouras, Benetopoulos, Cvetković. **PaSh: Light-touch Data-Parallel Shell Processing.** EuroSys 2021. [doi:10.1145/3447786.3456228](https://doi.org/10.1145/3447786.3456228) · [annotations](https://github.com/binpash/annotations) | Four command classes; per-command JSON records whose cases match on flags and name input and output files. The model for a per-flag command table. |
+| Raghavan, Fouladi, Levis, Zaharia. **POSH: A Data-Aware Shell.** USENIX ATC 2020. [usenix.org](https://www.usenix.org/conference/atc20/presentation/raghavan) | An annotation language for the files a command accesses. |
+| Kallas, Mustafa, Bielak, Karnikis, Dang, Greenberg, Vasilakis. **Practically Correct, Just-in-Time Shell Script Parallelization.** OSDI 2022. [usenix.org](https://www.usenix.org/conference/osdi22/presentation/kallas) | Decisions at run time, because correctness depends on shell and file-system state. |
+| Liargkovas, Kallas, Greenberg, Vasilakis. **Executing Shell Scripts in the Wrong Order, Correctly.** HotOS 2023. [doi:10.1145/3593856.3595891](https://doi.org/10.1145/3593856.3595891) | Trace, contain, then commit or roll back, with read and write sets from system calls in an overlay. |
+| Greenberg, Kallas, Vasilakis. **Unix Shell Programming: The Next 50 Years.** HotOS 2021. [doi:10.1145/3458336.3465294](https://doi.org/10.1145/3458336.3465294) | Calls for shared specification libraries of command effects. |
+| Lamprou, Jung, Keoliya, Lazarek, Kallas, Greenberg, Vasilakis. **Caruca: Effective and Efficient Specification Mining for Opaque Software Components.** 2025. [arXiv:2510.14279](https://arxiv.org/abs/2510.14279) *(venue unverified)* | Mines file-system pre- and post-conditions of commands with an LLM and system-call interposition. |
+| Régis-Gianas, Jeannerod, Treinen. **Morbig: A Static Parser for POSIX Shell.** SLE 2018. [doi:10.1145/3276604.3276615](https://doi.org/10.1145/3276604.3276615) | Static parsing of POSIX shell. |
+| Becker, Jeannerod, Marché, Régis-Gianas, Sighireanu, Treinen. **Analysing Installation Scenarios of Debian Packages.** TACAS 2020. [doi:10.1007/978-3-030-45237-7_14](https://doi.org/10.1007/978-3-030-45237-7_14) · utility specs: [HAL](https://hal.inria.fr/hal-02321691) *(content unverified)* | Symbolic execution of maintainer scripts over feature-tree constraints; more than 150 policy violations found. |
+| Greenberg, Blatt. **Executable Formal Semantics for the POSIX Shell.** POPL 2020. [doi:10.1145/3371111](https://doi.org/10.1145/3371111) | Smoosh: a POSIX shell semantics with a symbolic stepper. |
+| Ridge, Sheets, Tuerk, Giugliano, Madhavapeddy, Sewell. **SibylFS.** SOSP 2015. [doi:10.1145/2815400.2815411](https://doi.org/10.1145/2815400.2815411) | A file-system model used as a test oracle for observed traces. |
+| Mazurak, Zdancewic. **ABASH: Finding Bugs in Bash Scripts.** PLAS 2007. [doi:10.1145/1255329.1255347](https://doi.org/10.1145/1255329.1255347) | Abstract interpretation of variable expansion. |
+| Moore, Dimoulas, King, Chong. **SHILL: A Secure Shell Scripting Language.** OSDI 2014. [usenix.org](https://www.usenix.org/conference/osdi14/technical-sessions/presentation/moore) | Capabilities and contracts confine what a script may touch. |
+| Porter, Hofmann, Rossbach, Benn, Witchel. **Operating System Transactions.** SOSP 2009. [doi:10.1145/1629575.1629591](https://doi.org/10.1145/1629575.1629591) | ACID transactions over system calls: undo at the OS level. |
+| binpash. **try.** [GitHub](https://github.com/binpash/try) | Runs a command in an overlay, summarises the changes, then commits or drops them. "A semisolate": the network is not contained. |
+| Curtsinger, Barowy. **Riker: Always-Correct and Fast Incremental Builds from Simple Specifications.** USENIX ATC 2022. [usenix.org](https://www.usenix.org/conference/atc22/presentation/curtsinger) | Infers effects by system-call tracing instead of declaring them. |
+| Spall, Mitchell, Tobin-Hochstadt. **Build Scripts with Perfect Dependencies.** OOPSLA 2020. [doi:10.1145/3428237](https://doi.org/10.1145/3428237) | Rattle: traced, speculative commands; harmful interleavings named hazards. |
+| Weiss, Guha, Brun. **Tortoise: Interactive System Configuration Repair.** ASE 2017. [arXiv:1709.05366](https://arxiv.org/abs/1709.05366) | Records the file-system effects of shell commands with ptrace, in any shell. |
+| Hummer, Rosenberg, Oliveira, Eilam. **Testing Idempotence for Infrastructure as Code.** Middleware 2013. [PDF](https://dsg.tuwien.ac.at/team/hummer/docs/2013-middleware-iac.pdf) | Idempotence as the condition for convergence; 92 of about 300 Chef scripts not idempotent. |
+| Hanappi, Hummer, Dustdar. **Asserting Reliable Convergence for Configuration Management Scripts.** OOPSLA 2016. [doi:10.1145/2983990.2984000](https://doi.org/10.1145/2983990.2984000) | Convergence under transient faults: the setting of crash recovery. |
+| Shambaugh, Weiss, Guha. **Rehearsal: A Configuration Verification Tool for Puppet.** PLDI 2016. [arXiv:1509.05100](https://arxiv.org/abs/1509.05100) | Determinacy and idempotency from a model of file-system effects. |
+| Brown, Patterson. **Undo for Operators: Building an Undoable E-mail Store.** USENIX ATC 2003. [usenix.org](https://www.usenix.org/conference/2003-usenix-annual-technical-conference/undo-operators-building-undoable-e-mail-store) | Rewind, repair, replay. Externalized actions are compensated, not undone. |
+| GNU. **coreutils `rm` (`--preserve-root`).** [manual](https://www.gnu.org/software/coreutils/manual/html_node/rm-invocation.html) · ShellCheck **SC2115** [wiki](https://www.shellcheck.net/wiki/SC2115) | Default guard against recursive deletion of `/`; the empty-variable form of the same mistake. |
+| IEEE/The Open Group. **POSIX `mkdir`** (1003.1-2024). [pubs.opengroup.org](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/mkdir.html) | `-p` is idempotent by specification. |
+| Model Context Protocol. **ToolAnnotations** (schema 2025-06-18). [schema.ts](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2025-06-18/schema.ts) | `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, kept separate; hints from untrusted servers must not decide. |
+| OpenAI. **Codex CLI command safety.** [`is_safe_command.rs` at 3b45c29](https://github.com/openai/codex/blob/3b45c29/codex-rs/shell-command/src/command_safety/is_safe_command.rs) · [removal, 942af84](https://github.com/openai/codex/commit/942af84) | Per-flag exclusions (`rg --pre`, `find -exec`); `git` dropped because repository configuration runs helpers; the list removed on 2026-08-20 for exec-policy rules and sandboxes. |
+| Anthropic. **Claude Code permissions and sandboxing.** [permissions](https://code.claude.com/docs/en/permissions) · [sandboxing](https://code.claude.com/docs/en/sandboxing) | A fixed read-only set; rules per subcommand; argument patterns "fragile"; `cd` then `git` prompts because of hooks. |
+| OpenHands. **software-agent-sdk security analyzers.** [GitHub](https://github.com/OpenHands/software-agent-sdk) | A model-reported risk level with a pattern analyzer; confirm HIGH and UNKNOWN. |
+| Ruan et al. **Identifying the Risks of LM Agents with an LM-Emulated Sandbox** (ToolEmu). ICLR 2024. [arXiv:2309.15817](https://arxiv.org/abs/2309.15817) | 144 cases over 36 emulated toolkits, a terminal among them; severity tied to irreversibility. |
+| Yuan et al. **R-Judge: Benchmarking Safety Risk Awareness for LLM Agents.** EMNLP Findings 2024. [arXiv:2401.10019](https://arxiv.org/abs/2401.10019) | 569 recorded interactions judged for risk by models. |
+| Guo et al. **RedCode: Risky Code Execution and Generation Benchmark for Code Agents.** NeurIPS 2024 D&B. [arXiv:2411.07781](https://arxiv.org/abs/2411.07781) | 4,050 risky Python and Bash execution cases: a source of review and forbidden examples. |
+| Lin, Wang, Zettlemoyer, Ernst. **NL2Bash.** LREC 2018. [arXiv:1802.08979](https://arxiv.org/abs/1802.08979) · [data (MIT)](https://github.com/TellinaTool/nl2bash) | 9,305 English–Bash pairs over 102 utilities: a source of realistic commands to label. |
+| Yang, Prabhakar, Narasimhan, Yao. **InterCode.** NeurIPS 2023 D&B. [arXiv:2306.14898](https://arxiv.org/abs/2306.14898) | Bash tasks in Docker, reset by git: a model for the oracle's throwaway workspace. |
+| Merrill et al. **Terminal-Bench.** ICLR 2026. [arXiv:2601.11868](https://arxiv.org/abs/2601.11868) | 89 terminal tasks with verification tests; capability, not safety. |
+| Liu, Zhang, Yang, Zhang, Feng, Wang, Qiu, Liu, Poczos, Hong. **CARE: Pre-Execution Command Verification for Shell-Executing LLM Agents.** ISSRE 2026. [arXiv:2607.21642](https://arxiv.org/abs/2607.21642) | Shell-command checks with rules first, then an LLM judge; reports F1 and false positives. |
+| Tsai, Bagdasarian. **Contextual Agent Security: A Policy for Every Purpose** (Conseca). HotOS 2025. [arXiv:2501.17070](https://arxiv.org/abs/2501.17070) | A bash agent: a static restrictive policy completes 0 of 20 tasks; a contextual one completes 12 and still denies the bad actions. |
+| Chennabasappa et al. **LlamaFirewall.** 2025. [arXiv:2505.03574](https://arxiv.org/abs/2505.03574) | Reports attack success and utility together. |
+| Bhatt et al. **Ctrl-Z: Controlling AI Agents via Resampling** (BashBench). 2025. [arXiv:2504.10374](https://arxiv.org/abs/2504.10374) | 257 Bash tasks; attack success against usefulness. |
+| Kutasov et al. **SHADE-Arena.** 2025. [arXiv:2506.15740](https://arxiv.org/abs/2506.15740) | A monitor's false-positive rate above 20% is "not feasible": review burden has a ceiling. |
+| Zhang et al. **Agent-SafetyBench.** 2024. [arXiv:2412.14470](https://arxiv.org/abs/2412.14470) · Kuntz et al. **OS-Harm.** NeurIPS 2025 D&B. [arXiv:2506.14866](https://arxiv.org/abs/2506.14866) | General agent-safety benchmarks; neither is shell-specific *(shell content unverified)*. |
+
+**Takeaway for Xeito.** Research describes command effects per command and per flag (PaSh, CoLiS) or observes them (try, hS, Riker, Rattle); harnesses in daily use have moved to smaller allow-lists with per-flag exclusions (Codex, Claude Code). Xeito keeps rules over the text, but a write is safe only when undo covers it, risk, undoability and repeatability are separate facts, and the rules are measured with an asymmetric cost and an oracle that runs commands and undoes them ([P4k](../implementation-plan.md#p4k--command-effects)).
+
 ## Still to check before external publication
 
 - COMPASS: exact title, authors, year.
 - TOOLDEC and PMAx: authors.
 - Rozinat & van der Aalst (2008), the original token-replay paper: exact citation.
 - §7: Jev availability and resale routes (OpenRouter, Vercel, Cloudflare) are disputed in secondary sources. Re-verify all System One numbers before citing them publicly.
+- §8: Caruca's venue; the content of the CoLiS utility-specification report (HAL); whether Agent-SafetyBench and OS-Harm contain shell scenarios.

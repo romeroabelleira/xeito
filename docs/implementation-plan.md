@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-10-17 (P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included; P4i and P4j done; P4g started; P4h, P5b and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-10-17 (P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included; P4i and P4j done; P4g started; P4k next; P4h, P5b and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -30,6 +30,7 @@ The original schedule assumed part-time pace from 2026-10-05. P0–P3 were built
 | P4h · Scripts (planned) | a `script` tool: the model hands busywork to an Elixir script whose every call is a logged, gated effect; typed decisions and log objects from scripts; the MCP client with exposure levels (answer to pi's Codemode) | — | after P4g, before P5 | [P4h](#p4h--scripts) |
 | P4i · Code over docs (added) | a glossary, a generated module map, moduledocs as contracts, types for the data that crosses modules, tests mirrored to modules, smaller modules; the docs repository decided by measurement | — | done 2026-10-17; documents stay in this repository | [P4i](#p4i--code-over-docs) |
 | P4j · Robustness (added) | crash-safe replay of effects, robust remote model calls, model limits and prices from OpenRouter, idempotent client submissions; from a review of pi-durable, pi-ai and chord | — | done 2026-10-17 (step 3 in part) | [P4j](#p4j--robustness) |
+| P4k · Command effects (added) | a safe write needs undo coverage; a per-flag command table; risk, undoability and repeatability as logged facts; an asymmetric evaluation and a run-and-undo oracle; from a survey of PaSh, CoLiS, try, Codex and agent-safety benchmarks | — | planned, next, before P4g continues | [P4k](#p4k--command-effects) |
 | P5 · OCEL export and process mining | OCEL validation, PM4Py sidecar, proposals (including token sinks), **promotion candidates** (frequent free-chat requests), **data portability** (decisions as training data, pi sessions, OTLP/CLEF, XES/PNML) | 2027-02-08 → 03-08 | ≈ 2026-10-12 → 11-09 | — |
 | P5b · Client protocol v1 (added) | a versioned `hello`, closed error codes, per-request `cancel`, bounded output to slow clients | — | before P6 and P9 | [P5b](#p5b--client-protocol-v1) |
 | P6 · Web inspector | timeline, machine view, step debugger, decision relabelling (Hologram or LiveView) | 2027-03-08 → 04-12 | ≈ 2026-11-09 → 12-14 | — |
@@ -58,7 +59,8 @@ gantt
   P4d Tier names                 :p4d, 2026-10-12, 1w
   P4e Skills per turn            :done, p4e, 2026-10-04, 1d
   P4j Robustness                 :p4j, after p4e, 1w
-  P4g One-shot mode              :p4g, after p4j, 1w
+  P4k Command effects           :p4k, after p4j, 1w
+  P4g One-shot mode              :p4g, after p4k, 1w
   section Insight
   P5 OCEL, mining, portability   :p5, after p4d, 4w
   P5b Client protocol v1         :p5b, after p5, 1w
@@ -575,6 +577,28 @@ Added 2026-10-17, from a review of Earendil's pi-durable (announced 2026-10-01),
 | pi-ai's model catalogue (1,714 entries, generated from models.dev) as a dependency or a vendored copy | pi-ai | Stale between releases, not per key, and its file layout is an internal of the npm package; OpenRouter's own API is authoritative for the remote tiers (step 3), and step 5 cross-checks it against models.dev, the catalogue's public source, at development time only. It stays a reference: it pointed to the decision models now on OpenRouter ([P4d](#p4d--tier-names) step 3) and records quirks such as models that take no `temperature`. |
 | req_llm for remote chat | — | The OpenRouter path is narrow and tested; a general client would have to be verified for tool ids and caching. For typed decisions, see [PX](#px--libraries-for-the-ecosystem). |
 
+## P4k · Command effects
+
+Added 2026-10-17, from a survey of research and practice on what shell commands do ([command risk](concepts/command-risk.md); sources in [references §8](architecture/references.md#8-shell-command-effects-undo-and-agent-safety)). `Risk` answers three questions with one verdict: is a command destructive, can `/undo` take it back, and may it run again after a crash. Trying `mix xeito.run --tools` showed where the answers part: a deletion undo cannot restore is safe by rule, the undo check crashes on paths inside ignored directories, and allow-listed commands write or run programs through flags (`sort -o`, `rg --pre`, `git show --output=../x`, `git branch -D`).
+
+Each step is test-first: the failing test it names comes before the code.
+
+1. **`Xeito.Undo.covers?/3` never raises.** Test (`test/xeito/undo_test.exs`): `covers?(ws, ["build/cache/x"])` with `build/` ignored is `false`; today git exits 128 and the match fails. A nonzero exit from `git ls-files` means not covered. **Exit:** `rm -f build/cache/*` goes to review by rule, with no raise, and a property test over generated paths holds.
+2. **A literal write is safe only when undo covers it.** Test (`test/xeito/decision_test.exs`): with `build/` ignored and a file over the snapshot limit, `rm -rf build`, `rm build/cache/x` and `rm big.bin` are not `:safe`; `rm notes.txt` (tracked) and `echo x > new.txt` stay `:safe`. `writes_inside?/2` also calls `covers?/3`. **Exit:** the same deletion gets the same verdict however it is spelled.
+3. **No writes or programs through flags.** Test: every command above, each not `:safe` and not `repeatable?/1`. Per-command exclusions for `rg` (`--pre`, `--pre-glob`, `-z`, `--search-zip`, `--hostname-bin`), `sort` (`-o`, `--output`), `tree` (`-o`), `git diff|log|show` (`--output`, `--ext-diff`, `--textconv`) and `git branch` (listing forms only). **Exit:** no example writes a path outside `Risk.written_paths/1` (checked by the oracle of step 6).
+4. **A command table** (Q18 in [11](architecture/11-open-questions.md)). One data module, `Xeito.Decisions.Risk.Commands`, a record per command: a default class (`read`, `write_args`, `write_flag`, `exec`, `network`, `unknown`), flag cases that change it, and which arguments it writes, in the shape of PaSh's annotations. The allow-list, prefixes, exclusions and per-command clauses become lookups in it. **Exit:** existing tests unchanged; every case pinned by an example (mutation testing).
+5. **Three properties, logged.** `Risk.assess/2` returns the effects, written paths, and whether each write is undoable and repeatable; `classify`, `undoable` and `repeatable?/1` derive from it, `Xeito.Effect.replay/1` uses its repeatability, and the decision logs both facts beside the verdict. **Exit:** a run killed during `mkdir -p out && touch out/x` replays it; one killed during `git branch -D x` does not.
+6. **Evaluation: a corpus, asymmetric metrics, an oracle** ([command risk §6](concepts/command-risk.md#6-evaluation-method)).
+   - Examples run in named fixture workspaces (tracked, untracked, an ignored directory, a big file, a symlink outside, secrets, no git), labelled for verdict, undoability and repeatability. Sources: the tests, NL2Bash (MIT), benchmark tasks, flag mutations of safe commands, and Xeito's own log; commands mined from the log stay in the private companion repository.
+   - `Xeito.Decision.Eval` gains false-safe rate, review burden and an expected cost from an asymmetric matrix; Risk's gate is a false-safe rate of zero for rules and pipeline, with expected cost not rising. The model is evaluated as review against forbidden, since it can never make a command safe.
+   - An oracle (`:oracle` tag) runs each non-forbidden example in a throwaway workspace with the network cut: run, undo, compare; run twice, compare.
+   - **Exit:** `mix xeito.eval risk` reports the new metrics with no false-safe; the oracle passes on every fixture example; the report is in `bench/decisions`. Lands before step 4, as its regression net.
+7. **Later: review the observed effects** (Q17). At the `contained` level, a reviewed command runs first in an overlay, as `try` does, and the human sees what it changed before it is applied or discarded. The network stays outside. **Exit:** a reviewed `make clean` shows its deletions before it runs.
+
+Order: 1 and 2 (bugs), then 3; 6 before 4; 7 waits for the `contained` level.
+
+**Exit:** no command in the corpus is called safe that is labelled otherwise, by the rules or the pipeline; the oracle passes on every example with a fixture; the same deletion gets the same verdict however it is spelled.
+
 ## P5 · OCEL export and process mining (≈4 weeks)
 
 1. Validate the SQLite layout against the OCEL 2.0 spec, and add JSON export.
@@ -752,5 +776,6 @@ For each planned or hand-written part, whether a library on Hex would serve bett
 | Hologram is too immature for the inspector | The P6 spike includes a LiveView fallback. Both are JS-free for us. |
 | Small CPU models are not accurate enough | The cascade covers the gap. Measure in P2 before building P3 on assumptions. |
 | ROCm instability on consumer AMD GPUs | Keep a llama.cpp Vulkan build as a fallback. |
+| A command called safe by rule destroys what undo cannot restore | Writes are safe only when undo covers them; the rules are measured for false-safe answers against an oracle that runs and undoes commands ([P4k](#p4k--command-effects)). |
 | Machines feel rigid for exploratory work | The free chat machine (P4.2) is always available, and it is still logged and mined. |
 | Scope creep toward a "platform" | Rule 6 in [01](architecture/01-principles.md): new behaviour is a machine, not a feature. |
