@@ -27,6 +27,7 @@ defmodule Xeito.Machines.Chat do
     `choosing_skill`; it is suggested in the turn's user message, never in the system prompt.
   - `tools: false`: a plain answer with no tools; `tools: [name]`: only those tools.
   - `context`: the context window in tokens (default `Chat.Request`'s `@default_context`).
+  - `format`: a JSON Schema the answers (`thinking`, `wrapping_up`) must match.
 
   Output: ends in `answered` with `ctx.answer` and `ctx.turn` (the turn's full message list,
   system prompt first), or in `failed` with `ctx.error`.
@@ -156,10 +157,14 @@ defmodule Xeito.Machines.Chat do
   defdelegate default_system, to: Request
 
   @doc false
-  def ask_model(ctx), do: [Request.chat(ctx, Request.outgoing(ctx), tools: Tools.names_for(ctx))]
+  def ask_model(ctx), do: [Request.chat(ctx, Request.outgoing(ctx), [tools: Tools.names_for(ctx)] ++ format(ctx))]
 
   @doc false
-  def ask_wrap_up(ctx), do: [Request.chat(ctx, Request.outgoing(ctx) ++ [Request.wrap_up(ctx)], tools: false)]
+  def ask_wrap_up(ctx),
+    do: [Request.chat(ctx, Request.outgoing(ctx) ++ [Request.wrap_up(ctx)], [tools: false] ++ format(ctx))]
+
+  defp format(%{format: schema}), do: [format: schema]
+  defp format(_ctx), do: []
 
   @doc false
   def ask_summary(ctx) do

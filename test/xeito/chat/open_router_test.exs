@@ -97,6 +97,18 @@ defmodule Xeito.Chat.OpenRouterTest do
       assert body.reasoning == %{effort: "low"}
     end
 
+    test "an answer format is a strict JSON Schema; thinking on or off, unless an effort is set" do
+      schema = %{"type" => "object"}
+
+      assert OpenRouter.body([], [], model: "m/x", format: schema).response_format ==
+               %{type: "json_schema", json_schema: %{name: "answer", strict: true, schema: schema}}
+
+      assert OpenRouter.body([], [], model: "m/x", think: true).reasoning == %{enabled: true}
+      assert OpenRouter.body([], [], model: "m/x", think: false).reasoning == %{enabled: false}
+      assert OpenRouter.body([], [], model: "m/x", think: false, reasoning: "low").reasoning == %{effort: "low"}
+      refute Map.has_key?(OpenRouter.body([], [], model: "m/x"), :response_format)
+    end
+
     test "Anthropic models cache the conversation's prefix" do
       assert OpenRouter.body([], [], model: "anthropic/claude-x").cache_control == %{type: "ephemeral"}
     end

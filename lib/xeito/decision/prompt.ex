@@ -2,7 +2,7 @@ defmodule Xeito.Decision.Prompt do
   @moduledoc """
   Renders a decision type and a normalised input for each backend:
 
-    * `messages/2` — system and user chat messages for generative tiers
+    * `messages/2` — system and user chat messages for generative tiers (`instructions/1` first)
     * `json_schema/1` — `{"value": enum}`, for grammar-constrained decoding
     * `system_one/3` — a Jev-compatible `/v1/systemone` request with one `choice` question
 
@@ -14,17 +14,21 @@ defmodule Xeito.Decision.Prompt do
   @doc "Chat messages for a generative tier."
   @spec messages(Type.t(), map()) :: [map()]
   def messages(%Type{} = type, input) do
+    system = "You make one typed decision.\n" <> instructions(type)
+    [%{role: "system", content: system}, %{role: "user", content: render_input(type, input)}]
+  end
+
+  @doc "The decision, its options and the shape of the answer, as text for a model."
+  @spec instructions(Type.t()) :: String.t()
+  def instructions(%Type{} = type) do
     options = Enum.map_join(type.values, "\n", fn {value, desc} -> "- #{value}: #{desc}" end)
 
-    system = """
-    You make one typed decision.
+    """
     Decision: #{type.instructions}
     Options:
     #{options}
     Answer with JSON only: {"value": "<one of the options>"}\
     """
-
-    [%{role: "system", content: system}, %{role: "user", content: render_input(type, input)}]
   end
 
   @doc "The input as `name: value` lines, in declaration order."

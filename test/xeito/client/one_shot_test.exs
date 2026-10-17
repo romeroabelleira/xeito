@@ -23,6 +23,18 @@ defmodule Xeito.Client.OneShotTest do
       assert %{session: "ses-1", socket: "/s"} = parse!(~w(--session ses-1 --socket /s))
     end
 
+    test "the answer format, tier, model, sampling and thinking; dry runs and the skill listing" do
+      opts = parse!(~w(--as triage --tier remote --model m/x -t 0.3 --think))
+      assert %{as: "triage", tier: "remote", model: "m/x", temperature: 0.3, think: true} = opts
+      assert %{think: nil, temperature: nil, as: nil, dry_run: false, list: false, print_skill: nil} = parse!([])
+      assert %{think: false} = parse!(~w(--no-think))
+      assert %{temperature: 1.0} = parse!(~w(--temperature 1))
+      assert %{dry_run: true} = parse!(~w(--dry-run))
+      assert %{dry_run: true} = parse!(~w(--print-prompt))
+      assert %{list: true} = parse!(~w(-l))
+      assert %{print_skill: "greet"} = parse!(~w(--print-skill greet))
+    end
+
     test "--tools alone allows all of them, --tools=LIST those listed" do
       assert %{tools: true, words: ["text"]} = parse!(~w(--tools text))
       assert %{tools: ["read", "bash"]} = parse!(~w(--tools=read,bash))
@@ -59,6 +71,52 @@ defmodule Xeito.Client.OneShotTest do
 
     assert OneShot.prompt_request("ses-1", "hi", parse!([])) ==
              %{"cmd" => "prompt", "session" => "ses-1", "text" => "hi", "tools" => false}
+
+    assert %{"as" => "triage", "tier" => "local", "model" => "m", "temperature" => 0.1, "think" => false} =
+             OneShot.prompt_request("ses-1", "hi", parse!(~w(--as triage --tier local --model m -t 0.1 --no-think)))
+
+    assert %{"as" => %{"type" => "object"}} =
+             OneShot.prompt_request("ses-1", "hi", %{parse!([]) | as: %{"type" => "object"}})
+
+    assert %{"dry_run" => true} = OneShot.prompt_request("ses-1", "hi", parse!(~w(--dry-run)))
+  end
+
+  test "schema/1: a JSON Schema file's text, decoded, or why not" do
+    assert OneShot.schema(~s({"type": "object"})) == {:ok, %{"type" => "object"}}
+    assert OneShot.schema("[1]") == {:error, "--as: a JSON Schema file holds a JSON object"}
+    assert OneShot.schema("nope") == {:error, "--as: the file is not JSON"}
+  end
+
+  test "dry_run/2: the request as the model would get it, or as JSON" do
+    request = %{
+      "tier" => "local",
+      "model" => "m1",
+      "tools" => [],
+      "format" => nil,
+      "messages" => [%{"role" => "system", "content" => "S"}, %{"role" => "user", "content" => "U\n"}]
+    }
+
+    assert OneShot.dry_run(request, parse!([])) ==
+             "── tier local · model m1 · tools: none\n── system\nS\n── user\nU\n"
+
+    with_more = %{request | "tools" => ["read", "bash"], "format" => %{"type" => "object"}}
+
+    assert OneShot.dry_run(with_more, parse!([])) =~
+             ~s(── tier local · model m1 · tools: read, bash · answer format: {"type":"object"}\n)
+
+    assert request |> OneShot.dry_run(parse!(~w(--json))) |> JSON.decode!() == request
+  end
+
+  test "skill_list/2: each skill with its layer and description" do
+    skills = [
+      %{name: "greet", description: "Greet the user.", dir: "/w/.agents/skills/greet"},
+      %{name: "summarize", description: "Summarize text.", dir: "/home/u/.agents/skills/summarize"}
+    ]
+
+    assert OneShot.skill_list(skills, "/w") ==
+             "greet      project  Greet the user.\nsummarize  user     Summarize text.\n"
+
+    assert OneShot.skill_list([], "/w") == "no skills in /w/.agents/skills or ~/.agents/skills\n"
   end
 
   test "stream?/2: as asked, else when stdout is a terminal; never for extracts or JSON" do
@@ -68,6 +126,7 @@ defmodule Xeito.Client.OneShotTest do
     refute OneShot.stream?(parse!(~w(--no-stream)), true)
     refute OneShot.stream?(parse!(~w(-s --extract)), true)
     refute OneShot.stream?(parse!(~w(-s --json)), true)
+    refute OneShot.stream?(parse!(~w(-s --as triage)), true)
   end
 
   test "extract/2: the fenced code blocks of an answer, or only the last" do
@@ -131,6 +190,24 @@ defmodule Xeito.Client.OneShotTest do
       assert {:write, "f.txt", "code\n"} in actions
     end
 
+    test "--as: an answer that is not JSON exits 1, and says so" do
+      actions = events(parse!(~w(--as triage)), [selected(), finished("flaky, I think")])
+      assert err(actions) == "✗ the answer is not JSON\n"
+      assert List.last(actions) == {:done, 1}
+      assert out(actions) == ""
+
+      assert [%{"event" => "result"}] =
+               ~w(--as triage --json)
+               |> parse!()
+               |> events([finished("no")])
+               |> out()
+               |> String.split("\n", trim: true)
+               |> Enum.map(&JSON.decode!/1)
+               |> Enum.filter(&(&1["event"] == "result"))
+
+      assert List.last(events(parse!(~w(--as triage)), [selected(), finished(~s({"value": "flaky"}))])) == {:done, 0}
+    end
+
     test "a turn that did not finish normally exits 1 and says why on stderr" do
       actions = events(parse!([]), [selected(), finished("Stopped.", "failed")])
       assert err(actions) =~ "✗ answered"
@@ -180,11 +257,12 @@ defmodule Xeito.Client.OneShotTest do
         "run" => @run,
         "attrs" => %{
           "kind" => "chat",
-          "result" => %{"model" => "m1", "tokens_in" => 100, "tokens_out" => 10, "usd" => 0.5}
+          "result" => %{"model" => "m1", "tier" => "local", "tokens_in" => 100, "tokens_out" => 10, "usd" => 0.5}
         }
       }
 
-      workspace = %{"event" => "workspace", "attrs" => %{"chat" => %{"tier" => "local"}}}
+      # The session's chat tier, not necessarily the turn's.
+      workspace = %{"event" => "workspace", "attrs" => %{"chat" => %{"tier" => "remote"}}}
       actions = events(parse!(~w(--json)), [selected(), delta("Hi"), chat, workspace, finished("Hi")])
       lines = actions |> out() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
 

@@ -7,12 +7,13 @@ defmodule Xeito.Chat do
     * `:openrouter` backend: `Xeito.Chat.OpenRouter`; each call must pass `Xeito.Allowance.verdict/1`
       (run budget `max_usd:`, key allowance) and its cost is charged to `run:` and the key
     * calls go through the tier's capacity queue (`Xeito.Tiers.Queue`)
-    * thinking is off unless `cfg[:think]`
+    * thinking is off unless `cfg[:think]`; `cfg[:format]`, a JSON Schema, constrains the answer
+    * the reply says its `tier`
 
   Each streamed text chunk goes to `on_delta`; the call returns the complete message:
 
       {:ok, %{content: "...", tool_calls: [%{name: "bash", arguments: %{...}}],
-              model: "...", tokens_in: 812, tokens_out: 64, latency_ms: 2140,
+              model: "...", tier: :local, tokens_in: 812, tokens_out: 64, latency_ms: 2140,
               first_token_ms: 410}}
   """
 
@@ -44,8 +45,10 @@ defmodule Xeito.Chat do
   @spec tier(keyword()) :: atom()
   def tier(overrides), do: Keyword.get_lazy(overrides, :tier, fn -> Application.get_env(:xeito, :chat_tier, :local) end)
 
-  defp chat(:ollama, tier, {messages, tools}, cfg, on_delta),
-    do: Queue.run(tier, fn -> request(messages, tools, cfg, on_delta) end)
+  defp chat(:ollama, tier, {messages, tools}, cfg, on_delta) do
+    with {:ok, message} <- Queue.run(tier, fn -> request(messages, tools, cfg, on_delta) end),
+         do: {:ok, Map.put(message, :tier, tier)}
+  end
 
   defp chat(:openrouter, tier, {messages, tools}, cfg, on_delta) do
     price = Allowance.model_price(cfg)
@@ -87,16 +90,7 @@ defmodule Xeito.Chat do
     started = System.monotonic_time(:millisecond)
     model = Keyword.get(cfg, :chat_model, Keyword.fetch!(cfg, :model))
 
-    body = %{
-      model: model,
-      # Messages may carry Xeito's own bookkeeping (`ref`, `about`); Ollama gets its fields only.
-      messages: Enum.map(messages, &Map.take(&1, [:role, :content, :tool_calls, :tool_name])),
-      tools: tools,
-      stream: true,
-      think: Keyword.get(cfg, :think, false),
-      options: Backends.context_options(cfg, %{temperature: Keyword.get(cfg, :temperature, 0.2)}),
-      keep_alive: Keyword.get(cfg, :keep_alive, "10m")
-    }
+    body = body(model, messages, tools, cfg)
 
     Process.put(:xeito_chat, %{
       buffer: "",
@@ -134,6 +128,21 @@ defmodule Xeito.Chat do
     end
   after
     Process.delete(:xeito_chat)
+  end
+
+  defp body(model, messages, tools, cfg) do
+    body = %{
+      model: model,
+      # Messages may carry Xeito's own bookkeeping (`ref`, `about`); Ollama gets its fields only.
+      messages: Enum.map(messages, &Map.take(&1, [:role, :content, :tool_calls, :tool_name])),
+      tools: tools,
+      stream: true,
+      think: Keyword.get(cfg, :think, false),
+      options: Backends.context_options(cfg, %{temperature: Keyword.get(cfg, :temperature, 0.2)}),
+      keep_alive: Keyword.get(cfg, :keep_alive, "10m")
+    }
+
+    if cfg[:format], do: Map.put(body, :format, cfg[:format]), else: body
   end
 
   # NDJSON: one JSON object per line; chunks can split lines.

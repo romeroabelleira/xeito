@@ -6,7 +6,9 @@ defmodule Xeito.Client.OneShot do
   - `text/3` is the request: the argument words, then stdin, separated by a blank line.
   - `open_request/1` and `prompt_request/3` are the API requests: a fresh session, the
     directory's last (`--continue`) or a given one (`--session`); a one-shot prompt, with tools
-    off unless `--tools` allows them.
+    off unless `--tools` allows them, and its answer format, tier, model, sampling and thinking.
+  - `dry_run/2` renders the first model request the daemon would send (`--dry-run`), and
+    `skill_list/2` the skills seen from a directory (`--list`).
   - `event/2` folds one daemon event (string keys) into actions for the task to perform:
     `{:stdout, iodata}`, `{:stderr, iodata}`, `{:request, map}`, `{:write, path, text}` and
     `{:done, exit_code}`, last.
@@ -15,7 +17,8 @@ defmodule Xeito.Client.OneShot do
   when the turn finishes, always ending in a newline. With `--json`, stdout gets every event as
   a JSON line instead, then a `result` line with the answer, run, status, chat tier, model,
   tokens and cost. Notices, errors and tool calls go to stderr. A review is denied, as no one
-  is there to answer it, unless `--yes`. The exit code is 0 for a turn that ended `done`, else 1.
+  is there to answer it, unless `--yes`. The exit code is 0 for a turn that ended `done`, else 1;
+  with `--as`, also 1 when the answer is not JSON.
   """
 
   alias Xeito.Client.Render
@@ -29,6 +32,14 @@ defmodule Xeito.Client.OneShot do
           extract: :all | :last | nil,
           json: boolean(),
           tools: boolean() | [String.t()],
+          as: String.t() | map() | nil,
+          tier: String.t() | nil,
+          model: String.t() | nil,
+          temperature: float() | nil,
+          think: boolean() | nil,
+          dry_run: boolean(),
+          list: boolean(),
+          print_skill: String.t() | nil,
           yes: boolean(),
           continue: boolean(),
           session: String.t() | nil,
@@ -65,6 +76,15 @@ defmodule Xeito.Client.OneShot do
     extract_last: :boolean,
     json: :boolean,
     tools: :string,
+    as: :string,
+    tier: :string,
+    model: :string,
+    temperature: :float,
+    think: :boolean,
+    dry_run: :boolean,
+    print_prompt: :boolean,
+    list: :boolean,
+    print_skill: :string,
     yes: :boolean,
     continue: :boolean,
     session: :string,
@@ -80,7 +100,7 @@ defmodule Xeito.Client.OneShot do
     # `--tools` alone allows all of them; `--tools=LIST` takes a value, so it cannot eat a word.
     args = Enum.map(args, &if(&1 == "--tools", do: "--tools=all", else: &1))
 
-    case OptionParser.parse(args, strict: @switches, aliases: [s: :stream, o: :out]) do
+    case OptionParser.parse(args, strict: @switches, aliases: [s: :stream, o: :out, t: :temperature, l: :list]) do
       {parsed, words, []} -> with :ok <- exclusive(parsed), do: options(parsed, words)
       {_parsed, _words, [{option, _} | _]} -> {:error, "unknown option #{option}"}
     end
@@ -105,6 +125,14 @@ defmodule Xeito.Client.OneShot do
        extract: extract(parsed),
        json: Keyword.get(parsed, :json, false),
        tools: tools(parsed[:tools]),
+       as: parsed[:as],
+       tier: parsed[:tier],
+       model: parsed[:model],
+       temperature: parsed[:temperature],
+       think: parsed[:think],
+       dry_run: Keyword.get(parsed, :dry_run, false) or Keyword.get(parsed, :print_prompt, false),
+       list: Keyword.get(parsed, :list, false),
+       print_skill: parsed[:print_skill],
        yes: Keyword.get(parsed, :yes, false),
        continue: Keyword.get(parsed, :continue, false),
        session: parsed[:session],
@@ -152,20 +180,67 @@ defmodule Xeito.Client.OneShot do
     end
   end
 
-  @doc "The API request for the one-shot turn of `text` in `session`."
+  @doc "The API request for the one-shot turn of `text` in `session`, or for its dry run."
   @spec prompt_request(String.t(), String.t(), opts()) :: map()
   def prompt_request(session, text, opts) do
-    %{"cmd" => "prompt", "session" => session, "text" => text, "tools" => opts.tools}
-    |> put_set("skill", opts.skill)
-    |> put_set("machine", opts.machine)
+    fields =
+      for key <- [:skill, :machine, :as, :tier, :model, :temperature, :think],
+          opts[key] != nil,
+          do: {to_string(key), opts[key]}
+
+    request =
+      Map.merge(%{"cmd" => "prompt", "session" => session, "text" => text, "tools" => opts.tools}, Map.new(fields))
+
+    if opts.dry_run, do: Map.put(request, "dry_run", true), else: request
   end
 
-  defp put_set(map, _key, nil), do: map
-  defp put_set(map, key, value), do: Map.put(map, key, value)
+  @doc "A JSON Schema file's text (`--as FILE`), decoded, or why it is not one."
+  @spec schema(String.t()) :: {:ok, map()} | {:error, String.t()}
+  def schema(text) do
+    case JSON.decode(text) do
+      {:ok, %{} = schema} -> {:ok, schema}
+      {:ok, _other} -> {:error, "--as: a JSON Schema file holds a JSON object"}
+      {:error, _} -> {:error, "--as: the file is not JSON"}
+    end
+  end
 
-  @doc "Whether to stream: as asked, else when stdout is a terminal; never for extracts or JSON."
+  @doc "The first model request of a dry run (the API's `request`), as the model would get it, or as JSON."
+  @spec dry_run(map(), opts()) :: String.t()
+  def dry_run(request, %{json: true}), do: JSON.encode!(request) <> "\n"
+
+  def dry_run(request, _opts) do
+    header =
+      "── tier #{request["tier"]} · model #{request["model"]} · tools: #{tool_names(request["tools"])}#{format_note(request["format"])}\n"
+
+    header <> Enum.map_join(request["messages"], fn m -> "── #{m["role"]}\n" <> newline(m["content"] || "") end)
+  end
+
+  defp tool_names([]), do: "none"
+  defp tool_names(names), do: Enum.join(names, ", ")
+
+  defp format_note(nil), do: ""
+  defp format_note(schema), do: " · answer format: " <> JSON.encode!(schema)
+
+  @doc "The skills seen from `cwd`, one line each: name, layer (`project` or `user`) and description."
+  @spec skill_list([map()], Path.t()) :: String.t()
+  def skill_list([], cwd), do: "no skills in #{Path.join(cwd, ".agents/skills")} or ~/.agents/skills\n"
+
+  def skill_list(skills, cwd) do
+    project = Path.join(cwd, ".agents/skills") <> "/"
+    rows = for skill <- skills, do: [skill.name, layer(skill.dir, project), skill.description]
+    width = rows |> Enum.map(&String.length(hd(&1))) |> Enum.max()
+
+    Enum.map_join(rows, fn [name, layer, description] ->
+      "#{String.pad_trailing(name, width)}  #{String.pad_trailing(layer, 7)}  #{description}\n"
+    end)
+  end
+
+  defp layer(dir, project), do: if(String.starts_with?(dir, project), do: "project", else: "user")
+
+  @doc "Whether to stream: as asked, else when stdout is a terminal; never for extracts, JSON or an answer format."
   @spec stream?(opts(), boolean()) :: boolean()
   def stream?(%{json: true}, _tty), do: false
+  def stream?(%{as: as}, _tty) when as != nil, do: false
   def stream?(%{extract: extract}, _tty) when extract != nil, do: false
   def stream?(%{stream: nil}, tty), do: tty
   def stream?(%{stream: stream}, _tty), do: stream
@@ -189,10 +264,8 @@ defmodule Xeito.Client.OneShot do
     {json(fold, event) ++ actions(fold, event), root(fold, event)}
   end
 
-  defp count(fold, %{"event" => "workspace", "attrs" => %{"chat" => %{"tier" => tier}}}), do: %{fold | tier: tier}
-
   defp count(fold, %{"event" => "effect_completed", "attrs" => %{"kind" => "chat", "result" => r}} = e),
-    do: %{fold | usage: StatusBar.count(fold.usage, e), model: r["model"] || fold.model}
+    do: %{fold | usage: StatusBar.count(fold.usage, e), model: r["model"] || fold.model, tier: r["tier"] || fold.tier}
 
   defp count(fold, event), do: %{fold | usage: StatusBar.count(fold.usage, event)}
 
@@ -246,15 +319,28 @@ defmodule Xeito.Client.OneShot do
   defp what(%{"tool" => tool}), do: tool
   defp what(_call), do: "the step"
 
+  # An answer that is not JSON, under `--as`, is neither printed nor written.
   defp finished(fold, attrs, event) do
     answer = attrs["answer"] || ""
     output = output(fold.opts, answer)
-    code = if to_string(attrs["status"]) == "done", do: 0, else: 1
 
-    printed(fold, output, attrs) ++
-      if(code == 0, do: [], else: stderr(Render.line(event))) ++
-      if(fold.opts.out, do: [{:write, fold.opts.out, output}], else: []) ++ [{:done, code}]
+    cond do
+      to_string(attrs["status"]) != "done" ->
+        printed(fold, output, attrs) ++ stderr(Render.line(event)) ++ written(fold.opts, output) ++ [{:done, 1}]
+
+      fold.opts.as != nil and match?({:error, _}, JSON.decode(answer)) ->
+        result_line(fold, attrs) ++ [{:stderr, "✗ the answer is not JSON\n"}, {:done, 1}]
+
+      true ->
+        printed(fold, output, attrs) ++ written(fold.opts, output) ++ [{:done, 0}]
+    end
   end
+
+  defp written(%{out: nil}, _output), do: []
+  defp written(%{out: path}, output), do: [{:write, path, output}]
+
+  defp result_line(%{opts: %{json: true}} = fold, attrs), do: printed(fold, "", attrs)
+  defp result_line(_fold, _attrs), do: []
 
   defp output(%{extract: nil}, answer), do: newline(answer)
   defp output(%{extract: which}, answer), do: extract(answer, which)

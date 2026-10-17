@@ -131,6 +131,9 @@ One request, as a Unix filter: `mix xeito.run` sends the text from its arguments
 git diff | mix xeito.run "review this diff" -o review.md
 echo "some notes" | mix xeito.run --skill summarize
 mix xeito.run --json "say ok" | tail -1      # the result: answer, run, tier, tokens, cost
+mix xeito.run --as triage "checkout_test fails: connection refused to localhost:5432"
+mix xeito.run --dry-run --skill summarize "x"  # the request a real call would send
+mix xeito.run --list                           # the skills seen from here, project or user
 ```
 
 ## 5. Everyday examples

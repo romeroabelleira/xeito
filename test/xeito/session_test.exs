@@ -77,6 +77,14 @@ defmodule Xeito.SessionTest do
     end
   end
 
+  test "dry_run/3: the first model request of a one-shot turn, sent nowhere", %{id: id} do
+    assert {:ok, %{messages: [%{role: "system"}, %{role: "user", content: "hi"}], tools: []}} =
+             Session.dry_run(id, "hi", [])
+
+    refute_receive {:xeito, _, %{type: "prompt"}}, 200
+    assert {:error, "unknown machine" <> _} = Session.dry_run(id, "hi", machine: "nope")
+  end
+
   test "close/1 stops an idle session normally", %{id: id} do
     [{pid, _}] = Registry.lookup(Xeito.SessionRegistry, id)
     ref = Process.monitor(pid)

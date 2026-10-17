@@ -188,20 +188,30 @@ defmodule Xeito.Api.Connection do
     end
   end
 
-  defp session_cmd("prompt", id, req) do
-    if one_shot?(req),
-      do: result(Session.one_shot(id, req["text"] || "", one_shot_opts(req))),
-      else: result(Session.prompt(id, req["text"] || "", req["request_id"]))
-  end
-
+  defp session_cmd("prompt", id, req), do: prompt(id, req, req["text"] || "")
   defp session_cmd(cmd, id, req) when cmd in ~w(approve deny), do: result(answer(cmd, id, req))
   defp session_cmd(cmd, id, _req), do: query(cmd, id)
 
+  defp prompt(id, %{"dry_run" => true} = req, text), do: dry_run(Session.dry_run(id, text, one_shot_opts(req)))
+
+  defp prompt(id, req, text) do
+    if one_shot?(req),
+      do: result(Session.one_shot(id, text, one_shot_opts(req))),
+      else: result(Session.prompt(id, text, req["request_id"]))
+  end
+
   defp close(id), do: if(exists?(id), do: result(Session.close(id)), else: %{ok: false, error: "no such session"})
 
-  defp one_shot?(req), do: Enum.any?(~w(skill machine tools), &Map.has_key?(req, &1))
+  @one_shot ~w(skill machine tools as tier model temperature think)
 
-  defp one_shot_opts(req), do: [skill: req["skill"], machine: req["machine"], tools: Map.get(req, "tools", false)]
+  defp one_shot?(req), do: Enum.any?(@one_shot, &Map.has_key?(req, &1))
+
+  defp one_shot_opts(req) do
+    for key <- @one_shot, Map.has_key?(req, key), do: {String.to_existing_atom(key), req[key]}
+  end
+
+  defp dry_run({:ok, request}), do: %{ok: true, request: request}
+  defp dry_run(error), do: result(error)
 
   # `approve` with `"allow": "session" | "always"` also remembers the command (`Xeito.Session.Allowed`).
   defp answer("approve", id, req), do: Session.approve(id, req["allow"])

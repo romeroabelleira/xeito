@@ -134,7 +134,7 @@ defmodule Xeito.Effects.Local do
   defp chat(%Effect{args: args} = effect, opts) do
     run = streamed_to(args, opts)
     on_delta = &Xeito.Events.delta(run, effect.id, &1)
-    chat = Keyword.put(chat_options(opts), :on_retry, &retrying(run, effect.id, &1))
+    chat = opts |> chat_options() |> Keyword.put(:on_retry, &retrying(run, effect.id, &1)) |> with_format(args)
 
     case Chat.complete(args.messages, specs(args.tools), chat, on_delta) do
       {:ok, message} -> message
@@ -157,6 +157,9 @@ defmodule Xeito.Effects.Local do
     policy = Policy.effective(Keyword.take(Keyword.get(opts, :decider, []), [:policy]))
     Keyword.merge([run: opts[:run_id], max_usd: policy.max_usd_per_run], Keyword.get(opts, :chat, []))
   end
+
+  defp with_format(chat, %{format: schema}), do: Keyword.put(chat, :format, schema)
+  defp with_format(chat, _args), do: chat
 
   defp specs(names) when is_list(names), do: Tools.specs(names)
   defp specs(true), do: Tools.specs()

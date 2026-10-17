@@ -84,6 +84,15 @@ defmodule Xeito.DecisionTest do
       assert schema["additionalProperties"] == false
     end
 
+    test "the instructions name the decision, its options and the answer's shape; a tier gets them as its system prompt" do
+      type = Decision.type!(Triage)
+      text = Prompt.instructions(type)
+      assert text =~ ~r/\ADecision: .+\nOptions:\n- flaky: /
+      assert String.ends_with?(text, ~s(\nAnswer with JSON only: {"value": "<one of the options>"}))
+      assert [%{role: "system", content: system}, _] = Prompt.messages(type, %{test: "t", output: "o"})
+      assert system == "You make one typed decision.\n" <> text
+    end
+
     test "system_one requests pin the model and name the question after the type" do
       body =
         Prompt.system_one(

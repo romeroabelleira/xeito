@@ -59,9 +59,17 @@ defmodule Mix.Tasks.Xeito.RunTest do
 
   defp run(ctx, args, stdin \\ "") do
     args = ["--socket", ctx.socket, "--cwd", ctx.ws | args]
-    err = capture_io(:stderr, fn -> send(self(), {:stdout, capture_io(stdin, fn -> Run.run(args) end)}) end)
+    err = capture_io(:stderr, fn -> send(self(), {:stdout, capture_io(stdin, fn -> exit_code(args) end)}) end)
     assert_received {:stdout, out}
     {out, err}
+  end
+
+  # The exit code goes to the mailbox: `{:exit, code}`.
+  defp exit_code(args) do
+    Run.run(args)
+    send(self(), {:exit, 0})
+  catch
+    :exit, {:shutdown, code} -> send(self(), {:exit, code})
   end
 
   test "text on stdin through a skill: the finished answer alone on stdout, the model without tools", ctx do
@@ -97,6 +105,38 @@ defmodule Mix.Tasks.Xeito.RunTest do
     {out, err} = run(ctx, ["--machine", "shell", "echo hi"])
     assert err =~ "$ echo hi"
     assert out =~ "hi"
+  end
+
+  test "--as: the model's call is constrained to the type; an answer that is not JSON fails", ctx do
+    assert run(ctx, ["--as", "triage", "the test fails"]) == {"", "✗ the answer is not JSON\n"}
+    assert_received {:exit, 1}
+    assert_received {:chat_request, %{"format" => %{"properties" => %{"value" => %{"enum" => ["flaky" | _]}}}}}
+  end
+
+  test "--as FILE: a JSON Schema file", ctx do
+    file = Path.join(ctx.dir, "schema.json")
+    File.write!(file, ~s({"type": "object"}))
+    run(ctx, ["--as", file, "a talk"])
+    assert_received {:chat_request, %{"format" => %{"type" => "object"}}}
+
+    File.write!(file, "not json")
+    assert_raise Mix.Error, "--as: the file is not JSON", fn -> run(ctx, ["--as", file, "a talk"]) end
+  end
+
+  test "--dry-run prints the request and calls no model", ctx do
+    {out, ""} = run(ctx, ["--dry-run", "--skill", "greet", "to Ana"])
+    assert out =~ ~r/\A── tier local · model big · tools: none\n── system\n/
+    assert out =~ "── user\nUse the skill \"greet\""
+    refute_received {:chat_request, _}
+  end
+
+  test "--list and --print-skill read the workspace's skills, without a daemon", ctx do
+    {out, ""} = run(%{ctx | socket: "/nonexistent/x.sock"}, ["--list"])
+    assert out =~ ~r/^greet\s+project\s+Greet\.$/m
+
+    {out, ""} = run(%{ctx | socket: "/nonexistent/x.sock"}, ["--print-skill", "greet"])
+    assert out == "---\nname: greet\ndescription: Greet.\n---\nSay hello.\n"
+    assert_raise Mix.Error, "no skill named \"nope\"", fn -> run(ctx, ["--print-skill", "nope"]) end
   end
 
   test "what the daemon refuses, or a bad option, is an error before anything is sent", ctx do

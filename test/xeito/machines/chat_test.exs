@@ -256,6 +256,14 @@ defmodule Xeito.Machines.ChatTest do
       [later] = Chat.ask_model(ctx(%{turn: turn}))
       assert later.args.messages == turn
     end
+
+    test "a turn with an answer format asks every model call for it; without one, none" do
+      schema = %{"type" => "object"}
+      [effect] = Chat.ask_model(ctx(%{format: schema}))
+      assert effect.args.format == schema
+      [effect] = Chat.ask_model(ctx())
+      refute Map.has_key?(effect.args, :format)
+    end
   end
 
   describe "the step limit after a tool result" do

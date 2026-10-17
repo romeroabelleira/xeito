@@ -110,6 +110,14 @@ defmodule Xeito.Api.ConnectionTest do
     assert %{"ok" => false, "error" => "no skill named \"nope\""} = run.(%{"skill" => "nope"})
     assert %{"ok" => false, "error" => "unknown tool \"fly\"" <> _} = run.(%{"tools" => ["fly"]})
 
+    # The earlier turn is in the conversation; the request ends with this one.
+    assert %{"ok" => true, "request" => %{"messages" => messages} = request} =
+             run.(%{"dry_run" => true, "as" => "triage", "temperature" => 0.5, "think" => true, "model" => "m"})
+
+    assert %{"content" => "true\n\nDecision: " <> _} = List.last(messages)
+    assert %{"format" => %{"type" => "object"}, "tools" => [], "tier" => "local"} = request
+    assert %{"ok" => false, "error" => "nope is not a chat tier" <> _} = run.(%{"tier" => "nope"})
+
     assert %{"ok" => true} = req(client, "close", %{"session" => id})
     eventually(fn -> Registry.lookup(Xeito.SessionRegistry, id) == [] end)
     assert %{"ok" => false, "error" => "no such session"} = req(client, "close", %{"session" => new_id()})

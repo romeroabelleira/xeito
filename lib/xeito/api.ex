@@ -10,8 +10,10 @@ defmodule Xeito.Api do
       {"id": 2, "cmd": "prompt", "session": "ses-…", "text": "the checkout test is red"}
                                     (optional "request_id": a repeat of an admitted one, as a client
                                      retrying after a daemon restart, is answered and ignored;
-                                     "skill", "machine" or "tools": false | true | ["read", …]
-                                     start a one-shot turn, `Xeito.Session.one_shot/3`)
+                                     "skill", "machine", "tools": false | true | ["read", …], "as",
+                                     "tier", "model", "temperature" or "think" start a one-shot
+                                     turn, `Xeito.Session.one_shot/3`; "dry_run": true replies
+                                     with its first model request instead, "request")
       {"id": 3, "cmd": "approve", "session": "ses-…"}       (also "deny"; "allow": "session" or "always"
                                     approves and does not ask about this command again)
       {"id": 4, "cmd": "attach", "session": "ses-…", "cwd": "/path"}

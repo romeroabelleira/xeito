@@ -100,8 +100,9 @@ defmodule Xeito.Effect do
 
   @doc """
   One chat-model turn over `messages` (`Xeito.Chat`). `:tools` is a list of tool names
-  (`Xeito.Tools`), `true` for the core tools (default) or `false` for none. Streamed output is
-  published to `Xeito.Events` as it arrives; the complete message is the result.
+  (`Xeito.Tools`), `true` for the core tools (default) or `false` for none; `:format`, a JSON
+  Schema the answer must match. Streamed output is published to `Xeito.Events` as it arrives;
+  the complete message is the result.
   """
   @spec chat([map()], keyword()) :: t()
   def chat(messages, opts \\ []) do
@@ -115,7 +116,12 @@ defmodule Xeito.Effect do
   # `error:` (request does not fit the window): the runner replies with it instead of calling the model.
   # `quiet:` (e.g. a summary): the reply is not streamed to clients.
   defp chat_args(messages, opts) do
-    args = Map.merge(%{messages: messages, tools: Keyword.get(opts, :tools, true)}, Map.new(Keyword.take(opts, [:quiet])))
+    args =
+      Map.merge(
+        %{messages: messages, tools: Keyword.get(opts, :tools, true)},
+        Map.new(Keyword.take(opts, [:quiet, :format]))
+      )
+
     if Keyword.has_key?(opts, :error), do: Map.put(args, :error, opts[:error]), else: args
   end
 

@@ -14,8 +14,9 @@ defmodule Xeito.Chat.OpenRouter do
       `cfg[:providers]` as `only`.
     * `max_tokens` (default 8192), which also bounds the cost `Xeito.Allowance` plans for.
     * `cache_control` for `anthropic/` models.
-    * `reasoning` and `temperature` only when the tier sets them; with `require_parameters`, a
-      parameter no endpoint takes leaves no endpoint.
+    * `reasoning` (the tier's effort, else `think:` as `enabled`) and `temperature` only when set;
+      with `require_parameters`, a parameter no endpoint takes leaves no endpoint.
+    * `response_format`: a strict JSON Schema, when `format:` sets one.
 
   The result has the shape of `Xeito.Chat.complete/4`'s, plus `usd`, `cached_tokens` and
   `served_by` (`openrouter:<model>@<provider>`).
@@ -105,9 +106,14 @@ defmodule Xeito.Chat.OpenRouter do
     }
     |> put_if(:tools, tools, tools != [])
     |> put_if(:cache_control, %{type: "ephemeral"}, String.starts_with?(model, "anthropic/"))
-    |> put_if(:reasoning, %{effort: cfg[:reasoning]}, cfg[:reasoning] != nil)
+    |> put_if(:reasoning, reasoning(cfg), cfg[:reasoning] != nil or is_boolean(cfg[:think]))
     |> put_if(:temperature, cfg[:temperature], cfg[:temperature] != nil)
+    |> put_if(:response_format, response_format(cfg[:format]), cfg[:format] != nil)
   end
+
+  defp reasoning(cfg), do: if(cfg[:reasoning], do: %{effort: cfg[:reasoning]}, else: %{enabled: cfg[:think]})
+
+  defp response_format(schema), do: %{type: "json_schema", json_schema: %{name: "answer", strict: true, schema: schema}}
 
   defp provider(cfg) do
     then(

@@ -101,6 +101,13 @@ defmodule Xeito.Session do
   @spec one_shot(String.t(), String.t(), keyword()) :: :ok | {:error, :busy | String.t()}
   def one_shot(id, text, opts), do: GenServer.call(via(id), {:when_idle, {:one_shot, text, opts}})
 
+  @doc """
+  The first model request a one-shot turn of `text` with `opts` would send (`Xeito.Session.OneShot.request/3`),
+  sent nowhere.
+  """
+  @spec dry_run(String.t(), String.t(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def dry_run(id, text, opts), do: GenServer.call(via(id), {:dry_run, text, opts})
+
   @doc "Stops an idle session, as its idle timeout would; `{:error, :busy}` while a turn runs."
   @spec close(String.t()) :: :ok | {:error, :busy}
   def close(id), do: GenServer.call(via(id), {:when_idle, :close})
@@ -207,6 +214,7 @@ defmodule Xeito.Session do
     if busy?(s), do: {:reply, {:error, :busy}, s}, else: when_idle(request, s)
   end
 
+  def handle_call({:dry_run, text, opts}, _from, s), do: {:reply, OneShot.request(text, opts, s), s}
   def handle_call(request, from, s), do: handle_request(request, from, %{s | active_at: now()})
 
   defp handle_request({:prompt, text, request_id}, _from, s) do
@@ -243,13 +251,15 @@ defmodule Xeito.Session do
 
   defp when_idle(:close, s), do: {:stop, :normal, :ok, s}
 
+  # The turn's chat options hold for its run only.
   defp when_idle({:one_shot, text, opts}, s) do
-    case OneShot.input(text, opts, s) do
-      {:ok, machine, input, reason} ->
+    case OneShot.prepare(text, opts, s) do
+      {:ok, turn} ->
         log_prompt(String.trim(text), text, nil, s)
         s = %{s | turn: s.turn + 1, prompt: text}
         Notify.emit(s, "prompt", nil, %{"text" => text})
-        {:reply, :ok, start_machine(machine, input, reason, s)}
+        started = start_machine(turn.machine, turn.input, turn.reason, %{s | chat: turn.chat})
+        {:reply, :ok, %{started | chat: s.chat}}
 
       {:error, message} ->
         {:reply, {:error, message}, s}

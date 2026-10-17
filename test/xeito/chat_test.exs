@@ -36,6 +36,27 @@ defmodule Xeito.ChatTest do
     assert Enum.map(tool_calls, & &1.arguments) == [%{"path" => "a"}, %{"path" => "b"}, %{"_raw" => "not json"}, %{}]
   end
 
+  test "an Ollama call sends the answer format, the model and thinking it is given, and says its tier" do
+    me = self()
+    cfg = answering([])
+
+    Req.Test.stub(:chat_client, fn conn ->
+      {:ok, raw, conn} = Plug.Conn.read_body(conn)
+      send(me, {:body, JSON.decode!(raw)})
+      done = %{"message" => %{"role" => "assistant", "content" => "{}"}, "done" => true}
+      conn |> Plug.Conn.put_resp_content_type("application/x-ndjson") |> Plug.Conn.send_resp(200, JSON.encode!(done))
+    end)
+
+    overrides = cfg ++ [format: %{"type" => "object"}, chat_model: "other", think: true, temperature: 0.7]
+    assert {:ok, %{tier: :local, model: "other"}} = Chat.complete([%{role: "user", content: "hi"}], [], overrides)
+    assert_received {:body, %{"format" => %{"type" => "object"}, "model" => "other", "think" => true} = body}
+    assert body["options"]["temperature"] == 0.7
+
+    assert {:ok, _} = Chat.complete([%{role: "user", content: "hi"}], [], cfg)
+    assert_received {:body, body}
+    refute Map.has_key?(body, "format")
+  end
+
   test "without a configured chat model there is no chat" do
     assert Chat.complete([%{role: "user", content: "hi"}], [], []) == {:error, :chat_model_unavailable}
   end
