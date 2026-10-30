@@ -3,8 +3,9 @@ defmodule Xeito.Session.ChatModel do
   The session's chat tier (`/model`): which tiers can chat, what each holds, and the notices for switching.
 
   `Xeito.Session` keeps the choice in its chat options (`tier:`), which `Xeito.Chat` reads.
-  A remote tier sends the conversation and every file the model reads to OpenRouter, so only a
-  person chooses it (`/model`, or `XEITO_CHAT_TIER` for every session), never the model.
+  A remote tier sends the conversation and every file the model reads off the machine (to
+  OpenRouter or the Claude API, by its backend), so only a person chooses it (`/model`, or
+  `XEITO_CHAT_TIER` for every session), never the model.
   """
 
   alias Xeito.Tiers
@@ -71,12 +72,14 @@ defmodule Xeito.Session.ChatModel do
     if off_box?(tier),
       do:
         line(tier, cfg, nil) <>
-          "\nThe conversation, and every file the model reads, now leave this machine (OpenRouter, zero data " <>
-          "retention). Spend: up to #{usd(max_usd)} per turn (/budget <usd>); /model local switches back.",
+          "\nThe conversation, and every file the model reads, now leave this machine (#{where(cfg)}). " <>
+          "Spend: up to #{usd(max_usd)} per turn (/budget <usd>); /model local switches back.",
       else: line(tier, cfg, nil)
   end
 
   defp line(tier, cfg, left), do: "chat: #{tier} · #{holds(tier, cfg)}" <> left(left)
+
+  defp where(cfg), do: if(cfg[:backend] == :anthropic, do: "the Claude API", else: "OpenRouter, zero data retention")
 
   defp holds(_tier, nil), do: "not configured"
   defp holds(tier, cfg), do: "#{cfg[:model]}" <> if(off_box?(tier), do: " · off-box", else: "")

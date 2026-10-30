@@ -149,6 +149,57 @@ defmodule Xeito.ChatTest do
     end
   end
 
+  describe "a remote chat tier on the Claude API" do
+    setup do
+      name = :"claude_chat_#{System.unique_integer([:positive])}"
+
+      Req.Test.stub(name, fn conn ->
+        "/v1/messages" = conn.request_path
+
+        events = [
+          %{type: "message_start", message: %{model: "claude-opus-5-5", usage: %{input_tokens: 1_000_000}}},
+          %{type: "content_block_delta", index: 0, delta: %{type: "text_delta", text: "ok"}},
+          %{type: "message_delta", delta: %{stop_reason: "end_turn"}, usage: %{output_tokens: 0}}
+        ]
+
+        body = Enum.map_join(events, &("data: " <> JSON.encode!(&1) <> "\n\n"))
+        conn |> Plug.Conn.put_resp_content_type("text/event-stream") |> Plug.Conn.send_resp(200, body)
+      end)
+
+      run = "claude-run-#{name}"
+      on_exit(fn -> Xeito.Budget.delete(run) end)
+
+      {:ok,
+       run: run,
+       opts: [
+         tier: :remote_frontier,
+         backend: :anthropic,
+         url: "http://api.test",
+         model: "claude-opus-5-5",
+         api_key: "#{name}",
+         plug: {Req.Test, name},
+         run: run,
+         max_usd: 10.0
+       ]}
+    end
+
+    test "answers through the Claude API at the list price, charged to the run; the key has no allowance to read",
+         %{opts: opts, run: run} do
+      assert {:ok, %{content: "ok", usd: usd, tier: :remote_frontier, served_by: "anthropic:claude-opus-5-5"}} =
+               Chat.complete([%{role: "user", content: "hi"}], [], opts)
+
+      assert_in_delta usd, 4.0, 1.0e-6
+      assert_in_delta Xeito.Budget.get(run, :usd), 4.0, 1.0e-6
+      assert Xeito.Allowance.last(opts) == nil
+      assert Xeito.Allowance.remaining(opts) == nil
+    end
+
+    test "the run's budget gates it as it gates OpenRouter", %{opts: opts, run: run} do
+      Xeito.Budget.add(run, :usd, 10.0)
+      assert {:error, {:budget, _}} = Chat.complete([%{role: "user", content: "hi"}], [], opts)
+    end
+  end
+
   test "the chat tier: the session's, else the configured one, else local" do
     assert Chat.tier(tier: :remote) == :remote
     assert Chat.tier([]) == :local

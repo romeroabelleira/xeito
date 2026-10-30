@@ -96,8 +96,8 @@ defmodule Xeito.Tiers.SettingsTest do
     env = %{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_BACKEND" => "openrouter"}
     assert [local: [backend: :openrouter, url: "http://x"]] = tiers(env)
 
-    assert_raise ArgumentError, ~r/XEITO_LOCAL_BACKEND: unknown backend "anthropic"/, fn ->
-      tiers(%{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_BACKEND" => "anthropic"})
+    assert_raise ArgumentError, ~r/XEITO_LOCAL_BACKEND: unknown backend "cohere"/, fn ->
+      tiers(%{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_BACKEND" => "cohere"})
     end
   end
 
@@ -139,5 +139,61 @@ defmodule Xeito.Tiers.SettingsTest do
 
     assert [remote_frontier: cfg] = tiers(env)
     assert cfg[:reasoning] == "high"
+  end
+
+  test "a remote tier on the anthropic backend defaults to the Claude API's URL" do
+    env = %{
+      "XEITO_REMOTE_FRONTIER_BACKEND" => "anthropic",
+      "XEITO_REMOTE_FRONTIER_MODEL" => "claude-opus-5-5",
+      "XEITO_REMOTE_FRONTIER_KEY_FILE" => "op://Private/Xeito Claude API Key/credential"
+    }
+
+    assert tiers(env) == [
+             remote_frontier: [
+               backend: :anthropic,
+               url: "https://api.anthropic.com",
+               model: "claude-opus-5-5",
+               api_key: "key-of-op://Private/Xeito Claude API Key/credential"
+             ]
+           ]
+  end
+
+  test "a remote tier whose key cannot be read is not configured" do
+    env = %{"XEITO_REMOTE_MODEL" => "qwen/qwen3.8-27b", "XEITO_REMOTE_KEY_FILE" => "op://Private/x/credential"}
+    assert Settings.from_env(env, fn _ref -> nil end) == []
+  end
+
+  describe "read_key/2" do
+    import ExUnit.CaptureIO
+
+    test "an op:// reference is read with the 1Password CLI, trimmed" do
+      cmd = fn "op", ["read", "--no-newline", ref], [stderr_to_stdout: true] -> {"key-for-#{ref}\n", 0} end
+      assert Settings.read_key("op://Private/x/credential", cmd) == "key-for-op://Private/x/credential"
+    end
+
+    test "a reference op cannot read gives no key, with a warning" do
+      cmd = fn "op", _args, _opts -> {"[ERROR] connecting to desktop app", 1} end
+
+      assert capture_io(:stderr, fn -> send(self(), {:key, Settings.read_key("op://Private/x/credential", cmd)}) end) =~
+               "connecting to desktop app"
+
+      assert_received {:key, nil}
+    end
+
+    test "op missing altogether gives no key, with a warning" do
+      cmd = fn _, _, _ -> raise ErlangError, original: :enoent end
+
+      assert capture_io(:stderr, fn -> send(self(), {:key, Settings.read_key("op://Private/x/c", cmd)}) end) =~
+               "op read failed"
+
+      assert_received {:key, nil}
+    end
+
+    @tag :tmp_dir
+    test "a path is the file's content, trimmed", %{tmp_dir: dir} do
+      path = Path.join(dir, "k.key")
+      File.write!(path, "secret\n")
+      assert Settings.read_key(path) == "secret"
+    end
   end
 end

@@ -8,7 +8,8 @@ defmodule Xeito.Tiers.ModelsCheck do
   - `compare/3` puts their context window, longest answer, prices, and whether the model takes a
     temperature and tools side by side, names what differs, and warns about tier settings the
     model does not take (a temperature, a reasoning effort).
-  - It only reads and reports; nothing in the daemon depends on models.dev.
+  - It only reads and reports; nothing in the daemon depends on models.dev. A remote tier on
+    another backend (`anthropic`) is left out: OpenRouter does not serve it.
   """
 
   alias Xeito.Backends
@@ -32,7 +33,13 @@ defmodule Xeito.Tiers.ModelsCheck do
   """
   @spec run(keyword(), keyword()) :: [check()]
   def run(tiers, opts \\ []) do
-    case for({tier, cfg} <- tiers, tier in Tiers.off_box(), cfg[:model] && cfg[:url], do: {tier, cfg}) do
+    case for(
+           {tier, cfg} <- tiers,
+           tier in Tiers.off_box(),
+           Tiers.backend(tier, cfg) == :openrouter,
+           cfg[:model] && cfg[:url],
+           do: {tier, cfg}
+         ) do
       [] ->
         []
 

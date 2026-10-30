@@ -52,8 +52,8 @@ Each tier reads the same variables under its own prefix, `XEITO_<TIER>_`, when t
 |---|---|---|
 | `XEITO_LOCAL_URL` | the backend's address; a local tier is configured by it | `http://127.0.0.1:11434` |
 | `XEITO_LOCAL_MODEL` | the model | `qwen3.6:27b` |
-| `XEITO_LOCAL_KEY_FILE` | a file holding the backend's API key | `~/.config/xeito/laya_api_key` |
-| `XEITO_LOCAL_BACKEND` | the API the tier speaks: `ollama`, `openrouter` or `system_one` | (the tier's default) |
+| `XEITO_LOCAL_KEY_FILE` | a file holding the backend's API key, or an `op://` reference the 1Password CLI resolves when the daemon starts | `~/.config/xeito/laya_api_key` |
+| `XEITO_LOCAL_BACKEND` | the API the tier speaks: `ollama`, `openrouter`, `anthropic` (the Claude API directly) or `system_one` | (the tier's default) |
 | `XEITO_LOCAL_CONTEXT` | Ollama: the context window in tokens, sent as `num_ctx` with every request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
 | `XEITO_LOCAL_KEEP_ALIVE` | Ollama: how long the model stays in VRAM after the last request | `5m` (default `10m`) |
 | `XEITO_REMOTE_PROVIDERS`, `XEITO_REMOTE_ZDR` | OpenRouter: providers to pin (comma list); `false` to allow endpoints that retain prompts | `Parasail`; default on |
@@ -69,7 +69,7 @@ Two settings are not per tier:
 
 **Remote tiers are opt-in.** A remote tier is configured only when its model and its key file are both set; an OpenRouter tier's URL defaults to OpenRouter's. One OpenRouter key file can serve both `remote` and `remote_frontier`, but each needs its own `…_MODEL` and `…_KEY_FILE`. Even configured, a remote tier is reached by a decision only where the decision's policy allows off-box tiers, and by chat only once someone chooses it (`/model remote_frontier`, or `XEITO_CHAT_TIER`; [remote chat](USAGE.md#remote-chat)) ([guards on escalation](docs/architecture/04-delegation.md#guards-on-escalation); [spend limits](USAGE.md#spend-limits)). `remote_decision` has no default URL, since no hosted System One model is reachable through OpenRouter.
 
-**Keys are never put in variables.** The `*_KEY_FILE` variables name a file that contains only the key, with mode 0600. For example, with the 1Password CLI:
+**Keys are never put in variables.** The `*_KEY_FILE` variables name a file that contains only the key, with mode 0600, or an `op://` reference that the daemon resolves with the 1Password CLI (`op read`) when it starts, so the key is on disk nowhere; a reference `op` cannot read (the app locked, its CLI integration off) leaves the tier unconfigured, with a warning in the daemon's log. For a file, with the 1Password CLI:
 
 ```bash
 op read "op://Private/OpenRouter/credential" > ~/.config/xeito/openrouter.key && chmod 600 ~/.config/xeito/openrouter.key
@@ -86,6 +86,10 @@ export XEITO_LOCAL_KEEP_ALIVE=5m
 # Off-box, opt-in: uncomment to use a hosted model where policy allows it.
 # export XEITO_REMOTE_MODEL=qwen/qwen3.8-27b
 # export XEITO_REMOTE_KEY_FILE="$HOME/.config/xeito/openrouter.key"
+# The frontier tier on the Claude API directly, with a key the 1Password CLI reads at start.
+# export XEITO_REMOTE_FRONTIER_BACKEND=anthropic
+# export XEITO_REMOTE_FRONTIER_MODEL=claude-opus-5-5
+# export XEITO_REMOTE_FRONTIER_KEY_FILE="op://Private/Claude API/credential"
 ```
 
 ## 4. Recommended local configuration

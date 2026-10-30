@@ -71,7 +71,11 @@ defmodule Xeito.Session.ChatModelTest do
 
     text = ChatModel.switched(:remote_frontier, @configs.remote_frontier, 0.5)
     assert text =~ "anthropic/claude-sonnet-5.5"
-    assert text =~ "leave this machine"
+    assert text =~ "leave this machine (OpenRouter, zero data retention)"
+
+    assert ChatModel.switched(:remote_frontier, [backend: :anthropic, model: "claude-opus-5-5", url: "u"], 0.5) =~
+             "leave this machine (the Claude API)"
+
     assert text =~ "$0.50 per turn"
   end
 end

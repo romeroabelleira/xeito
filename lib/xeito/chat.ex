@@ -4,8 +4,9 @@ defmodule Xeito.Chat do
 
     * tier (`tier/1`): option `tier:`, else `config :xeito, :chat_tier`, else `:local`
     * `:ollama` backend: Ollama `/api/chat`, model `cfg[:chat_model]` or the tier's
-    * `:openrouter` backend: `Xeito.Chat.OpenRouter`; each call must pass `Xeito.Allowance.verdict/1`
-      (run budget `max_usd:`, key allowance) and its cost is charged to `run:` and the key
+    * `:openrouter` backend: `Xeito.Chat.OpenRouter`; `:anthropic`: `Xeito.Chat.Anthropic`. Each call
+      must pass `Xeito.Allowance.verdict/1` (run budget `max_usd:`, key allowance) and its cost is
+      charged to `run:` and the key
     * calls go through the tier's capacity queue (`Xeito.Tiers.Queue`)
     * thinking is off unless `cfg[:think]`; `cfg[:format]`, a JSON Schema, constrains the answer
     * the reply says its `tier`
@@ -20,6 +21,7 @@ defmodule Xeito.Chat do
   alias Xeito.Allowance
   alias Xeito.Backends
   alias Xeito.Budget
+  alias Xeito.Chat.Anthropic
   alias Xeito.Chat.Message
   alias Xeito.Chat.OpenRouter
   alias Xeito.Chat.Window
@@ -50,18 +52,22 @@ defmodule Xeito.Chat do
          do: {:ok, Map.put(message, :tier, tier)}
   end
 
-  defp chat(:openrouter, tier, {messages, tools}, cfg, on_delta) do
+  defp chat(:openrouter, tier, request, cfg, on_delta), do: remote(tier, request, cfg, on_delta, &OpenRouter.complete/4)
+  defp chat(:anthropic, tier, request, cfg, on_delta), do: remote(tier, request, cfg, on_delta, &Anthropic.complete/4)
+
+  defp chat(backend, _tier, _request, _cfg, _on_delta), do: {:error, {:no_chat_backend, backend}}
+
+  # A hosted model: the call is planned against the run's budget and the key's allowance, then charged.
+  defp remote(tier, {messages, tools}, cfg, on_delta, complete) do
     price = Allowance.model_price(cfg)
     cfg = Keyword.put_new(cfg, :max_tokens, answer_limit(price))
 
     with :ok <- plan(messages, tools, cfg, price) do
       tier
-      |> Queue.run(fn -> OpenRouter.complete(messages, tools, cfg, on_delta) end)
+      |> Queue.run(fn -> complete.(messages, tools, cfg, on_delta) end)
       |> charge(tier, cfg)
     end
   end
-
-  defp chat(backend, _tier, _request, _cfg, _on_delta), do: {:error, {:no_chat_backend, backend}}
 
   # The longest answer asked for: 8192 tokens, or less where the model allows less.
   defp answer_limit(%{output: output}) when is_integer(output), do: min(output, 8192)

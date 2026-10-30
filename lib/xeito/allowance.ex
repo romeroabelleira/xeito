@@ -4,8 +4,10 @@ defmodule Xeito.Allowance do
 
     * allowance (`remaining/1`): the smallest of the key's blocking budget or limit and the
       account's credits (`left/2`); fetched at most once a minute per key, lowered by `spent/2`
-      in between; `nil` if unknown (a failed fetch is not cached)
-    * price (`model_price/1`): the model's dearest endpoint, fetched once per model
+      in between; `nil` if unknown (a failed fetch is not cached). The Claude API reports no
+      allowance, so a tier on the `anthropic` backend has `nil`, and only the run's budget gates it
+    * price (`model_price/1`): the model's dearest endpoint, fetched once per model; for the
+      `anthropic` backend, the published list price (`Xeito.Backends.Anthropic.price/1`)
     * gate (`verdict/1`): a call goes ahead while the run's off-box budget is not spent and its
       `worst_case/3` fits in a known allowance
   """
@@ -13,6 +15,7 @@ defmodule Xeito.Allowance do
   use GenServer
 
   alias Xeito.Backends
+  alias Xeito.Backends.Anthropic
 
   @fresh_ms 60_000
 
@@ -114,6 +117,10 @@ defmodule Xeito.Allowance do
   """
   @spec remaining(keyword(), integer()) :: float() | nil
   def remaining(cfg, now \\ now()) do
+    if openrouter?(cfg), do: cached_remaining(cfg, now)
+  end
+
+  defp cached_remaining(cfg, now) do
     k = {cfg[:url], cfg[:api_key]}
 
     case GenServer.call(__MODULE__, {:remaining, k, now}) do
@@ -122,9 +129,14 @@ defmodule Xeito.Allowance do
     end
   end
 
+  # The allowance and the endpoint prices are OpenRouter's; a tier without a backend is one of its.
+  defp openrouter?(cfg), do: Keyword.get(cfg, :backend, :openrouter) == :openrouter
+
   @doc "The last known allowance, without asking OpenRouter; `nil` before the first fetch."
   @spec last(keyword()) :: float() | nil
-  def last(cfg), do: GenServer.call(__MODULE__, {:last, {cfg[:url], cfg[:api_key]}})
+  def last(cfg) do
+    if openrouter?(cfg), do: GenServer.call(__MODULE__, {:last, {cfg[:url], cfg[:api_key]}})
+  end
 
   @doc "Records money spent with the tier's key."
   @spec spent(keyword(), number()) :: :ok
@@ -133,6 +145,10 @@ defmodule Xeito.Allowance do
   @doc "The tier's model's price (`price/1`), fetched once; `nil` if unknown."
   @spec model_price(keyword()) :: map() | nil
   def model_price(cfg) do
+    if openrouter?(cfg), do: endpoint_price(cfg), else: Anthropic.price(cfg[:model])
+  end
+
+  defp endpoint_price(cfg) do
     k = {cfg[:url], cfg[:model]}
 
     case GenServer.call(__MODULE__, {:price, k}) do

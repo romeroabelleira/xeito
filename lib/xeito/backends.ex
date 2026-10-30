@@ -7,6 +7,7 @@ defmodule Xeito.Backends do
   | `:system_one`   | `Xeito.Backends.SystemOne`   | Jev-compatible `/v1/systemone` (e.g. laya-serve)        |
   | `:ollama`       | `Xeito.Backends.Ollama`      | Ollama `/api/chat`, JSON-schema format + logprobs       |
   | `:openrouter`   | `Xeito.Backends.OpenRouter`  | OpenAI-compatible chat completions, JSON schema + logprobs |
+  | `:anthropic`    | `Xeito.Backends.Anthropic`   | the Claude API's `/v1/messages`, JSON schema, no logprobs |
 
   `decide/3` takes a decision type, a normalised input and the tier's configuration, and returns
   the value, a probability per option, the model, latency and cost.
@@ -28,6 +29,7 @@ defmodule Xeito.Backends do
   @callback decide(Type.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
 
   @modules %{
+    anthropic: Xeito.Backends.Anthropic,
     ollama: Xeito.Backends.Ollama,
     openrouter: Xeito.Backends.OpenRouter,
     system_one: Xeito.Backends.SystemOne

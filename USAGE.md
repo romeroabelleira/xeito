@@ -365,13 +365,13 @@ Chat runs on the `local` tier unless a session chooses another:
 
 ```
 > /model                        the chat tiers, and what the OpenRouter key has left
-> /model remote_frontier        this session's chat goes to OpenRouter
+> /model remote_frontier        this session's chat goes off-box, to the tier's backend
 > /model local                  and back
 ```
 
-A remote chat tier sends the conversation, and every file the model reads, to OpenRouter (zero data retention, no training). Only someone typing `/model`, or `XEITO_CHAT_TIER` for every session, chooses it; the model never does. Decisions (intent, skill, Risk) stay on their own tiers.
+A remote chat tier sends the conversation, and every file the model reads, to its backend: OpenRouter (zero data retention, no training) or, with `XEITO_<TIER>_BACKEND=anthropic`, the Claude API directly. Only someone typing `/model`, or `XEITO_CHAT_TIER` for every session, chooses it; the model never does. Decisions (intent, skill, Risk) stay on their own tiers.
 
-Every remote call is planned against the money left. Before a call, Xeito reads the key's allowance from OpenRouter (`GET /api/v1/key` and `/api/v1/credits`, both free, at most once a minute) and the model's price, and makes the call only if its worst case fits: every input token at full price, and the answer at its limit (8192 tokens). After it, OpenRouter's reported cost is charged to the run's budget and subtracted from the allowance. The status bar's budget segment shows the chat model and what the key has left.
+Every remote call is planned against the money left. A tier on the Claude API has no allowance to read: its calls are priced from the published list prices and gated by the run's budget alone. For an OpenRouter tier, before a call, Xeito reads the key's allowance from OpenRouter (`GET /api/v1/key` and `/api/v1/credits`, both free, at most once a minute) and the model's price, and makes the call only if its worst case fits: every input token at full price, and the answer at its limit (8192 tokens). After it, OpenRouter's reported cost is charged to the run's budget and subtracted from the allowance. The status bar's budget segment shows the chat model and what the key has left.
 
 Prompt caching is on for Anthropic models: from the third call of a turn on, the conversation's prefix is read from the cache at a tenth of the input price. Short prompts (a few thousand tokens) are written but not read back, so caching pays off once the system prompt carries a project's `AGENTS.md` and map.
 

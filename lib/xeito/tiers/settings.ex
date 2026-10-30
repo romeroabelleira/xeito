@@ -5,8 +5,10 @@ defmodule Xeito.Tiers.Settings do
   Per tier, under the prefix `XEITO_<TIER>_` (e.g. `XEITO_LOCAL_MODEL`):
 
     * `BACKEND` — the API it speaks (`Xeito.Backends`); default: the tier's (`Xeito.Tiers`)
-    * `URL` — default: OpenRouter's for an OpenRouter tier, none otherwise
-    * `MODEL`, `KEY_FILE` (a file holding the API key)
+    * `URL` — default: OpenRouter's for an OpenRouter tier, the Claude API's for an `anthropic`
+      one, none otherwise
+    * `MODEL`, `KEY_FILE` (a file holding the API key, or an `op://` reference that the 1Password
+      CLI resolves when the daemon starts: `read_key/2`)
     * `CONTEXT` (Ollama `num_ctx`), `KEEP_ALIVE` (Ollama)
     * `PROVIDERS` (OpenRouter: comma list to pin), `ZDR` (OpenRouter: `false` allows endpoints
       that retain prompts; default on), `REASONING` (OpenRouter chat effort, e.g. `low`)
@@ -14,14 +16,16 @@ defmodule Xeito.Tiers.Settings do
   Not per tier (`app_env/1`): `XEITO_CHAT_TIER` (default chat tier) and `XEITO_MAX_USD_PER_RUN`
   (off-box spend limit per run, `Xeito.Policy`).
 
-  A local tier is configured by its URL; a remote tier only when URL, model and key file are all
-  set. An unconfigured tier is left out and never reached. Bad values raise `ArgumentError`.
+  A local tier is configured by its URL; a remote tier only when URL, model and key are all set
+  (a key `op read` cannot give leaves the tier unconfigured, with a warning). An unconfigured
+  tier is left out and never reached. Bad values raise `ArgumentError`.
   """
 
   alias Xeito.Backends
   alias Xeito.Tiers
 
   @openrouter_url "https://openrouter.ai/api"
+  @anthropic_url "https://api.anthropic.com"
 
   @doc "The `config :xeito, :tiers` keyword list for an environment (`System.get_env/0`)."
   @spec from_env(%{String.t() => String.t()}, (String.t() -> String.t())) :: keyword()
@@ -37,14 +41,15 @@ defmodule Xeito.Tiers.Settings do
   defp tier(tier, get, read_key) do
     backend = backend(tier, get.("BACKEND"))
     url = value(get.("URL")) || default_url(backend)
+    api_key = key(value(get.("KEY_FILE")), read_key)
 
-    if configured?(tier, url, value(get.("MODEL")), value(get.("KEY_FILE"))) do
+    if configured?(tier, url, value(get.("MODEL")), api_key) do
       Enum.reject(
         [
           backend: backend,
           url: url,
           model: value(get.("MODEL")),
-          api_key: key(value(get.("KEY_FILE")), read_key),
+          api_key: api_key,
           context: context(get.("CONTEXT")),
           keep_alive: value(get.("KEEP_ALIVE")),
           providers: providers(value(get.("PROVIDERS"))),
@@ -91,8 +96,8 @@ defmodule Xeito.Tiers.Settings do
     end
   end
 
-  defp configured?(tier, url, model, key_file) do
-    if tier in Tiers.off_box(), do: url != nil and model != nil and key_file != nil, else: url != nil
+  defp configured?(tier, url, model, api_key) do
+    if tier in Tiers.off_box(), do: url != nil and model != nil and api_key != nil, else: url != nil
   end
 
   defp backend(tier, {_name, nil}), do: Tiers.backend(tier, [])
@@ -108,6 +113,7 @@ defmodule Xeito.Tiers.Settings do
   end
 
   defp default_url(:openrouter), do: @openrouter_url
+  defp default_url(:anthropic), do: @anthropic_url
   defp default_url(_backend), do: nil
 
   defp key(nil, _read_key), do: nil
@@ -128,5 +134,27 @@ defmodule Xeito.Tiers.Settings do
   defp zdr(nil), do: nil
   defp zdr(value), do: value != "false"
 
-  defp read_key(path), do: path |> Path.expand() |> File.read!() |> String.trim()
+  @doc """
+  The key a `KEY_FILE` setting names: the file's content, or, for an `op://` reference, what
+  `op read` gives (`cmd` runs it; `nil`, with a warning, when it cannot: the 1Password app is
+  locked, its CLI integration off, or `op` missing).
+  """
+  @spec read_key(String.t(), (String.t(), [String.t()], keyword() -> {String.t(), integer()})) :: String.t() | nil
+  def read_key(ref, cmd \\ &System.cmd/3)
+
+  def read_key("op://" <> _ = ref, cmd) do
+    case cmd.("op", ["read", "--no-newline", ref], stderr_to_stdout: true) do
+      {key, 0} -> String.trim(key)
+      {out, _status} -> unresolved(ref, String.trim(out))
+    end
+  rescue
+    error in ErlangError -> unresolved(ref, Exception.message(error))
+  end
+
+  def read_key(path, _cmd), do: path |> Path.expand() |> File.read!() |> String.trim()
+
+  defp unresolved(ref, reason) do
+    IO.warn("#{ref}: op read failed, so the tier is not configured: #{reason}", [])
+    nil
+  end
 end
