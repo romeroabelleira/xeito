@@ -19,8 +19,10 @@ fi
 
 # The tests run git in repositories of their own. Give them none of this commit's repository
 # variables (git sets GIT_INDEX_FILE for the hook; in a linked worktree it is an absolute path,
-# which those git commands would follow).
-unset $(git rev-parse --local-env-vars)
+# which those git commands would follow), nor its author and committer, which git exports to the
+# hook and which would override the tests' own identity (test/support/gitconfig).
+unset $(git rev-parse --local-env-vars) \
+  GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
 
 if out=$(MIX_ENV=test mix test --cover 2>&1); then
   echo "✓ CRAP gate"

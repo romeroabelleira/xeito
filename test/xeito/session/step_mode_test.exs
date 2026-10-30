@@ -2,7 +2,6 @@ defmodule Xeito.Session.StepModeTest do
   use ExUnit.Case, async: true
 
   alias Xeito.Decisions.Risk
-  alias Xeito.Decisions.Triage
   alias Xeito.Session.StepMode
 
   test "breakpoint specs: a state, a decision type, a confidence; anything else is refused" do
@@ -21,14 +20,12 @@ defmodule Xeito.Session.StepModeTest do
   end
 
   test "breakpoint specs parse without creating atoms from input" do
-    assert {:ok, {:state, :triage}} = StepMode.parse_breakpoint("state:triage")
-    assert {:ok, {:decision, Triage}} = StepMode.parse_breakpoint("decision:triage")
-    assert {:ok, {:confidence_below, 0.6}} = StepMode.parse_breakpoint("conf<0.6")
+    n = System.unique_integer([:positive])
+    assert :error = StepMode.parse_breakpoint("state:no_such_state_#{n}")
+    assert :error = StepMode.parse_breakpoint("decision:no_such_decision_#{n}")
 
-    assert :error =
-             StepMode.parse_breakpoint("state:no_such_state_#{System.unique_integer([:positive])}")
-
-    assert :error = StepMode.parse_breakpoint("decision:Nope")
-    assert :error = StepMode.parse_breakpoint("whatever")
+    for name <- ["no_such_state_#{n}", "Elixir.Xeito.Decisions.NoSuchDecision#{n}"] do
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
   end
 end

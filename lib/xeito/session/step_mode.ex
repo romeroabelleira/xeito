@@ -73,12 +73,17 @@ defmodule Xeito.Session.StepMode do
     with {:ok, state} <- existing_atom(name), do: {:ok, {:state, state}}
   end
 
-  def parse_breakpoint("decision:" <> name), do: decision_breakpoint(Module.concat(Xeito.Decisions, Macro.camelize(name)))
+  def parse_breakpoint("decision:" <> name), do: decision_breakpoint(Macro.underscore(name))
   def parse_breakpoint("conf<" <> x), do: x |> Float.parse() |> confidence_breakpoint()
 
   def parse_breakpoint(_spec), do: :error
 
-  defp decision_breakpoint(module), do: if(Code.ensure_loaded?(module), do: {:ok, {:decision, module}}, else: :error)
+  defp decision_breakpoint(name) do
+    case Enum.find(Xeito.Decisions.all(), &(Xeito.Decision.type!(&1).name == name)) do
+      nil -> :error
+      module -> {:ok, {:decision, module}}
+    end
+  end
 
   defp confidence_breakpoint({f, ""}), do: {:ok, {:confidence_below, f}}
   defp confidence_breakpoint(_parsed), do: :error
