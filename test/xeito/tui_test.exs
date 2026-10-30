@@ -20,7 +20,7 @@ defmodule Xeito.TuiTest do
   defp cursor_drawn?(state), do: state |> View.input_line(20) |> inspect() =~ "bg: :yellow"
 
   test "the cursor blinks after a key, and stops blinking (solid) once idle" do
-    state = Timers.wake_cursor(state())
+    state = state() |> Map.put(:blink_ms, 1) |> Timers.wake_cursor()
     gen = state.blink
     assert cursor_drawn?(state)
 
@@ -41,7 +41,7 @@ defmodule Xeito.TuiTest do
     past = System.monotonic_time(:millisecond) - 1
     {idle, []} = Tui.handle_info({:blink, gen}, %{off | blink_until: past})
     assert idle.cursor_on
-    refute_receive {:blink, _}, 700
+    refute_receive {:blink, _}, 50
   end
 
   test "a newer key makes older blink timers stale" do
@@ -814,19 +814,20 @@ defmodule Xeito.TuiTest do
     end
 
     test "the timer starts when work starts and stops when it stops, so an idle TUI sleeps" do
-      {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "thinking"})}, tui())
+      quick = Map.put(tui(), :spin_ms, 1)
+      {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "thinking"})}, quick)
       assert_receive {:spin, gen}, 500
 
       # More events while working start no second timer.
       {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "executing"})}, state)
-      refute_receive {:spin, _}, 300
+      refute_receive {:spin, _}, 50
 
       {state, []} = Tui.handle_info({:spin, gen}, state)
       assert_receive {:spin, ^gen}, 500
 
       {done, []} = Tui.handle_info({:xeito_event, event("turn_finished", %{})}, state)
       {done, []} = Tui.handle_info({:spin, gen}, done)
-      refute_receive {:spin, _}, 300
+      refute_receive {:spin, _}, 50
       assert marker(done) == "○"
 
       # Waiting for you stops it too; a stale tick changes nothing.

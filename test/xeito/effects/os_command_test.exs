@@ -28,15 +28,21 @@ defmodule Xeito.Effects.OsCommandTest do
     assert {:exited, 0, "here.txt\n"} = sh("ls", ws)
   end
 
-  test "output is handed on as it arrives, in order, as well as returned", %{ws: ws} do
+  test "output is handed on as it arrives, before the command ends, in order, and returned whole", %{ws: ws} do
     test = self()
     on_output = &send(test, {:chunk, &1})
+    # The command prints a line, then reads a pipe until the test writes to it.
+    pipe = Path.join(ws, "go")
+    {_, 0} = System.cmd("mkfifo", [pipe])
 
-    assert {:exited, 0, output} = sh("echo one; sleep 0.2; echo two", ws, on_output: on_output)
-    assert_received {:chunk, "one\n"}
+    command = Task.async(fn -> sh("echo one; cat go; echo two", ws, on_output: on_output) end)
+    assert_receive {:chunk, "one\n"}, 2_000
+    refute_received {:chunk, _}
+
+    File.write!(pipe, "")
+    assert {:exited, 0, "one\ntwo\n"} = Task.await(command)
     assert_received {:chunk, "two\n"}
     refute_received {:chunk, _}
-    assert output == "one\ntwo\n"
   end
 
   test "a timeout returns the output so far and kills the command's children too", %{ws: ws} do

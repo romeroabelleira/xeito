@@ -26,12 +26,15 @@ defmodule Xeito.SessionQueueTest do
   end
 
   test "a line typed while a turn runs is queued, and sent when the turn ends normally", %{id: id, ws: ws} do
-    :ok = Session.prompt(id, "/run sleep 0.3")
+    # The turn's command waits for a file, so it runs until the test creates it.
+    :ok = Session.prompt(id, "/run until [ -e go ]; do sleep 0.05; done")
     assert_receive {:xeito, _, %{type: "effect_requested"}}, 2_000
 
     assert :ok = Session.prompt(id, "/run touch q.txt")
     assert %{"text" => "/run touch q.txt", "queued" => 1} = event("queued")
+    refute_received {:xeito, _, %{type: "turn_finished"}}
 
+    File.touch!(Path.join(ws, "go"))
     assert %{"status" => :done} = event("turn_finished")
     assert %{"text" => "/run touch q.txt", "outcome" => "sent"} = event("dequeued")
     assert %{"status" => :done} = event("turn_finished")
@@ -60,16 +63,20 @@ defmodule Xeito.SessionQueueTest do
     refute File.exists?(Path.join(ws, "a.txt"))
   end
 
-  test "a held queue stays held across turns until it is sent or dropped", %{id: id} do
+  test "a held queue stays held across turns until it is sent or dropped", %{id: id, ws: ws} do
     busy(id)
-    :ok = Session.prompt(id, "/run true")
+    :ok = Session.prompt(id, "/run touch held.txt")
     :ok = Session.prompt(id, "/halt")
     assert %{"status" => :halted} = event("turn_finished")
     assert %{"reason" => "halted"} = event("queue_held")
 
     :ok = Session.prompt(id, "/run true")
     assert %{"status" => :done} = event("turn_finished")
-    refute_receive {:xeito, _, %{type: "dequeued"}}, 300
+    refute_received {:xeito, _, %{type: "dequeued"}}
+    refute File.exists?(Path.join(ws, "held.txt"))
+
+    :ok = Session.prompt(id, "/drop")
+    assert %{"text" => "/run touch held.txt", "outcome" => "dropped"} = event("dequeued")
   end
 
   test "/send and /drop with nothing queued, and /send while a turn runs", %{id: id} do

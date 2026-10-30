@@ -77,11 +77,13 @@ defmodule Xeito.MonitorTest do
              Host.read(nil, proc: "/nonexistent", sys: "/nonexistent")
   end
 
+  @now ~U[2026-10-30 12:00:00Z]
+
   test "model probes: resident models, System One, and unconfigured tiers" do
     Req.Test.stub(:mon, fn conn ->
       case {conn.host, conn.request_path} do
         {"local.test", "/api/ps"} ->
-          at = DateTime.utc_now() |> DateTime.shift(second: 252) |> DateTime.to_iso8601()
+          at = @now |> DateTime.shift(second: 252) |> DateTime.to_iso8601()
 
           Req.Test.json(conn, %{
             "models" => [
@@ -106,11 +108,11 @@ defmodule Xeito.MonitorTest do
         tiers: [
           local: [url: "http://local.test", model: "big:27b", plug: plug],
           local_decision: [url: "http://s1.test", plug: plug]
-        ]
+        ],
+        now: @now
       )
 
-    assert %{up: true, loaded: [%{name: "big:27b", unload_in_s: s}]} = models.local
-    assert s in 250..252
+    assert %{up: true, loaded: [%{name: "big:27b", unload_in_s: 252}]} = models.local
     assert %{configured: true, up: false} = models.local_decision
     assert models.remote_decision == %{configured: false}
     assert models.remote == %{configured: false}

@@ -48,13 +48,14 @@ defmodule Xeito.StepTest do
     assert {:error, :invalid_value} = Run.step(id, {:decide, :nonsense})
     assert :ok = Run.step(id, {:decide, :flaky})
     paused_in(id, :rerun)
-    assert :ok = Run.debug(id, %{step: false})
 
     [decision] =
       for {_, "decision_made", {:decision_made, _, d}} <- Log.read_run(log, id), do: d
 
     assert %{value: :flaky, actor: :human, confidence: 1.0} = decision
     assert [%{replaced: %{value: :code_bug}}] = decision.evidence
+
+    assert :ok = Run.debug(id, %{step: false})
     assert {:error, :not_paused} = Run.step(id)
   end
 
