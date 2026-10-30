@@ -17,6 +17,14 @@ defmodule Xeito.BudgetTest do
     assert {Budget.get(run, :usd), Budget.get(run, :swaps)} == {0, 0}
   end
 
+  test "adding nothing is allowed and changes nothing" do
+    run = "budget-zero-#{System.unique_integer([:positive])}"
+    assert Budget.add(run, :usd, 0.5) == 0.5
+    # A key's amounts are all floats (spend) or all integers (counts): a mixed one fails in ETS.
+    assert Budget.add(run, :usd, 0.0) == 0.5
+    assert Budget.add(run, :swaps, 0) == 0
+  end
+
   test "the sweep drops entries whose owner is neither a live run nor a live session" do
     n = System.unique_integer([:positive])
     {dead, run, session} = {"budget-dead-#{n}", "budget-run-#{n}", "budget-ses-#{n}"}
