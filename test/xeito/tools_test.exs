@@ -70,6 +70,35 @@ defmodule Xeito.ToolsTest do
       assert {:error, "no tools are available in this turn; answer in text"} =
                effect("bash", %{"command" => "ls"}, %{tools: false})
     end
+
+    test "write and edit refuse dependencies, build output, git data and the log, not similar names" do
+      ctx = %{cwd: "/w"}
+
+      edit = fn path ->
+        %{name: "edit", arguments: %{"path" => path, "old_text" => "a", "new_text" => "b"}}
+      end
+
+      for path <- [
+            "deps/term_ui/lib/x.ex",
+            "./_build/dev/x",
+            "/w/node_modules/p/i.js",
+            ".git/config",
+            ".xeito/log.sqlite"
+          ] do
+        assert {:error, "refused: " <> _} = Tools.to_effect(edit.(path), ctx), path
+      end
+
+      assert {:error, "refused: deps/ holds fetched dependencies" <> _} =
+               Tools.to_effect(
+                 %{name: "write", arguments: %{"path" => "deps/x", "content" => ""}},
+                 ctx
+               )
+
+      # Similar names elsewhere are the project's own files.
+      for path <- ["lib/deps/x.ex", "deps.md", "src/_build.ts"] do
+        assert {:ok, _} = Tools.to_effect(edit.(path), ctx), path
+      end
+    end
   end
 
   test "result_text/1: what the model is told about each kind of result" do

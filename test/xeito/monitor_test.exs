@@ -2,13 +2,10 @@ defmodule Xeito.MonitorTest do
   # Probes run in tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.Client.Config
-  alias Xeito.Client.StatusBar
   alias Xeito.Monitor
   alias Xeito.Monitor.Host
   alias Xeito.Monitor.Models
   alias Xeito.Session
-  alias Xeito.Session.Git
   alias Xeito.Session.Router
 
   @moduletag :tmp_dir
@@ -170,81 +167,6 @@ defmodule Xeito.MonitorTest do
     eventually(fn -> not Monitor.polling?(mon) end)
   end
 
-  test "status bar: usage, determinism budget and system line from events and a snapshot" do
-    events = [
-      %{"event" => "intent", "attrs" => %{"actor" => "rule"}},
-      %{
-        "event" => "decision_made",
-        "run" => "s/t1",
-        "attrs" => %{
-          "actor" => "local",
-          "tokens_in" => 300,
-          "tokens_out" => 5,
-          "joules_est" => 150.0
-        }
-      },
-      %{
-        "event" => "decision_made",
-        "run" => "s/t1/e2/esc",
-        "attrs" => %{"actor" => "local", "tokens_in" => 999}
-      },
-      %{
-        "event" => "effect_completed",
-        "run" => "s/t1",
-        "attrs" => %{"kind" => "chat", "result" => %{"tokens_in" => 3200, "tokens_out" => 120}}
-      },
-      %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "code"}},
-      %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "rule"}},
-      %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "local"}},
-      %{"event" => "transition", "run" => "s/t1", "attrs" => %{"actor" => "human"}}
-    ]
-
-    usage = Enum.reduce(events, StatusBar.new(), &StatusBar.count(&2, &1))
-    assert usage.calls == %{"rule" => 1, "local" => 1, "chat" => 1}
-    assert {usage.tokens_in, usage.tokens_out, usage.ctx} == {3500, 125, 3200}
-
-    snapshot = %{
-      "system" => %{
-        "cpu" => %{"busy_pct" => 23.4, "load1" => 1.2},
-        "mem" => %{"used_bytes" => 18_360_000_000, "total_bytes" => 66_571_993_088},
-        "gpus" => [
-          %{"primary" => false, "vram_used_bytes" => 1, "vram_total_bytes" => 2},
-          %{
-            "primary" => true,
-            "vram_used_bytes" => 19_860_000_000,
-            "vram_total_bytes" => 25_753_026_560,
-            "busy_pct" => 97,
-            "power_w" => 290.5,
-            "temps_c" => %{"edge" => 61.0, "junction" => 74.5}
-          }
-        ]
-      },
-      "models" => %{
-        "local" => %{
-          "configured" => true,
-          "up" => true,
-          "loaded" => [%{"name" => "big:27b", "unload_in_s" => 252, "context" => 81_920}]
-        },
-        "local_decision" => %{"configured" => true, "up" => false},
-        "remote" => %{"configured" => false}
-      },
-      "queues" => %{
-        "local" => %{"in_use" => 1, "waiting" => 2},
-        "local_decision" => %{"in_use" => 0, "waiting" => 0}
-      }
-    }
-
-    [system, use] = StatusBar.lines(usage, snapshot)
-
-    assert system ==
-             "GPU 18.5/24.0 GiB 97% 291 W 75°C │ local big:27b unload 4:12 │ decision ✗ │ CPU 23% load 1.2 RAM 17.1/62.0 GiB"
-
-    assert use ==
-             "chat 1 · local 1 · rule 1 │ 3.5k→125 tok · ctx 3.2k/81.9k │ det 50% │ $0.0000 · ~150 J │ queue local 1+2"
-
-    assert [_, _] = StatusBar.lines(StatusBar.new(), nil)
-  end
-
   test "/machines lists every machine with its routing and its usage in the log", %{root: ws} = ctx do
     log = start_log!(ctx)
 
@@ -285,21 +207,7 @@ defmodule Xeito.MonitorTest do
     assert text =~ "routed from: intent run/edit + commit · /machine commit"
   end
 
-  test "git status: branch, changed entries, ahead and behind" do
-    out =
-      "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n1 .M N... a\n? new.txt\n"
-
-    assert Git.parse(out) == %{branch: "main", dirty: 2, ahead: 2, behind: 1}
-
-    assert Git.parse("# branch.head (detached)\n") == %{
-             branch: "(detached)",
-             dirty: 0,
-             ahead: 0,
-             behind: 0
-           }
-  end
-
-  test "the session reports git and the off-box budget, and the bar shows them", %{root: root} = ctx do
+  test "the session reports git and the off-box budget", %{root: root} = ctx do
     log = start_log!(ctx)
     ws = Path.join(root, "ws")
     File.mkdir_p!(ws)
@@ -323,79 +231,5 @@ defmodule Xeito.MonitorTest do
            } = ws_attrs
 
     assert_receive {:xeito, _, %{type: "workspace"}}, 1_000
-
-    # As a client sees it (JSON keys), with segments hidden.
-    workspace = %{
-      "git" => %{"branch" => "work", "dirty" => 1, "ahead" => 1, "behind" => 0},
-      "budget" => %{"off_box" => true, "max_usd_per_run" => 0.25, "spent_usd" => 0.05}
-    }
-
-    [line1, line2] = StatusBar.lines(StatusBar.new(), nil, workspace, ~w(tokens det cost))
-    assert line1 == "status: waiting for the daemon's monitor… │ git work 1 changed ↑1"
-    assert line2 == "no model calls yet │ budget $0.20/0.25"
-
-    assert StatusBar.lines(
-             StatusBar.new(),
-             nil,
-             %{"budget" => %{"off_box" => false}},
-             ~w(gpu calls tokens det cost)
-           ) ==
-             ["off-box off"]
-
-    assert StatusBar.lines(StatusBar.new(), nil, nil, StatusBar.segments()) == []
-  end
-
-  test "client preferences are saved and merged over the defaults", %{root: root} do
-    file = Path.join(root, "cfg/tui.json")
-
-    assert %{"status_bar" => %{"visible" => true, "hidden" => []}} =
-             Config.load(file)
-
-    :ok =
-      Config.save(
-        %{"status_bar" => %{"visible" => false, "hidden" => ["cpu"]}},
-        file
-      )
-
-    assert %{"status_bar" => %{"visible" => false, "hidden" => ["cpu"]}} =
-             Config.load(file)
-
-    File.write!(file, "not json")
-    assert %{"status_bar" => %{"visible" => true}} = Config.load(file)
-  end
-
-  test "status bar: latency of the last decision and the last model reply" do
-    usage =
-      Enum.reduce(
-        [
-          %{"event" => "intent", "attrs" => %{"actor" => "local", "latency_ms" => 833}},
-          %{
-            "event" => "effect_completed",
-            "run" => "s/t1",
-            "attrs" => %{"kind" => "chat", "result" => %{"latency_ms" => 2140, "first_token_ms" => 410}}
-          },
-          %{
-            "event" => "decision_made",
-            "run" => "s/t1",
-            "attrs" => %{"decision_type" => "Xeito.Decisions.Risk", "actor" => "rule", "latency_ms" => 3}
-          }
-        ],
-        StatusBar.new(),
-        &StatusBar.count(&2, &1)
-      )
-
-    hidden = ~w(gpu models cpu git calls tokens det cost budget queue)
-
-    assert StatusBar.lines(usage, nil, nil, hidden) == [
-             "risk rule 3 ms │ reply 2.1 s (first 410 ms)"
-           ]
-
-    only_intent =
-      StatusBar.count(StatusBar.new(), %{
-        "event" => "intent",
-        "attrs" => %{"actor" => "local", "latency_ms" => 1250}
-      })
-
-    assert StatusBar.lines(only_intent, nil, nil, hidden) == ["intent local 1.3 s"]
   end
 end

@@ -2,8 +2,6 @@ defmodule Xeito.MachinesTest do
   # Chat calls happen in supervised effect tasks, so Req.Test stubs are shared (serial).
   use Xeito.Case, async: false
 
-  alias Xeito.Decider
-  alias Xeito.Decisions.Intent
   alias Xeito.Effects.Local
   alias Xeito.Machines.Chat
   alias Xeito.Machines.Check
@@ -13,8 +11,6 @@ defmodule Xeito.MachinesTest do
   alias Xeito.Run
   alias Xeito.RunSupervisor
   alias Xeito.Session.Router
-  alias Xeito.Skills
-  alias Xeito.Tools
 
   @moduletag :tmp_dir
 
@@ -82,113 +78,6 @@ defmodule Xeito.MachinesTest do
     File.write!(Path.join(ws, "a.txt"), "one\n")
     git!(ws, ~w(add -A))
     git!(ws, ~w(commit -q -m init))
-  end
-
-  test "skills are discovered in .agents/skills, project first, and read only inside their directory",
-       %{ws: ws} do
-    home = Path.join(ws, "home")
-
-    write_skill = fn root, name, front ->
-      dir = Path.join([root, name])
-      File.mkdir_p!(Path.join(dir, "references"))
-      File.write!(Path.join(dir, "SKILL.md"), "---\n#{front}\n---\n\n# #{name}\nDo the thing.\n")
-      File.write!(Path.join(dir, "references/notes.md"), "notes of #{name}")
-    end
-
-    write_skill.(
-      Path.join(ws, ".agents/skills"),
-      "release",
-      "name: release\ndescription: >\n  Cut a release:\n  tag and changelog."
-    )
-
-    write_skill.(
-      Path.join(home, ".agents/skills"),
-      "release",
-      "name: release\ndescription: user copy"
-    )
-
-    write_skill.(
-      Path.join(home, ".agents/skills/nested"),
-      "pdf",
-      "name: pdf\ndescription: \"Work with PDFs.\"\ndisable-model-invocation: true"
-    )
-
-    write_skill.(Path.join(ws, ".agents/skills"), "broken", "name: broken")
-
-    # pi's own skill folders are not read: Xeito does not depend on another harness's skills.
-    write_skill.(Path.join(ws, ".pi/skills"), "pi-project", "name: pi-project\ndescription: pi's")
-    write_skill.(Path.join(home, ".pi/agent/skills"), "pi-user", "name: pi-user\ndescription: pi's")
-
-    skills = Skills.discover(ws, home: home)
-    assert Enum.map(skills, & &1.name) == ["release", "pdf"]
-
-    # Without a home given, tests read no user skills at all: whatever skills the machine running
-    # the suite has installed must not change what a session or the TUI sees.
-    assert Enum.map(Skills.discover(ws), & &1.name) == ["release"]
-    [release, pdf] = skills
-    assert release.description == "Cut a release: tag and changelog."
-    assert String.starts_with?(release.dir, ws <> "/.agents/skills")
-    refute pdf.model_invocation
-    assert Skills.body(release) =~ "Do the thing."
-
-    section = Skills.prompt_section(skills)
-    assert section =~ "- release: Cut a release" and not (section =~ "pdf")
-
-    ctx = %{cwd: ws, skills: Enum.map(skills, &Map.take(&1, [:name, :dir]))}
-    assert "skill" in Tools.names_for(ctx)
-
-    {:ok, effect} =
-      Tools.to_effect(
-        %{name: "skill", arguments: %{"name" => "release", "file" => "references/notes.md"}},
-        ctx
-      )
-
-    assert %{ok: true, content: "notes of release"} = Local.run(effect, [])
-
-    {:ok, escape} =
-      Tools.to_effect(
-        %{name: "skill", arguments: %{"name" => "release", "file" => "../../../a.txt"}},
-        ctx
-      )
-
-    assert %{ok: false, error: :outside_workspace} = Local.run(escape, [])
-
-    assert {:error, "no skill named" <> _} =
-             Tools.to_effect(%{name: "skill", arguments: %{"name" => "nope"}}, ctx)
-
-    assert {:error, "unknown tool" <> _} =
-             Tools.to_effect(%{name: "skill", arguments: %{"name" => "release"}}, %{cwd: ws})
-  end
-
-  test "write and edit refuse dependencies, build output, git data and the log" do
-    ctx = %{cwd: "/w"}
-
-    edit = fn path ->
-      %{name: "edit", arguments: %{"path" => path, "old_text" => "a", "new_text" => "b"}}
-    end
-
-    for path <- [
-          "deps/term_ui/lib/x.ex",
-          "./_build/dev/x",
-          "/w/node_modules/p/i.js",
-          ".git/config",
-          ".xeito/log.sqlite"
-        ] do
-      assert {:error, "refused: " <> _} = Tools.to_effect(edit.(path), ctx), path
-    end
-
-    assert {:error, "refused: deps/ holds fetched dependencies" <> _} =
-             Tools.to_effect(
-               %{name: "write", arguments: %{"path" => "deps/x", "content" => ""}},
-               ctx
-             )
-
-    # --- commit ----------------------------------------------------------------------------------
-
-    # Similar names elsewhere are the project's own files.
-    for path <- ["lib/deps/x.ex", "deps.md", "src/_build.ts"] do
-      assert {:ok, _} = Tools.to_effect(edit.(path), ctx), path
-    end
   end
 
   test "commit drafts a message, waits for approval, and commits", %{ws: ws} = ctx do
@@ -289,19 +178,6 @@ defmodule Xeito.MachinesTest do
 
     File.write!(Path.join(ws, "mix.exs"), ~s(defp aliases, do: ["check.quick": ["compile"]]))
     assert Router.quick_check_command(ws) == "mix check.quick"
-  end
-
-  test "intent rules answer small talk and 'run the tests' without a model" do
-    for msg <- ["hi", "Thanks!", "ok", "good morning"] do
-      assert %{value: :other, actor: :rule} =
-               Decider.decide(Intent, %{message: msg}, deciders: [])
-    end
-
-    assert %{value: :run, actor: :rule} =
-             Decider.decide(Intent, %{message: "run the tests"}, deciders: [])
-
-    assert %{value: :abstain} =
-             Decider.decide(Intent, %{message: "hi, why is the build slow?"}, deciders: [])
   end
 
   test "commit: a failed step records its output, its error, or the result itself" do

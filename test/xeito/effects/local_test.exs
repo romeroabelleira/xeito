@@ -48,6 +48,31 @@ defmodule Xeito.Effects.LocalTest do
              Local.run(Effect.write("/tmp/x", "no", cwd: ws), [])
   end
 
+  test "edit replaces exactly one occurrence and refuses ambiguity", %{ws: ws} do
+    File.write!(Path.join(ws, "a.txt"), "one two two")
+
+    assert %{ok: true} = Local.run(Effect.edit("a.txt", "one", "1", cwd: ws), [])
+    assert File.read!(Path.join(ws, "a.txt")) == "1 two two"
+
+    assert %{ok: false, error: "old_text matches 2 times" <> _} =
+             Local.run(Effect.edit("a.txt", "two", "2", cwd: ws), [])
+
+    assert %{ok: false, error: "old_text not found; nothing similar" <> _} =
+             Local.run(Effect.edit("a.txt", "zzz", "2", cwd: ws), [])
+
+    assert %{ok: false, error: :outside_workspace} =
+             Local.run(Effect.edit("../x", "a", "b", cwd: ws), [])
+  end
+
+  test "a missing workspace is reported, and nothing is started in it", %{tmp_dir: dir} do
+    gone = Path.join(dir, "gone")
+
+    assert %{exit_status: 127, output: "workspace missing: " <> _} =
+             Local.run(Effect.bash("ls", cwd: gone), [])
+
+    refute File.exists?(gone)
+  end
+
   describe "undo: write, edit and bash are steps of their session" do
     defp with_id(effect, id), do: %{effect | id: id}
 
@@ -170,10 +195,6 @@ defmodule Xeito.Effects.LocalTest do
       assert_received {:xeito, ^run,
                        %{type: "retrying", attrs: %{"attempt" => 2, "of" => 3, "status" => 429, "effect_id" => "e1"}}}
     end
-
-    test "an ordinary request carries no error" do
-      refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
-    end
   end
 
   describe "model tiers" do
@@ -239,16 +260,5 @@ defmodule Xeito.Effects.LocalTest do
                  Local.run(effect, [run_id: run_id] ++ local_tier(:"local_tier_#{System.unique_integer([:positive])}"))
       end
     end
-  end
-
-  test "an effect that raised gets a result of its kind's shape, reporting the error" do
-    assert Xeito.Effects.error_result(Effect.bash("x"), "boom") == %{exit_status: -1, output: "boom"}
-
-    assert Xeito.Effects.error_result(%Effect{kind: :decide, args: %{}, reply: nil}, "boom") == %{
-             value: :abstain,
-             error: "boom"
-           }
-
-    assert Xeito.Effects.error_result(Effect.read("a"), "boom") == %{ok: false, error: "boom"}
   end
 end

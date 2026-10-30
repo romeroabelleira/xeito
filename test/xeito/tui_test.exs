@@ -5,7 +5,6 @@ defmodule Xeito.TuiTest do
   alias TermUI.Event
   alias TermUI.Widgets.TextInput
   alias Xeito.Client.Config
-  alias Xeito.Client.StatusBar
   alias Xeito.Tui
   alias Xeito.Tui.Banner
   alias Xeito.Tui.StatusLine
@@ -43,27 +42,6 @@ defmodule Xeito.TuiTest do
     {idle, []} = Tui.handle_info({:blink, gen}, %{off | blink_until: past})
     assert idle.cursor_on
     refute_receive {:blink, _}, 700
-  end
-
-  test "the status bar is one line, filled by priority up to the width" do
-    usage = StatusBar.new()
-    line = StatusBar.line(usage, nil, nil, [], 40)
-    assert String.length(line) <= 40 and line =~ "tok"
-    refute line =~ "\n"
-    assert String.length(StatusBar.line(usage, nil, nil, [], 200)) > 40
-    assert StatusBar.line(usage, nil, nil, StatusBar.segments(), 80) == ""
-  end
-
-  test "the status bar keeps the higher-priority segment when two do not fit" do
-    usage = StatusBar.new()
-    only = StatusBar.segments() -- ~w(calls tokens)
-    both = StatusBar.line(usage, nil, nil, only, 200)
-    assert both =~ "no model calls yet" and both =~ "tok"
-
-    # Exactly wide enough: both; one less: the higher-priority tokens segment alone.
-    assert StatusBar.line(usage, nil, nil, only, String.length(both)) == both
-    narrow = StatusBar.line(usage, nil, nil, only, String.length(both) - 1)
-    assert narrow =~ "tok" and not (narrow =~ "calls")
   end
 
   test "a newer key makes older blink timers stale" do

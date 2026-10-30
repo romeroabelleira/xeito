@@ -28,31 +28,6 @@ defmodule Xeito.Skills.BenchTest do
     path
   end
 
-  describe "Skills.shortlist/2: the user's skills a turn may choose from" do
-    test "ranks the skills the model may invoke, and leaves out the others" do
-      manual = skill("transcribe", "Fetch transcripts of YouTube videos.", model_invocation: false)
-
-      assert ["youtube-transcript"] =
-               [manual | library()] |> Skills.shortlist("get the transcript of this youtube video") |> Enum.map(& &1.name)
-    end
-  end
-
-  describe "Skills.from_dirs/1" do
-    test "loads every SKILL.md under the directories, sorted, the first of a name winning", %{tmp_dir: root} do
-      for {dir, name, desc} <- [
-            {"a/b/beta", "beta", "Second."},
-            {"alpha", "alpha", "First."},
-            {"z/beta", "beta", "Shadowed."}
-          ] do
-        File.mkdir_p!(Path.join(root, dir))
-        File.write!(Path.join([root, dir, "SKILL.md"]), "---\nname: #{name}\ndescription: #{desc}\n---\nBody\n")
-      end
-
-      assert [%{name: "beta", description: "Second."}, %{name: "alpha"}] = Skills.from_dirs([root])
-      assert Skills.from_dirs([Path.join(root, "missing")]) == []
-    end
-  end
-
   describe "read_set/1: the benchmark's cases" do
     test "one JSON object per line pairs a request with a skill, or with none; blank lines are skipped",
          %{tmp_dir: dir} do

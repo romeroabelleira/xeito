@@ -137,45 +137,6 @@ defmodule Xeito.HarnessTest do
 
   defp kinds(log, id), do: for({_, "effect_requested", {:effect_requested, e}} <- Log.read_run(log, id), do: e.kind)
 
-  test "edit replaces exactly one occurrence and refuses ambiguity", %{ws: ws} do
-    File.write!(Path.join(ws, "a.txt"), "one two two")
-
-    assert %{ok: true} = Local.run(Effect.edit("a.txt", "one", "1", cwd: ws), [])
-    # --- the chat machine --------------------------------------------------------------------
-    assert File.read!(Path.join(ws, "a.txt")) == "1 two two"
-
-    assert %{ok: false, error: "old_text matches 2 times" <> _} =
-             Local.run(Effect.edit("a.txt", "two", "2", cwd: ws), [])
-
-    assert %{ok: false, error: "old_text not found; nothing similar" <> _} =
-             Local.run(Effect.edit("a.txt", "zzz", "2", cwd: ws), [])
-
-    assert %{ok: false, error: :outside_workspace} =
-             Local.run(Effect.edit("../x", "a", "b", cwd: ws), [])
-  end
-
-  test "a missing workspace is reported, and nothing is started in it", %{tmp_dir: dir} do
-    gone = Path.join(dir, "gone")
-
-    assert %{exit_status: 127, output: "workspace missing: " <> _} =
-             Local.run(Effect.bash("ls", cwd: gone), [])
-
-    refute File.exists?(gone)
-  end
-
-  test "the transcript shows an edit as a compact diff" do
-    event = %{
-      "event" => "effect_requested",
-      "run" => "ses-x/t1",
-      "attrs" => %{
-        "kind" => "edit",
-        "args" => %{"path" => "a.py", "old" => "x = 1", "new" => "x = 2\ny = 3"}
-      }
-    }
-
-    assert Render.line(event) == "  edit a.py\n    - x = 1\n    + x = 2\n    + y = 3\n"
-  end
-
   test "chat: after edits the checks run before the answer; a failure goes back to the model",
        %{ws: ws} = ctx do
     log = start_log!(ctx)

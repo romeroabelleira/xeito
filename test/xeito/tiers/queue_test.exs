@@ -70,4 +70,30 @@ defmodule Xeito.Tiers.QueueTest do
     send(b.pid, :finish)
     Task.await_many([first, a, b])
   end
+
+  test "capacity/1: rules are not queued; local tiers have one slot, remote ones four, unknown ones one" do
+    assert Queue.capacity(:rules) == :infinity
+    assert Queue.capacity(:local) == 1
+    assert Queue.capacity(:remote) == 4
+    assert Queue.capacity(tier()) == 1
+  end
+
+  test "a tier admits at most its capacity of calls at once; the next waits for a slot to free" do
+    # A remote tier: four slots by default.
+    tier = :remote_frontier
+    four = for _ <- 1..4, do: hold(tier, :normal)
+    for _ <- four, do: assert_receive({:running, _})
+
+    fifth = hold(tier, :normal)
+    eventually(fn -> Queue.status(tier) == {4, 1} end)
+    refute_received {:running, _}
+
+    [first | rest] = four
+    send(first.pid, :finish)
+    assert_receive {:running, pid} when pid == fifth.pid
+
+    for task <- rest ++ [fifth], do: send(task.pid, :finish)
+    Task.await_many(four ++ [fifth])
+    assert Queue.status(tier) == {0, 0}
+  end
 end
