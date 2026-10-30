@@ -9,15 +9,22 @@ defmodule Xeito.Case do
     end
   end
 
-  @doc "Starts a log in a fresh temporary directory and returns its pid."
-  def start_log!(name \\ "log") do
+  @doc """
+  Starts a log and returns its pid. Given the context of a test tagged `:tmp_dir`, the log lives in
+  that directory; without one it lives in a fresh temporary directory removed when the test exits.
+  """
+  def start_log!(context \\ %{})
+
+  def start_log!(%{tmp_dir: dir}), do: open_log!(dir)
+
+  def start_log!(%{}) do
     dir = Path.join(System.tmp_dir!(), "xeito-test-#{System.unique_integer([:positive])}")
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
-
-    ExUnit.Callbacks.start_supervised!({Xeito.Log, path: Path.join(dir, "#{name}.sqlite")},
-      id: make_ref()
-    )
+    open_log!(dir)
   end
+
+  defp open_log!(dir),
+    do: ExUnit.Callbacks.start_supervised!({Xeito.Log, path: Path.join(dir, "log.sqlite")}, id: make_ref())
 
   @doc "A unique run id."
   def run_id, do: "test-run-#{System.unique_integer([:positive])}"

@@ -8,6 +8,8 @@ defmodule Xeito.Tools.ShapeTest do
   alias Xeito.Tools
   alias Xeito.Tools.Shape
 
+  @moduletag :tmp_dir
+
   defp bash(cmd, output, status \\ 0) do
     effect = %{Effect.bash(cmd) | id: "ses-x/t1/e12"}
     Shape.shape(effect, %{exit_status: status, output: output})
@@ -86,11 +88,7 @@ defmodule Xeito.Tools.ShapeTest do
   end
 
   describe "reads" do
-    setup do
-      ws = Path.join(System.tmp_dir!(), "xeito-shape-#{System.unique_integer([:positive])}")
-      File.mkdir_p!(ws)
-      on_exit(fn -> File.rm_rf(ws) end)
-
+    setup %{tmp_dir: ws} do
       big =
         "defmodule Big do\n" <>
           Enum.map_join(1..300, "\n", &"  def f#{&1}(x) do\n    x + #{&1}\n  end") <> "\nend\n"
@@ -118,8 +116,8 @@ defmodule Xeito.Tools.ShapeTest do
       assert run.(%{"path" => "deps/big.ex", "lines" => "2000"}) =~ "outside deps/big.ex"
     end
 
-    test "result reads back the full output of an earlier call from the log" do
-      log = start_log!()
+    test "result reads back the full output of an earlier call from the log", ctx do
+      log = start_log!(ctx)
 
       output =
         Enum.map_join(1..300, "\n", &"line #{&1} #{String.duplicate("v", rem(&1, 9))}w#{&1}")
@@ -149,10 +147,8 @@ defmodule Xeito.Tools.ShapeTest do
   end
 
   describe "missed edits and read limits" do
-    setup do
-      ws = Path.join(System.tmp_dir!(), "xeito-miss-#{System.unique_integer([:positive])}")
+    setup %{tmp_dir: ws} do
       File.mkdir_p!(Path.join(ws, "deps/lib_x"))
-      on_exit(fn -> File.rm_rf(ws) end)
       %{ws: ws}
     end
 
@@ -198,8 +194,8 @@ defmodule Xeito.Tools.ShapeTest do
   end
 
   describe "elision" do
-    test "an elided result from an earlier turn reads back by its full id" do
-      log = start_log!()
+    test "an elided result from an earlier turn reads back by its full id", ctx do
+      log = start_log!(ctx)
       result = %{exit_status: 0, output: "the original", ref: "ses-x/t1/e3"}
 
       Log.append(log, "ses-x/t1", [

@@ -3,12 +3,10 @@ defmodule Xeito.UndoTest do
 
   alias Xeito.Undo
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-undo-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
-    %{ws: ws}
-  end
+  @moduletag :tmp_dir
+
+  # The workspace is the test's own directory.
+  setup %{tmp_dir: ws}, do: %{ws: ws}
 
   defp put(ws, path, text) do
     file = Path.join(ws, path)
@@ -317,10 +315,7 @@ defmodule Xeito.UndoTest do
 
     # Whether the store holds a file version with this content.
     defp stored?(ws, text) do
-      file = Path.join(System.tmp_dir!(), "xeito-blob-#{System.unique_integer([:positive])}")
-      File.write!(file, text)
-      {sha, 0} = System.cmd("git", ["hash-object", file])
-      File.rm!(file)
+      {sha, 0} = System.cmd("sh", ["-c", ~S(printf %s "$1" | git hash-object --stdin), "sh", text])
 
       {_, status} =
         System.cmd("git", ["--git-dir", store(ws), "cat-file", "-e", String.trim(sha)], stderr_to_stdout: true)

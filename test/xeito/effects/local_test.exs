@@ -4,12 +4,10 @@ defmodule Xeito.Effects.LocalTest do
   alias Xeito.Effect
   alias Xeito.Effects.Local
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
-    %{ws: dir}
-  end
+  @moduletag :tmp_dir
+
+  # The workspace is the test's own directory.
+  setup %{tmp_dir: dir}, do: %{ws: dir}
 
   test "bash runs in the workspace and reports the exit status", %{ws: ws} do
     assert %{exit_status: 0, output: output} = Local.run(Effect.bash("pwd", cwd: ws), [])

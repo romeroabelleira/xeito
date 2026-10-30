@@ -7,10 +7,9 @@ defmodule Xeito.TestGitConfigTest do
 
   alias Xeito.Effects.OsCommand
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "xeito-gitconfig-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} do
     {_, 0} = System.cmd("git", ["init", "-q"], cd: dir)
     {:ok, dir: dir}
   end

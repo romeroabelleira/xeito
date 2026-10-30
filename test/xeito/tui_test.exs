@@ -880,6 +880,7 @@ defmodule Xeito.TuiTest do
     # A daemon that answers open, start, attach, history and prompts; `history` is what it reports
     # as earlier turns, and `continued` whether `open` found a session to continue.
     defp daemon(history, continued \\ false) do
+      # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
       dir = Path.join(System.tmp_dir!(), "xeito-tuid-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)
       socket = Path.join(dir, "d.sock")

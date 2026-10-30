@@ -4,12 +4,12 @@ defmodule Mix.Tasks.Xeito.EvalTest do
 
   alias Mix.Tasks.Xeito.Eval
 
-  setup do
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} do
     previous = Mix.shell()
     Mix.shell(Mix.Shell.Process)
     on_exit(fn -> Mix.shell(previous) end)
-    dir = Path.join(System.tmp_dir!(), "xeito-evaltask-#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(dir) end)
     %{dir: dir}
   end
 

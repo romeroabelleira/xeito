@@ -6,11 +6,12 @@ defmodule Xeito.SessionCommandsTest do
   alias Xeito.Session.Allowed
   alias Xeito.Session.Directory
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-cmd-#{System.unique_integer([:positive])}")
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} = ctx do
+    ws = Path.join(dir, "ws")
     File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
-    log = start_log!()
+    log = start_log!(ctx)
     {:ok, id} = Session.start(cwd: ws, log: log, id: "ses-cmd-#{System.unique_integer([:positive])}")
     Session.subscribe(id)
     %{id: id, log: log, ws: ws}
@@ -467,8 +468,8 @@ defmodule Xeito.SessionCommandsTest do
     end
   end
 
-  test "a session's step limit goes into its chat turns", %{ws: ws} do
-    log = start_log!()
+  test "a session's step limit goes into its chat turns", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     {:ok, id} = Session.start(cwd: ws, log: log, id: "ses-max-#{System.unique_integer([:positive])}", max_steps: 3)
     Session.subscribe(id)
     :ok = Session.prompt(id, "/machine chat")

@@ -9,12 +9,10 @@ defmodule Xeito.Log.RetentionTest do
   alias Xeito.RunSupervisor
   alias Xeito.Session
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-ret-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
-    %{ws: ws}
-  end
+  @moduletag :tmp_dir
+
+  # The workspace is the test's own directory.
+  setup %{tmp_dir: ws}, do: %{ws: ws}
 
   defp path(ws), do: Path.join([ws, ".xeito", "log.sqlite"])
   defp log_pid(ws), do: Registry.lookup(Xeito.LogRegistry, path(ws))

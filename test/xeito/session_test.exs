@@ -3,11 +3,12 @@ defmodule Xeito.SessionTest do
 
   alias Xeito.Session
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-session-#{System.unique_integer([:positive])}")
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} = ctx do
+    ws = Path.join(dir, "ws")
     File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
-    log = start_log!()
+    log = start_log!(ctx)
     id = "ses-req-#{System.unique_integer([:positive])}"
     {:ok, ^id} = Session.start(cwd: ws, log: log, id: id)
     Session.subscribe(id)

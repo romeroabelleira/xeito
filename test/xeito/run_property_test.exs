@@ -12,6 +12,7 @@ defmodule Xeito.RunPropertyTest do
   alias Xeito.Run.Recovery
   alias Xeito.RunSupervisor
 
+  @moduletag :tmp_dir
   defp event do
     one_of([
       tuple({constant(:ran), map(member_of([0, 1]), &%{exit_status: &1, output: ""})}),
@@ -22,8 +23,8 @@ defmodule Xeito.RunPropertyTest do
     ])
   end
 
-  property "rebuilding from the log yields the live run's state and context" do
-    log = start_log!()
+  property "rebuilding from the log yields the live run's state and context", ctx do
+    log = start_log!(ctx)
 
     check all(events <- list_of(event(), max_length: 40), max_runs: 60) do
       {:ok, id} =

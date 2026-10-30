@@ -26,6 +26,7 @@ defmodule Mix.Tasks.Xeito.ChatTest do
   describe "run/1: the line-mode client against a daemon" do
     import ExUnit.CaptureIO
 
+    # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
     setup do
       dir = Path.join(System.tmp_dir!(), "xeito-chattask-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)

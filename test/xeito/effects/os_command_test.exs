@@ -3,12 +3,10 @@ defmodule Xeito.Effects.OsCommandTest do
 
   alias Xeito.Effects.OsCommand
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "xeito-os-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
-    %{ws: dir}
-  end
+  @moduletag :tmp_dir
+
+  # The workspace is the test's own directory.
+  setup %{tmp_dir: dir}, do: %{ws: dir}
 
   # Starts a background child that would outlive the shell, and records its pid.
   @with_child "sleep 30 & echo $! > child.pid; wait"

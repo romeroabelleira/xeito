@@ -79,10 +79,9 @@ defmodule Xeito.SourceTest do
     assert {:error, "outline and symbol support Elixir" <> _} = Source.outline("a.py", "")
   end
 
-  test "the read tool outlines and reads symbols; edits report a file that no longer parses" do
-    ws = Path.join(System.tmp_dir!(), "xeito-src-#{System.unique_integer([:positive])}")
+  @tag :tmp_dir
+  test "the read tool outlines and reads symbols; edits report a file that no longer parses", %{tmp_dir: ws} do
     File.mkdir_p!(Path.join(ws, "lib"))
-    on_exit(fn -> File.rm_rf(ws) end)
     File.write!(Path.join(ws, "lib/cart.ex"), @code)
     ctx = %{cwd: ws}
 

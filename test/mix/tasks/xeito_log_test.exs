@@ -7,11 +7,9 @@ defmodule Mix.Tasks.Xeito.LogTest do
   alias Xeito.Machines.RunTests
   alias Xeito.Session
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-logtask-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
+  @moduletag :tmp_dir
 
+  setup %{tmp_dir: ws} do
     previous = Mix.shell()
     Mix.shell(Mix.Shell.Process)
     on_exit(fn -> Mix.shell(previous) end)

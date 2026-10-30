@@ -6,10 +6,11 @@ defmodule Mix.Tasks.Xeito.RunTest do
 
   alias Mix.Tasks.Xeito.Run
 
+  @moduletag :tmp_dir
+
   setup {Req.Test, :set_req_test_to_shared}
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "xeito-runtask-#{System.unique_integer([:positive])}")
+  setup %{tmp_dir: dir} = ctx do
     ws = Path.join(dir, "ws")
     File.mkdir_p!(Path.join(ws, ".agents/skills/greet"))
 
@@ -17,8 +18,6 @@ defmodule Mix.Tasks.Xeito.RunTest do
       Path.join(ws, ".agents/skills/greet/SKILL.md"),
       "---\nname: greet\ndescription: Greet.\n---\nSay hello.\n"
     )
-
-    on_exit(fn -> File.rm_rf(dir) end)
 
     me = self()
 
@@ -44,8 +43,12 @@ defmodule Mix.Tasks.Xeito.RunTest do
     end)
 
     chat = [url: "http://ollama.test", plug: {Req.Test, :run_task_ollama}, model: "big"]
-    log = start_log!()
-    socket = Path.join(dir, "x.sock")
+    log = start_log!(ctx)
+    # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
+    socket_dir = Path.join(System.tmp_dir!(), "xr-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(socket_dir)
+    on_exit(fn -> File.rm_rf(socket_dir) end)
+    socket = Path.join(socket_dir, "x.sock")
 
     start_supervised!(
       {Xeito.Api,

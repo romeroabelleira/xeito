@@ -5,6 +5,7 @@ defmodule Mix.Tasks.Xeito.TuiTest do
 
   @tag :tmp_dir
   test "config/1: the TUI's settings from the command line, for a daemon that is there", %{tmp_dir: dir} do
+    # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
     socket = Path.join(System.tmp_dir!(), "xt-#{System.unique_integer([:positive])}.sock")
     {:ok, _listen} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, socket}, active: false])
     on_exit(fn -> File.rm(socket) end)
@@ -32,6 +33,7 @@ defmodule Mix.Tasks.Xeito.TuiTest do
   end
 
   test "config/1: a socket file nobody listens on, left by a daemon that died, is no daemon" do
+    # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
     socket = Path.join(System.tmp_dir!(), "xt-#{System.unique_integer([:positive])}.sock")
     on_exit(fn -> File.rm(socket) end)
     {:ok, stale} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, socket}, active: false])

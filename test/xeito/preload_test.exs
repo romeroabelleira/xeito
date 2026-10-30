@@ -9,11 +9,8 @@ defmodule Xeito.PreloadTest do
     assert Enum.all?(modules, &:code.is_loaded/1)
   end
 
-  test "changed_since/2: the compiled files written after a time, in the given directories" do
-    dir = Path.join(System.tmp_dir!(), "xeito-preload-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
-
+  @tag :tmp_dir
+  test "changed_since/2: the compiled files written after a time, in the given directories", %{tmp_dir: dir} do
     old = Path.join(dir, "Elixir.Old.beam")
     new = Path.join(dir, "Elixir.New.beam")
     File.write!(old, "")

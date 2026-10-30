@@ -16,12 +16,13 @@ defmodule Xeito.MachinesTest do
   alias Xeito.Skills
   alias Xeito.Tools
 
+  @moduletag :tmp_dir
+
   setup {Req.Test, :set_req_test_to_shared}
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
+  setup %{tmp_dir: dir} do
+    ws = Path.join(dir, "ws")
     File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
     %{ws: ws}
   end
 
@@ -190,8 +191,8 @@ defmodule Xeito.MachinesTest do
     end
   end
 
-  test "commit drafts a message, waits for approval, and commits", %{ws: ws} do
-    log = start_log!()
+  test "commit drafts a message, waits for approval, and commits", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     repo!(ws)
     File.write!(Path.join(ws, "a.txt"), "two\n")
     cfg = chat_stub(self(), [{"```\nUpdate a.txt to two\n\n- replace one with two\n```", []}])
@@ -210,8 +211,8 @@ defmodule Xeito.MachinesTest do
     assert log_text =~ "Update a.txt to two\n\n- replace one with two"
   end
 
-  test "commit with nothing to commit is done; denied, it is cancelled", %{ws: ws} do
-    log = start_log!()
+  test "commit with nothing to commit is done; denied, it is cancelled", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     repo!(ws)
     id = start(Commit, %{cwd: ws}, chat_stub(self(), []), log)
     await_exit(id)
@@ -228,8 +229,8 @@ defmodule Xeito.MachinesTest do
     assert String.trim(count) == "1"
   end
 
-  test "check hands a failure to a chat run and passes after the fix", %{ws: ws} do
-    log = start_log!()
+  test "check hands a failure to a chat run and passes after the fix", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     File.write!(Path.join(ws, "style.txt"), "bad\n")
     edit = {"edit", %{"path" => "style.txt", "old_text" => "bad", "new_text" => "good"}}
     cfg = chat_stub(self(), [{"", [edit]}, {"Fixed the style.", []}])
@@ -251,8 +252,8 @@ defmodule Xeito.MachinesTest do
     assert List.last(first["messages"])["content"] =~ "style: bad"
   end
 
-  test "check asks a human when the attempts are used up", %{ws: ws} do
-    log = start_log!()
+  test "check asks a human when the attempts are used up", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     # --- routing and intent rules ------------------------------------------------------------
     cfg = chat_stub(self(), [{"I could not fix it.", []}])
     id = start(Check, %{cwd: ws, check_cmd: "exit 1", max_attempts: 1}, cfg, log)

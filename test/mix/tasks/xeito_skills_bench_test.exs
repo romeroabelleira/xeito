@@ -23,9 +23,8 @@ defmodule Mix.Tasks.Xeito.Skills.BenchTest do
     assert output() =~ ~r/^\d+ skills, \d+ cases: \d+ need a skill, \d+ need none\ntop 1: /
   end
 
-  test "measures a set against the skills under --skills" do
-    root = Path.join(System.tmp_dir!(), "xeito-bench-task-#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(root) end)
+  @tag :tmp_dir
+  test "measures a set against the skills under --skills", %{tmp_dir: root} do
     File.mkdir_p!(Path.join(root, "skills/web-search"))
 
     File.write!(
@@ -40,9 +39,8 @@ defmodule Mix.Tasks.Xeito.Skills.BenchTest do
     assert output() =~ "1 skills, 1 cases: 1 need a skill, 0 need none\ntop 1: 1/1 (100%)"
   end
 
-  test "--keywords adds an overlay file's keywords to the library" do
-    root = Path.join(System.tmp_dir!(), "xeito-bench-task-#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(root) end)
+  @tag :tmp_dir
+  test "--keywords adds an overlay file's keywords to the library", %{tmp_dir: root} do
     File.mkdir_p!(Path.join(root, "skills/youtube-transcript"))
 
     File.write!(
@@ -61,9 +59,9 @@ defmodule Mix.Tasks.Xeito.Skills.BenchTest do
     assert output() =~ "top 1: 1/1 (100%)"
   end
 
-  test "a set without --skills runs against the user's skills" do
-    set = Path.join(System.tmp_dir!(), "xeito-bench-task-#{System.unique_integer([:positive])}.jsonl")
-    on_exit(fn -> File.rm(set) end)
+  @tag :tmp_dir
+  test "a set without --skills runs against the user's skills", %{tmp_dir: dir} do
+    set = Path.join(dir, "set.jsonl")
     File.write!(set, ~s({"request": "search the web", "skill": "web-search"}\n))
 
     # Tests point the user's home nowhere, so the set's skill is not in the library.

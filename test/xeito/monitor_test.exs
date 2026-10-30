@@ -11,13 +11,12 @@ defmodule Xeito.MonitorTest do
   alias Xeito.Session.Git
   alias Xeito.Session.Router
 
+  @moduletag :tmp_dir
+
   setup {Req.Test, :set_req_test_to_shared}
 
-  setup do
-    root = Path.join(System.tmp_dir!(), "xeito-mon-#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(root) end)
-    %{root: root}
-  end
+  # The fake /proc and /sys trees, or a workspace, are built in the test's own directory.
+  setup %{tmp_dir: root}, do: %{root: root}
 
   defp put(root, path, content) do
     file = Path.join(root, path)
@@ -246,11 +245,8 @@ defmodule Xeito.MonitorTest do
     assert [_, _] = StatusBar.lines(StatusBar.new(), nil)
   end
 
-  test "/machines lists every machine with its routing and its usage in the log" do
-    log = start_log!()
-    ws = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
+  test "/machines lists every machine with its routing and its usage in the log", %{root: ws} = ctx do
+    log = start_log!(ctx)
 
     runner = scripted_runner([%{exit_status: 0, output: "ok"}, %{exit_status: 1, output: "no"}])
 
@@ -303,8 +299,9 @@ defmodule Xeito.MonitorTest do
            }
   end
 
-  test "the session reports git and the off-box budget, and the bar shows them", %{root: ws} do
-    log = start_log!()
+  test "the session reports git and the off-box budget, and the bar shows them", %{root: root} = ctx do
+    log = start_log!(ctx)
+    ws = Path.join(root, "ws")
     File.mkdir_p!(ws)
     {_, 0} = System.cmd("git", ["init", "-q", "-b", "work"], cd: ws)
     File.write!(Path.join(ws, "a.txt"), "x")
