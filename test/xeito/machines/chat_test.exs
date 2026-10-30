@@ -5,6 +5,7 @@ defmodule Xeito.Machines.ChatTest do
   alias Xeito.Machine
   alias Xeito.Machine.Engine
   alias Xeito.Machines.Chat
+  alias Xeito.Machines.Chat.Calls
 
   defp call(name, args), do: %{name: name, arguments: args}
   defp message(content, calls \\ []), do: %{content: content, tool_calls: calls}
@@ -13,8 +14,10 @@ defmodule Xeito.Machines.ChatTest do
   describe "repeated and invalid calls" do
     test "an exact repeat of a call made in this turn is not valid; a different one is" do
       seen = ctx(%{seen: [{"bash", %{"command" => "ls"}}]})
-      refute Chat.calls_next_risky?(seen, message("", [call("bash", %{"command" => "ls"})]))
-      assert Chat.calls_next_risky?(seen, message("", [call("bash", %{"command" => "pwd"})]))
+      assert Calls.valid(message("", [call("bash", %{"command" => "ls"})]), seen) == []
+
+      assert [%{name: "bash", arguments: %{"command" => "pwd"}}] =
+               Calls.valid(message("", [call("bash", %{"command" => "pwd"})]), seen)
     end
 
     test "queue_calls answers a repeat with a pointer to the earlier result and counts the streak" do

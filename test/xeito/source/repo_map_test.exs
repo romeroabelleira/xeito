@@ -3,11 +3,11 @@ defmodule Xeito.Source.RepoMapTest do
 
   alias Xeito.Source.RepoMap
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-map-#{System.unique_integer([:positive])}")
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: ws} do
     File.mkdir_p!(Path.join(ws, "lib/shop"))
     File.mkdir_p!(Path.join(ws, "deps/term_ui"))
-    on_exit(fn -> File.rm_rf(ws) end)
     File.write!(Path.join(ws, "mix.exs"), "defmodule Shop.MixProject do\nend\n")
 
     File.write!(Path.join(ws, "lib/shop/cart.ex"), """
@@ -58,36 +58,35 @@ defmodule Xeito.Source.RepoMapTest do
     assert cut =~ ~r/… \d+ more modules/
   end
 
-  test "an empty directory has no map" do
-    dir = Path.join(System.tmp_dir!(), "xeito-empty-#{System.unique_integer([:positive])}")
+  test "an empty directory has no map", %{ws: ws} do
+    dir = Path.join(ws, "empty")
     File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
     assert RepoMap.build(dir) == nil
   end
 
   describe "dependencies" do
-    defp map_of(files) do
-      ws = Path.join(System.tmp_dir!(), "xeito-deps-#{System.unique_integer([:positive])}")
+    # A project of its own under the test's directory.
+    defp map_of(root, files) do
+      ws = Path.join(root, "project-#{System.unique_integer([:positive])}")
 
       for {path, text} <- files do
         File.mkdir_p!(Path.dirname(Path.join(ws, path)))
         File.write!(Path.join(ws, path), text)
       end
 
-      on_exit(fn -> File.rm_rf(ws) end)
       RepoMap.build(ws) || ""
     end
 
-    test "an npm project's from package.json; none if it cannot be read" do
-      assert map_of(%{"package.json" => ~s({"dependencies": {"react": "1", "axios": "1"}})}) =~
+    test "an npm project's from package.json; none if it cannot be read", %{ws: ws} do
+      assert map_of(ws, %{"package.json" => ~s({"dependencies": {"react": "1", "axios": "1"}})}) =~
                "Dependencies (sources in deps/<name>/lib, read-only): axios, react"
 
-      refute map_of(%{"package.json" => "not json"}) =~ "Dependencies"
-      refute map_of(%{"package.json" => "{}"}) =~ "Dependencies"
+      refute map_of(ws, %{"package.json" => "not json"}) =~ "Dependencies"
+      refute map_of(ws, %{"package.json" => "{}"}) =~ "Dependencies"
     end
 
-    test "a project without deps/ or package.json has none" do
-      refute map_of(%{"mix.exs" => "defmodule P.MixProject do\nend\n", "lib/p.ex" => "defmodule P do\nend\n"}) =~
+    test "a project without deps/ or package.json has none", %{ws: ws} do
+      refute map_of(ws, %{"mix.exs" => "defmodule P.MixProject do\nend\n", "lib/p.ex" => "defmodule P do\nend\n"}) =~
                "Dependencies"
     end
   end

@@ -3,6 +3,8 @@ defmodule Xeito.Api.ConnectionTest do
 
   alias Xeito.Client
 
+  # Not ExUnit's tmp_dir: that is inside this git repository, and the workspace must be in none;
+  # socket paths are limited to about 100 bytes, too short for it as well.
   setup do
     dir = Path.join(System.tmp_dir!(), "xc-#{System.unique_integer([:positive])}")
     ws = Path.join(dir, "ws")

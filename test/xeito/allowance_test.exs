@@ -154,11 +154,17 @@ defmodule Xeito.AllowanceTest do
       assert_received {:get, "/api/v1/key"}
     end
 
-    test "a fetched allowance is used for a minute, then asked for again" do
-      s = %{keys: %{k: %{at: 0, left: 5.0, spent: 1.0}}, prices: %{}}
-      assert {:reply, {:ok, 4.0}, ^s} = Allowance.handle_call({:remaining, :k, 59_999}, self(), s)
-      assert {:reply, :stale, ^s} = Allowance.handle_call({:remaining, :k, 60_000}, self(), s)
-      assert {:reply, :stale, ^s} = Allowance.handle_call({:remaining, :other, 0}, self(), s)
+    test "a fetched allowance is used for a minute, then asked for again", %{cfg: cfg} do
+      assert Allowance.remaining(cfg, 0) == 5.0
+      assert_received {:get, "/api/v1/key"}
+      assert_received {:get, "/api/v1/credits"}
+      Allowance.spent(cfg, 1.0)
+
+      assert Allowance.remaining(cfg, 59_999) == 4.0
+      refute_received {:get, _}
+
+      assert Allowance.remaining(cfg, 60_000) == 5.0
+      assert_received {:get, "/api/v1/key"}
     end
 
     test "a model's price, and how it reasons, are fetched once", %{cfg: cfg} do

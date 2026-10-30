@@ -3,6 +3,10 @@ defmodule Xeito.EffectTest do
 
   alias Xeito.Effect
 
+  test "chat/2: an ordinary request carries no error" do
+    refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
+  end
+
   describe "replay/1: whether an effect may run again after a crash" do
     test "reading, deciding, asking a model and writing a whole file may" do
       for effect <- [

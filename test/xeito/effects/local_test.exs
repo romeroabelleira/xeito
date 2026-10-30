@@ -4,12 +4,10 @@ defmodule Xeito.Effects.LocalTest do
   alias Xeito.Effect
   alias Xeito.Effects.Local
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
-    %{ws: dir}
-  end
+  @moduletag :tmp_dir
+
+  # The workspace is the test's own directory.
+  setup %{tmp_dir: dir}, do: %{ws: dir}
 
   test "bash runs in the workspace and reports the exit status", %{ws: ws} do
     assert %{exit_status: 0, output: output} = Local.run(Effect.bash("pwd", cwd: ws), [])
@@ -28,13 +26,13 @@ defmodule Xeito.Effects.LocalTest do
   end
 
   test "a command's output is published as it runs, for the run that asked for it", %{ws: ws} do
-    Xeito.Events.subscribe("run-live")
+    Xeito.Events.subscribe(:all)
     effect = %{Effect.bash("echo hello", cwd: ws) | id: "run-live/e1"}
 
     Local.run(effect, run_id: "run-live", undo: false)
     assert_received {:xeito, "run-live", %{type: "output", attrs: %{"effect_id" => "run-live/e1", "text" => "hello\n"}}}
 
-    # Without a run, nobody follows it.
+    # Without a run, nobody follows it: no client of any run hears of the output.
     Local.run(Effect.bash("echo quiet", cwd: ws), [])
     refute_received {:xeito, _, %{type: "output"}}
   end
@@ -48,6 +46,31 @@ defmodule Xeito.Effects.LocalTest do
 
     assert %{ok: false, error: :outside_workspace} =
              Local.run(Effect.write("/tmp/x", "no", cwd: ws), [])
+  end
+
+  test "edit replaces exactly one occurrence and refuses ambiguity", %{ws: ws} do
+    File.write!(Path.join(ws, "a.txt"), "one two two")
+
+    assert %{ok: true} = Local.run(Effect.edit("a.txt", "one", "1", cwd: ws), [])
+    assert File.read!(Path.join(ws, "a.txt")) == "1 two two"
+
+    assert %{ok: false, error: "old_text matches 2 times" <> _} =
+             Local.run(Effect.edit("a.txt", "two", "2", cwd: ws), [])
+
+    assert %{ok: false, error: "old_text not found; nothing similar" <> _} =
+             Local.run(Effect.edit("a.txt", "zzz", "2", cwd: ws), [])
+
+    assert %{ok: false, error: :outside_workspace} =
+             Local.run(Effect.edit("../x", "a", "b", cwd: ws), [])
+  end
+
+  test "a missing workspace is reported, and nothing is started in it", %{tmp_dir: dir} do
+    gone = Path.join(dir, "gone")
+
+    assert %{exit_status: 127, output: "workspace missing: " <> _} =
+             Local.run(Effect.bash("ls", cwd: gone), [])
+
+    refute File.exists?(gone)
   end
 
   describe "undo: write, edit and bash are steps of their session" do
@@ -172,10 +195,6 @@ defmodule Xeito.Effects.LocalTest do
       assert_received {:xeito, ^run,
                        %{type: "retrying", attrs: %{"attempt" => 2, "of" => 3, "status" => 429, "effect_id" => "e1"}}}
     end
-
-    test "an ordinary request carries no error" do
-      refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
-    end
   end
 
   describe "model tiers" do
@@ -241,16 +260,5 @@ defmodule Xeito.Effects.LocalTest do
                  Local.run(effect, [run_id: run_id] ++ local_tier(:"local_tier_#{System.unique_integer([:positive])}"))
       end
     end
-  end
-
-  test "an effect that raised gets a result of its kind's shape, reporting the error" do
-    assert Xeito.Effects.error_result(Effect.bash("x"), "boom") == %{exit_status: -1, output: "boom"}
-
-    assert Xeito.Effects.error_result(%Effect{kind: :decide, args: %{}, reply: nil}, "boom") == %{
-             value: :abstain,
-             error: "boom"
-           }
-
-    assert Xeito.Effects.error_result(Effect.read("a"), "boom") == %{ok: false, error: "boom"}
   end
 end

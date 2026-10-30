@@ -18,12 +18,13 @@ defmodule Xeito.HarnessTest do
   alias Xeito.Session.Allowed
   alias Xeito.Session.Router
 
+  @moduletag :tmp_dir
+
   setup {Req.Test, :set_req_test_to_shared}
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
+  setup %{tmp_dir: dir} do
+    ws = Path.join(dir, "ws")
     File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
     %{ws: ws}
   end
 
@@ -103,7 +104,6 @@ defmodule Xeito.HarnessTest do
       ] ++
         if(calls == [],
           do: [],
-          # --- tools -------------------------------------------------------------------------------
           else: [
             %{
               "message" => %{
@@ -136,48 +136,9 @@ defmodule Xeito.HarnessTest do
 
   defp kinds(log, id), do: for({_, "effect_requested", {:effect_requested, e}} <- Log.read_run(log, id), do: e.kind)
 
-  test "edit replaces exactly one occurrence and refuses ambiguity", %{ws: ws} do
-    File.write!(Path.join(ws, "a.txt"), "one two two")
-
-    assert %{ok: true} = Local.run(Effect.edit("a.txt", "one", "1", cwd: ws), [])
-    # --- the chat machine --------------------------------------------------------------------
-    assert File.read!(Path.join(ws, "a.txt")) == "1 two two"
-
-    assert %{ok: false, error: "old_text matches 2 times" <> _} =
-             Local.run(Effect.edit("a.txt", "two", "2", cwd: ws), [])
-
-    assert %{ok: false, error: "old_text not found; nothing similar" <> _} =
-             Local.run(Effect.edit("a.txt", "zzz", "2", cwd: ws), [])
-
-    assert %{ok: false, error: :outside_workspace} =
-             Local.run(Effect.edit("../x", "a", "b", cwd: ws), [])
-  end
-
-  test "a missing workspace is reported, and nothing is started in it" do
-    gone = Path.join(System.tmp_dir!(), "xeito-gone-#{System.unique_integer([:positive])}")
-
-    assert %{exit_status: 127, output: "workspace missing: " <> _} =
-             Local.run(Effect.bash("ls", cwd: gone), [])
-
-    refute File.exists?(gone)
-  end
-
-  test "the transcript shows an edit as a compact diff" do
-    event = %{
-      "event" => "effect_requested",
-      "run" => "ses-x/t1",
-      "attrs" => %{
-        "kind" => "edit",
-        "args" => %{"path" => "a.py", "old" => "x = 1", "new" => "x = 2\ny = 3"}
-      }
-    }
-
-    assert Render.line(event) == "  edit a.py\n    - x = 1\n    + x = 2\n    + y = 3\n"
-  end
-
   test "chat: after edits the checks run before the answer; a failure goes back to the model",
-       %{ws: ws} do
-    log = start_log!()
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
     File.write!(Path.join(ws, "a.txt"), "bug")
     edit = fn old, new -> {"edit", %{"path" => "a.txt", "old_text" => old, "new_text" => new}} end
 
@@ -209,8 +170,8 @@ defmodule Xeito.HarnessTest do
   end
 
   test "chat: a turn stopped at its step limit with failing checks gets a budget to fix them",
-       %{ws: ws} do
-    log = start_log!()
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
     File.write!(Path.join(ws, "a.txt"), "bug")
     edit = fn old, new -> {"edit", %{"path" => "a.txt", "old_text" => old, "new_text" => new}} end
 
@@ -243,8 +204,8 @@ defmodule Xeito.HarnessTest do
   end
 
   test "chat: a turn stopped at its step limit closes with the model's summary, without tools",
-       %{ws: ws} do
-    log = start_log!()
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [
@@ -274,8 +235,8 @@ defmodule Xeito.HarnessTest do
   end
 
   test "chat: an exact repeat of a call is not run again; the model is pointed to the result",
-       %{ws: ws} do
-    log = start_log!()
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [
@@ -300,8 +261,8 @@ defmodule Xeito.HarnessTest do
     assert List.last(Enum.at(requests, 2)["messages"])["content"] =~ "you already made this exact call"
   end
 
-  test "chat: tool calls that keep failing end the turn; an empty answer is noted", %{ws: ws} do
-    log = start_log!()
+  test "chat: tool calls that keep failing end the turn; an empty answer is noted", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [
@@ -336,7 +297,7 @@ defmodule Xeito.HarnessTest do
   end
 
   test "session: the user's skills are not listed; one that fits is chosen by the Skill decision and suggested",
-       %{ws: ws} do
+       %{ws: ws} = ctx do
     home = Path.join(ws, "home")
     dir = Path.join([home, ".agents", "skills", "diagnosing-bugs"])
     File.mkdir_p!(dir)
@@ -353,7 +314,7 @@ defmodule Xeito.HarnessTest do
     Application.put_env(:xeito, :skills_home, home)
     on_exit(fn -> Application.put_env(:xeito, :skills_home, previous) end)
 
-    log = start_log!()
+    log = start_log!(ctx)
     decisions = %{"What does the user want" => "explain", "A skill is a set of instructions" => "first"}
     cfg = ollama(self(), [{"Let me reproduce it first.", []}], decisions)
 
@@ -378,8 +339,8 @@ defmodule Xeito.HarnessTest do
   end
 
   test "session: a go-ahead after an unfinished turn continues it with tools; only rule small talk drops tools",
-       %{ws: ws} do
-    log = start_log!()
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(
@@ -432,8 +393,8 @@ defmodule Xeito.HarnessTest do
     assert thanks["tools"] == []
   end
 
-  test "chat: a turn without edits answers without running the checks", %{ws: ws} do
-    log = start_log!()
+  test "chat: a turn without edits answers without running the checks", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     cfg = ollama(self(), [{"Just an answer.", []}])
     id = run_chat(log, ws, cfg, %{prompt: "hi", verify: "false"})
 
@@ -443,10 +404,11 @@ defmodule Xeito.HarnessTest do
     assert kinds(log, id) == [:decide, :chat]
   end
 
-  test "chat: a safe bash call runs, its output goes back to the model, then it answers", %{
-    ws: ws
-  } do
-    log = start_log!()
+  test "chat: a safe bash call runs, its output goes back to the model, then it answers",
+       %{
+         ws: ws
+       } = ctx do
+    log = start_log!(ctx)
     File.write!(Path.join(ws, "hello.txt"), "hi")
     Xeito.Events.subscribe(:all)
 
@@ -490,8 +452,8 @@ defmodule Xeito.HarnessTest do
     assert_received {:xeito, ^id, %{type: "delta", attrs: %{"text" => "Let me"}}}
   end
 
-  test "chat: a forbidden command is never run; the model is told and answers", %{ws: ws} do
-    log = start_log!()
+  test "chat: a forbidden command is never run; the model is told and answers", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     calls = [{"bash", %{"command" => "rm -rf /"}}, {"read", %{"path" => "x"}}]
     cfg = ollama(self(), [{"", calls}, {"I will not do that.", []}])
     id = run_chat(log, ws, cfg, %{prompt: "clean up"})
@@ -509,8 +471,8 @@ defmodule Xeito.HarnessTest do
 
   # `sh -c '…'` goes to review: its writes are not visible in the command (a plain `touch` inside
   # the workspace would be safe by rule).
-  test "chat: a command for review waits for a human; approved, it runs", %{ws: ws} do
-    log = start_log!()
+  test "chat: a command for review waits for a human; approved, it runs", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     cfg = ollama(self(), [{"", [{"bash", %{"command" => "sh -c 'touch made.txt'"}}]}, {"Done.", []}])
     id = run_chat(log, ws, cfg, %{prompt: "make a file"})
 
@@ -524,10 +486,11 @@ defmodule Xeito.HarnessTest do
     assert {:ok, %{state: :answered}} = Run.result(log, id)
   end
 
-  test "chat: invalid tool calls are answered with an error, and max_steps bounds the loop", %{
-    ws: ws
-  } do
-    log = start_log!()
+  test "chat: invalid tool calls are answered with an error, and max_steps bounds the loop",
+       %{
+         ws: ws
+       } = ctx do
+    log = start_log!(ctx)
     bad = {"", [{"teleport", %{"to" => "mars"}}]}
     cfg = ollama(self(), [bad, bad, bad])
     id = run_chat(log, ws, cfg, %{prompt: "go", max_steps: 2})
@@ -541,9 +504,8 @@ defmodule Xeito.HarnessTest do
     assert List.last(second["messages"])["content"] =~ "unknown tool"
   end
 
-  test "fix_failing_test delegates the fix to a chat run and verifies it", %{ws: ws} do
-    # --- delegation: fix_failing_test hands the fix to a chat child run ------------------------
-    log = start_log!()
+  test "fix_failing_test delegates the fix to a chat run and verifies it", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     File.write!(Path.join(ws, "status.txt"), "broken\n")
 
     edit = {"edit", %{"path" => "status.txt", "old_text" => "broken", "new_text" => "fixed"}}
@@ -580,7 +542,6 @@ defmodule Xeito.HarnessTest do
   end
 
   defp session(ws, log, cfg) do
-    # --- sessions ----------------------------------------------------------------------------
     {:ok, id} =
       Session.start(
         cwd: ws,
@@ -602,8 +563,8 @@ defmodule Xeito.HarnessTest do
     end
   end
 
-  test "session: prompt → Intent → chat machine → answer, with history across turns", %{ws: ws} do
-    log = start_log!()
+  test "session: prompt → Intent → chat machine → answer, with history across turns", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     File.write!(Path.join(ws, "AGENTS.md"), "Always answer in one sentence.")
 
     cfg =
@@ -643,8 +604,8 @@ defmodule Xeito.HarnessTest do
     assert text =~ "Intent: question by local"
   end
 
-  test "session: relays an approval to the waiting run; the router picks machines by intent and text", %{ws: ws} do
-    log = start_log!()
+  test "session: relays an approval to the waiting run; the router picks machines by intent and text", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [{"", [{"bash", %{"command" => "sh -c 'touch approved.txt'"}}]}, {"ok", []}], %{
@@ -669,8 +630,8 @@ defmodule Xeito.HarnessTest do
     assert {Chat, _} = Router.route(:edit, "rename this function")
   end
 
-  test "session: a review says how long the command will get, when the model set it", %{ws: ws} do
-    log = start_log!()
+  test "session: a review says how long the command will get, when the model set it", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     call = {"", [{"bash", %{"command" => "sh -c 'touch slow.txt'", "timeout_s" => 9_999}}]}
 
     cfg =
@@ -685,8 +646,8 @@ defmodule Xeito.HarnessTest do
     next_event("turn_finished")
   end
 
-  test "session: a command allowed for the session or always is not asked about again", %{ws: ws} do
-    log = start_log!()
+  test "session: a command allowed for the session or always is not asked about again", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     touch = fn name -> {"", [{"bash", %{"command" => "sh -c 'touch #{name}'"}}]} end
     one = "sh -c 'touch one.txt'"
     # Six turns: three in the first session, three in a second one in the same workspace.
@@ -734,8 +695,8 @@ defmodule Xeito.HarnessTest do
     next_event("turn_finished")
   end
 
-  test "session: a text answer to a review is not run; the model is told what to do instead", %{ws: ws} do
-    log = start_log!()
+  test "session: a text answer to a review is not run; the model is told what to do instead", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [{"", [{"bash", %{"command" => "sh -c 'touch nope.txt'"}}]}, {"Listed instead.", []}], %{
@@ -758,8 +719,8 @@ defmodule Xeito.HarnessTest do
              List.last(messages)
   end
 
-  test "session: /steer reaches the running chat turn at its next model call", %{ws: ws} do
-    log = start_log!()
+  test "session: /steer reaches the running chat turn at its next model call", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [{"", [{"bash", %{"command" => "sleep 0.1"}}]}, {"Using pytest.", []}], %{
@@ -781,8 +742,8 @@ defmodule Xeito.HarnessTest do
     assert Enum.any?(messages, &(&1["content"] == "(The user, while you were working:) use pytest"))
   end
 
-  test "session: a steer the turn ended before delivering is queued, then sent as the next prompt", %{ws: ws} do
-    log = start_log!()
+  test "session: a steer the turn ended before delivering is queued, then sent as the next prompt", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     test = self()
 
     held = fn ->
@@ -811,8 +772,8 @@ defmodule Xeito.HarnessTest do
     assert %{attrs: %{"answer" => "Pytest it is."}} = next_event("turn_finished")
   end
 
-  test "session: /halt stops a turn mid-command; a go-ahead then continues it cleanly", %{ws: ws} do
-    log = start_log!()
+  test "session: /halt stops a turn mid-command; a go-ahead then continues it cleanly", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [{"", [{"bash", %{"command" => "sleep 5"}}]}, {"Resumed.", []}], %{
@@ -841,8 +802,8 @@ defmodule Xeito.HarnessTest do
     assert Enum.any?(messages, &(&1["role"] == "assistant" and &1["content"] =~ "Halted by the user"))
   end
 
-  test "session: /halt during the intent decision ends the turn; the late decision is dropped", %{ws: ws} do
-    log = start_log!()
+  test "session: /halt during the intent decision ends the turn; the late decision is dropped", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     test = self()
 
     held = fn ->
@@ -869,8 +830,8 @@ defmodule Xeito.HarnessTest do
     refute_received {:chat_request, _}
   end
 
-  test "session: a stopped session is rebuilt from the log and continues its turns", %{ws: ws} do
-    log = start_log!()
+  test "session: a stopped session is rebuilt from the log and continues its turns", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [{"First answer.", []}, {"Second answer.", []}], %{
@@ -907,8 +868,8 @@ defmodule Xeito.HarnessTest do
     assert "first question" in Enum.map(second["messages"], & &1["content"])
   end
 
-  test "session: approving at fix_failing_test's ask_human continues the machine", %{ws: ws} do
-    log = start_log!()
+  test "session: approving at fix_failing_test's ask_human continues the machine", %{ws: ws} = ctx do
+    log = start_log!(ctx)
 
     cfg =
       ollama(self(), [{"Fixed.", []}], %{
@@ -937,9 +898,10 @@ defmodule Xeito.HarnessTest do
     assert %{attrs: %{"status" => :done}} = next_event("turn_finished")
   end
 
-  test "api: a client starts a session, prompts, and receives the streamed events", %{ws: ws} do
-    log = start_log!()
+  test "api: a client starts a session, prompts, and receives the streamed events", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     cfg = ollama(self(), [{"Hello from the model.", []}], %{"What does the user want" => "other"})
+    # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
     dir = Path.join(System.tmp_dir!(), "xa-#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf(dir) end)
     path = Path.join(dir, "x.sock")
@@ -979,17 +941,17 @@ defmodule Xeito.HarnessTest do
     assert %{"ok" => false, "error" => "no such session"} =
              Client.request(client, %{"cmd" => "status", "session" => "nope"})
 
-    # --- the client API over the Unix socket -------------------------------------------------
-
     assert %{"ok" => true, "status" => %{"history" => 2}} =
              Client.request(client, %{"cmd" => "status", "session" => session})
   end
 
-  test "an idle session closes, frees its budget, and a client's next prompt resumes it", %{
-    ws: ws
-  } do
-    log = start_log!()
+  test "an idle session closes, frees its budget, and a client's next prompt resumes it",
+       %{
+         ws: ws
+       } = ctx do
+    log = start_log!(ctx)
     cfg = ollama(self(), [{"one", []}, {"two", []}], %{"What does the user want" => "other"})
+    # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
     dir = Path.join(System.tmp_dir!(), "xa-#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf(dir) end)
     path = Path.join(dir, "x.sock")

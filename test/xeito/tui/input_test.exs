@@ -43,6 +43,8 @@ defmodule Xeito.Tui.InputTest do
   test "the commands are the daemon's and the TUI's own, sorted, each once" do
     commands = Input.commands()
     assert commands == commands |> Enum.uniq() |> Enum.sort()
-    assert "approve" in commands and "quit" in commands and "statusbar" in commands
+    assert Xeito.Session.commands() -- commands == []
+    # Each command the TUI answers itself, so Tab offers it: none may go missing.
+    assert ~w(exit legend quit sessions skills statusbar) -- commands == []
   end
 end

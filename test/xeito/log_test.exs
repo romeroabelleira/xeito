@@ -4,8 +4,10 @@ defmodule Xeito.LogTest do
   alias Xeito.Log
   alias Xeito.Log.Event
 
-  test "appends events with per-run sequence numbers and reads exact terms back" do
-    log = start_log!()
+  @moduletag :tmp_dir
+
+  test "appends events with per-run sequence numbers and reads exact terms back", ctx do
+    log = start_log!(ctx)
 
     assert {:ok, [1, 2]} =
              Log.append(log, "r1", [
@@ -32,8 +34,8 @@ defmodule Xeito.LogTest do
            ] = Log.read_run(log, "r1")
   end
 
-  test "keeps the log in WAL mode and syncs every commit to disk" do
-    log = start_log!()
+  test "keeps the log in WAL mode and syncs every commit to disk", ctx do
+    log = start_log!(ctx)
 
     assert [["wal"]] = Log.query(log, "PRAGMA journal_mode")
     # 2 is FULL: a commit survives a power cut, not only a crash.
@@ -47,8 +49,8 @@ defmodule Xeito.LogTest do
     assert {:error, {{:badmatch, [["memory"]]}, _}} = Log.start_link(path: ":memory:")
   end
 
-  test "writes the OCEL 2.0 relational layout" do
-    log = start_log!()
+  test "writes the OCEL 2.0 relational layout", ctx do
+    log = start_log!(ctx)
 
     Log.append(log, "r1", [
       Event.new(
@@ -89,10 +91,7 @@ defmodule Xeito.LogTest do
     end
   end
 
-  test "a log written before an event type gained an attribute gets its column when opened" do
-    dir = Path.join(System.tmp_dir!(), "xeito-test-#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(dir) end)
-    File.mkdir_p!(dir)
+  test "a log written before an event type gained an attribute gets its column when opened", %{tmp_dir: dir} do
     path = Path.join(dir, "old.sqlite")
 
     {:ok, db} = Exqlite.Sqlite3.open(path)
@@ -121,9 +120,7 @@ defmodule Xeito.LogTest do
            ]
   end
 
-  test "sequence numbers continue after a restart of the log" do
-    dir = Path.join(System.tmp_dir!(), "xeito-test-#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(dir) end)
+  test "sequence numbers continue after a restart of the log", %{tmp_dir: dir} do
     path = Path.join(dir, "log.sqlite")
 
     first = start_supervised!({Log, path: path}, id: :first)

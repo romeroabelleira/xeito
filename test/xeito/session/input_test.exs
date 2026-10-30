@@ -5,30 +5,25 @@ defmodule Xeito.Session.InputTest do
   alias Xeito.Machines.Chat
   alias Xeito.Session.Input
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "xeito-sys-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf!(dir) end)
-    %{dir: dir}
-  end
+  @moduletag :tmp_dir
 
-  test "without AGENTS.md, the default system prompt", %{dir: dir} do
+  test "without AGENTS.md, the default system prompt", %{tmp_dir: dir} do
     assert Input.system_prompt(dir) == Chat.default_system()
   end
 
-  test "AGENTS.md follows the default prompt whole", %{dir: dir} do
+  test "AGENTS.md follows the default prompt whole", %{tmp_dir: dir} do
     File.write!(Path.join(dir, "AGENTS.md"), "Use tabs.")
     assert Input.system_prompt(dir) == Chat.default_system() <> "\nProject context (AGENTS.md):\n\nUse tabs."
   end
 
-  test "a longer AGENTS.md is cut at 16 KiB, and the model is told so", %{dir: dir} do
+  test "a longer AGENTS.md is cut at 16 KiB, and the model is told so", %{tmp_dir: dir} do
     File.write!(Path.join(dir, "AGENTS.md"), String.duplicate("a", 16_384) <> "THE REST")
     prompt = Input.system_prompt(dir)
     refute prompt =~ "THE REST"
     assert prompt =~ String.duplicate("a", 16_384) <> "\n\n[AGENTS.md continues: cut at 16384 bytes here."
   end
 
-  test "exactly 16 KiB is not cut", %{dir: dir} do
+  test "exactly 16 KiB is not cut", %{tmp_dir: dir} do
     File.write!(Path.join(dir, "AGENTS.md"), String.duplicate("a", 16_384))
     refute Input.system_prompt(dir) =~ "AGENTS.md continues"
   end

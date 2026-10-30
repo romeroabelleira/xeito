@@ -6,7 +6,8 @@ defmodule Xeito.Tui.Timers do
   latest generation (`blink`, `spin_gen` in the state) counts, so older ones are stale. The
   cursor blinks for 10 s after the last key, then stays solid (`cursor_on`) and its timer stops.
   The spinner advances `frame` while a run works, and stops at the first tick after it waits,
-  pauses, ends or loses the daemon.
+  pauses, ends or loses the daemon. A state may carry `:blink_ms` or `:spin_ms` to replace an
+  interval, so a test need not wait for the real one.
   """
 
   @blink_ms 530
@@ -17,7 +18,7 @@ defmodule Xeito.Tui.Timers do
   @spec wake_cursor(map()) :: map()
   def wake_cursor(state) do
     gen = state.blink + 1
-    Process.send_after(self(), {:blink, gen}, @blink_ms)
+    Process.send_after(self(), {:blink, gen}, interval(state, :blink_ms))
     %{state | cursor_on: true, blink: gen, blink_until: now() + @blink_for_ms}
   end
 
@@ -26,7 +27,7 @@ defmodule Xeito.Tui.Timers do
   def spin(%{spinning: false} = state) do
     if working?(state) do
       gen = state.spin_gen + 1
-      Process.send_after(self(), {:spin, gen}, @spin_ms)
+      Process.send_after(self(), {:spin, gen}, interval(state, :spin_ms))
       %{state | spinning: true, spin_gen: gen}
     else
       state
@@ -43,7 +44,7 @@ defmodule Xeito.Tui.Timers do
 
   defp spin_tick(gen, state) do
     if working?(state) do
-      Process.send_after(self(), {:spin, gen}, @spin_ms)
+      Process.send_after(self(), {:spin, gen}, interval(state, :spin_ms))
       %{state | frame: state.frame + 1}
     else
       %{state | spinning: false}
@@ -54,12 +55,15 @@ defmodule Xeito.Tui.Timers do
 
   defp blink(gen, state) do
     if now() < state.blink_until do
-      Process.send_after(self(), {:blink, gen}, @blink_ms)
+      Process.send_after(self(), {:blink, gen}, interval(state, :blink_ms))
       %{state | cursor_on: not state.cursor_on}
     else
       %{state | cursor_on: true}
     end
   end
+
+  defp interval(state, :blink_ms), do: Map.get(state, :blink_ms, @blink_ms)
+  defp interval(state, :spin_ms), do: Map.get(state, :spin_ms, @spin_ms)
 
   defp now, do: System.monotonic_time(:millisecond)
 end

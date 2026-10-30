@@ -9,9 +9,11 @@ defmodule Xeito.Client.OneShotTest do
   end
 
   describe "parse/1" do
-    test "defaults: no skill or machine, tools off, streaming left to the terminal" do
+    test "defaults: no skill, machine, answer format or sampling; tools off, streaming left to the terminal" do
       assert %{skill: nil, machine: nil, tools: false, stream: nil, json: false, extract: nil, yes: false, words: []} =
                parse!([])
+
+      assert %{as: nil, think: nil, temperature: nil, dry_run: false, list: false, print_skill: nil} = parse!([])
     end
 
     test "flags and the words of the request" do
@@ -26,7 +28,6 @@ defmodule Xeito.Client.OneShotTest do
     test "the answer format, tier, model, sampling and thinking; dry runs and the skill listing" do
       opts = parse!(~w(--as triage --tier remote --model m/x -t 0.3 --think))
       assert %{as: "triage", tier: "remote", model: "m/x", temperature: 0.3, think: true} = opts
-      assert %{think: nil, temperature: nil, as: nil, dry_run: false, list: false, print_skill: nil} = parse!([])
       assert %{think: false} = parse!(~w(--no-think))
       assert %{temperature: 1.0} = parse!(~w(--temperature 1))
       assert %{dry_run: true} = parse!(~w(--dry-run))

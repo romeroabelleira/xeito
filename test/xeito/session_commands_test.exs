@@ -6,11 +6,12 @@ defmodule Xeito.SessionCommandsTest do
   alias Xeito.Session.Allowed
   alias Xeito.Session.Directory
 
-  setup do
-    ws = Path.join(System.tmp_dir!(), "xeito-cmd-#{System.unique_integer([:positive])}")
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} = ctx do
+    ws = Path.join(dir, "ws")
     File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
-    log = start_log!()
+    log = start_log!(ctx)
     {:ok, id} = Session.start(cwd: ws, log: log, id: "ses-cmd-#{System.unique_integer([:positive])}")
     Session.subscribe(id)
     %{id: id, log: log, ws: ws}
@@ -212,8 +213,7 @@ defmodule Xeito.SessionCommandsTest do
     for name <- Session.commands(), do: assert(help =~ "/#{name}")
   end
 
-  test "help and machines are notices", %{id: id} do
-    assert {:notice, "/" <> _} = reply(id, "/help")
+  test "/machines lists the machines, as a notice", %{id: id} do
     assert {:notice, text} = reply(id, "/machines")
     assert text =~ "run_tests"
   end
@@ -248,7 +248,7 @@ defmodule Xeito.SessionCommandsTest do
                Session.history(id)
     end
 
-    test "a halted command leaves a note that it did not finish", %{id: id} do
+    test "a halted command leaves a note that it did not finish; a second /halt has nothing to stop", %{id: id} do
       :ok = Session.prompt(id, "/run sleep 5")
       assert_receive {:xeito, _, %{type: "effect_requested"}}, 2_000
       :ok = Session.prompt(id, "/halt")
@@ -256,6 +256,8 @@ defmodule Xeito.SessionCommandsTest do
 
       assert [%{role: "user", content: "(I ran `sleep 5` in the workspace and stopped it before it finished.)"}] =
                Session.history(id)
+
+      assert {:error, "nothing is running"} = reply(id, "/halt")
     end
 
     test "a rebuilt session has the same note", %{id: id, log: log, ws: ws} do
@@ -361,15 +363,6 @@ defmodule Xeito.SessionCommandsTest do
     assert {:error, "nothing is running"} = reply(id, "/halt")
   end
 
-  test "/halt stops a running command; the turn ends halted", %{id: id} do
-    :ok = Session.prompt(id, "/run sleep 5")
-    assert_receive {:xeito, _, %{type: "effect_requested"}}, 2_000
-
-    :ok = Session.prompt(id, "/halt")
-    assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :halted}}}, 2_000
-    assert {:error, "nothing is running"} = reply(id, "/halt")
-  end
-
   test "/halt stops the command and the processes it started", %{id: id, ws: ws} do
     :ok = Session.prompt(id, "/run sleep 30 & echo $! > child.pid; wait")
     path = Path.join(ws, "child.pid")
@@ -458,17 +451,19 @@ defmodule Xeito.SessionCommandsTest do
     assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :done}}}, 5_000
   end
 
-  test "/machine starts any registered machine with the input it needs", %{id: id} do
+  test "/machine starts the named machine with the input it needs", %{id: id} do
     for name <- ~w(check commit fix_failing_test run_tests) do
       :ok = Session.prompt(id, "/machine #{name}")
-      assert_receive {:xeito, _, %{type: "run_selected", attrs: %{"reason" => "/machine"}}}, 2_000
+      assert_receive {:xeito, _, %{type: "run_selected", attrs: %{"reason" => "/machine", "machine" => machine}}}, 2_000
+      assert machine |> to_string() |> String.ends_with?("." <> Macro.camelize(name))
+      # The turn is only waited for: in this workspace each machine ends or is halted.
       :ok = Session.prompt(id, "/halt")
       assert_receive {:xeito, _, %{type: "turn_finished"}}, 5_000
     end
   end
 
-  test "a session's step limit goes into its chat turns", %{ws: ws} do
-    log = start_log!()
+  test "a session's step limit goes into its chat turns", %{ws: ws} = ctx do
+    log = start_log!(ctx)
     {:ok, id} = Session.start(cwd: ws, log: log, id: "ses-max-#{System.unique_integer([:positive])}", max_steps: 3)
     Session.subscribe(id)
     :ok = Session.prompt(id, "/machine chat")

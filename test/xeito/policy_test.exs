@@ -6,7 +6,6 @@ defmodule Xeito.PolicyTest do
   alias Xeito.Decisions.Risk
   alias Xeito.Decisions.Triage
   alias Xeito.Policy
-  alias Xeito.Tiers.Queue
 
   defp all_available(_tier), do: true
 
@@ -57,25 +56,6 @@ defmodule Xeito.PolicyTest do
   test "unavailable tiers are dropped and a human can close the ladder" do
     policy = Policy.for_type(Decision.type!(Triage), policy: [human: true])
     assert Policy.plan(policy, [:local_decision, :local], nil, &(&1 == :local)) == [:rules, :local, :human]
-  end
-
-  test "the queue admits at most `capacity` concurrent calls per tier" do
-    Application.put_env(:xeito, :tier_capacity, %{test_tier: 2})
-    on_exit(fn -> Application.delete_env(:xeito, :tier_capacity) end)
-    {:ok, counter} = Agent.start_link(fn -> {0, 0} end)
-
-    work = fn ->
-      Agent.update(counter, fn {now, peak} -> {now + 1, max(peak, now + 1)} end)
-      Process.sleep(30)
-      Agent.update(counter, fn {now, peak} -> {now - 1, peak} end)
-    end
-
-    1..6
-    |> Enum.map(fn _ -> Task.async(fn -> Queue.run(:test_tier, work) end) end)
-    |> Task.await_many()
-
-    assert {0, 2} = Agent.get(counter, & &1)
-    assert Queue.status(:test_tier) == {0, 0}
   end
 
   test "by default only configured tiers are available" do

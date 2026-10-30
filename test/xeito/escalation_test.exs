@@ -5,9 +5,6 @@ defmodule Xeito.EscalationTest do
   alias Xeito.Budget
   alias Xeito.Decisions.Risk
   alias Xeito.Decisions.Triage
-
-  # --- stubs -------------------------------------------------------------------------------
-
   alias Xeito.Escalation
   alias Xeito.Log
   alias Xeito.Machines.FixFailingTest
@@ -128,8 +125,6 @@ defmodule Xeito.EscalationTest do
 
       %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
     end
-
-    # --- tests -------------------------------------------------------------------------------
   end
 
   defp decide(type, input, opts) do
@@ -386,8 +381,9 @@ defmodule Xeito.EscalationTest do
     assert d.value == :abstain
   end
 
-  test "a human tier waits for an answer" do
-    log = start_log!()
+  @tag :tmp_dir
+  test "a human tier waits for an answer", ctx do
+    log = start_log!(ctx)
     parent = run_id()
 
     task =
@@ -417,12 +413,12 @@ defmodule Xeito.EscalationTest do
     assert %{value: :test_bug, actor: :human} = Task.await(task)
   end
 
-  test "a run's decisions are escalated, logged with cost, and totalled per run" do
-    log = start_log!()
+  @tag :tmp_dir
+  test "a run's decisions are escalated, logged with cost, and totalled per run", %{tmp_dir: dir} = ctx do
+    log = start_log!(ctx)
     tiers = [local: local(true)]
-    ws = Path.join(System.tmp_dir!(), "xeito-ws-#{System.unique_integer([:positive])}")
+    ws = Path.join(dir, "ws")
     File.mkdir_p!(ws)
-    on_exit(fn -> File.rm_rf(ws) end)
 
     runner = {Xeito.Effects.Local, decider: [deciders: [:local], tiers: tiers]}
     input = %{cwd: ws, test_cmd: "echo 'left: 1 right: 2'; exit 1"}

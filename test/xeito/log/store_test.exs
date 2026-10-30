@@ -6,9 +6,8 @@ defmodule Xeito.Log.StoreTest do
   alias Xeito.Log.Event
   alias Xeito.Log.Sql
   alias Xeito.Log.Store
-  alias Xeito.Machine
-  alias Xeito.Machines.Chat
-  alias Xeito.Run.Recovery
+
+  @moduletag :tmp_dir
 
   defp msg(role, content), do: %{role: role, content: content}
 
@@ -25,8 +24,8 @@ defmodule Xeito.Log.StoreTest do
 
   defp count(log, sql), do: log |> Log.query(sql) |> then(fn [[n]] -> n end)
 
-  test "message lists are stored once per message, shared prefixes included, and read back exactly" do
-    log = start_log!()
+  test "message lists are stored once per message, shared prefixes included, and read back exactly", ctx do
+    log = start_log!(ctx)
     system = msg("system", "be brief")
     turn1 = [system, msg("user", "hi")]
     turn2 = turn1 ++ [msg("assistant", "hello"), msg("user", "list files")]
@@ -57,8 +56,8 @@ defmodule Xeito.Log.StoreTest do
     refute args =~ "list files"
   end
 
-  test "the event an effect result produces refers to the stored result" do
-    log = start_log!()
+  test "the event an effect result produces refers to the stored result", ctx do
+    log = start_log!(ctx)
     result = %{content: String.duplicate("a long answer ", 50), tool_calls: []}
 
     events = [
@@ -82,8 +81,8 @@ defmodule Xeito.Log.StoreTest do
     assert bytes < 100
   end
 
-  test "terms stored before the compact layout read as they are" do
-    log = start_log!()
+  test "terms stored before the compact layout read as they are", ctx do
+    log = start_log!(ctx)
     Log.append(log, "r", [Event.new("state_entered", {:state_entered, :a}, %{"state" => :a})])
 
     old = {:effect_requested, %{Effect.chat([msg("user", "hi")]) | id: "r/e1"}}
@@ -97,8 +96,8 @@ defmodule Xeito.Log.StoreTest do
     assert [_, {2, "effect_requested", ^old}] = Log.read_run(log, "r")
   end
 
-  test "sweep deletes only messages no event refers to" do
-    log = start_log!()
+  test "sweep deletes only messages no event refers to", ctx do
+    log = start_log!(ctx)
     a = [msg("system", "s"), msg("user", "one")]
     b = a ++ [msg("assistant", "two")]
     Log.append(log, "r1", [chat_requested("r1/e1", a)])
@@ -116,34 +115,8 @@ defmodule Xeito.Log.StoreTest do
     assert Log.read_run(log, "r1") == [{1, "effect_requested", chat_requested("r1/e1", a).term}]
   end
 
-  test "replay detects a logged effect that differs from the one it recomputes (desync)" do
-    chat = Machine.fetch!(Chat)
-    input = %{cwd: "/w", prompt: "hi", messages: [], system: "s"}
-    # A chat turn first decides on a skill; the first model request follows.
-    started = Machine.Engine.start(chat, input)
-    [skill] = started.effects
-    {:ok, step} = Machine.Engine.handle(chat, started.leaf, started.ctx, {:decided, :none}, %{value: :none})
-    [effect] = step.effects
-    {skill, effect} = {%{skill | id: "r/e1"}, %{effect | id: "r/e2"}}
-
-    entries = fn logged ->
-      [
-        {1, "run_started", {:run_started, Chat, chat.version, input}},
-        {2, "effect_requested", {:effect_requested, skill}},
-        {3, "effect_completed", {:effect_completed, "r/e1", %{value: :none}}},
-        {4, "event_received", {:event, {:decided, :none}, %{value: :none}, :code}},
-        {5, "effect_requested", {:effect_requested, logged}}
-      ]
-    end
-
-    assert {:ok, %{desync: nil, pending: [^effect]}} = Recovery.rebuild(Chat, entries.(effect))
-
-    tampered = put_in(effect.args.messages, [msg("system", "s"), msg("user", "something else")])
-    assert {:ok, %{desync: "r/e2"}} = Recovery.rebuild(Chat, entries.(tampered))
-  end
-
-  test "messages are stored as JSON that SQL can read; the term only when JSON is not exact" do
-    log = start_log!()
+  test "messages are stored as JSON that SQL can read; the term only when JSON is not exact", ctx do
+    log = start_log!(ctx)
 
     call = %{function: %{name: "bash", arguments: %{"command" => "ls"}}}
 
@@ -166,10 +139,7 @@ defmodule Xeito.Log.StoreTest do
            ) == [["system", nil, 1], ["assistant", "ls", 1], ["tool", nil, 1], ["user", nil, 0]]
   end
 
-  test "a message table from before JSON storage is migrated on open" do
-    dir = Path.join(System.tmp_dir!(), "xeito-mig-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf(dir) end)
+  test "a message table from before JSON storage is migrated on open", %{tmp_dir: dir} do
     path = Path.join(dir, "log.sqlite")
     chain = [msg("system", "s"), msg("user", "hi")]
 

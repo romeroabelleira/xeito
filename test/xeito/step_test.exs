@@ -7,6 +7,8 @@ defmodule Xeito.StepTest do
   alias Xeito.Run
   alias Xeito.RunSupervisor
 
+  @moduletag :tmp_dir
+
   @ctx %{cwd: "/tmp", test_cmd: "mix test"}
 
   defp start(log, debug) do
@@ -30,8 +32,8 @@ defmodule Xeito.StepTest do
   defp paused_in(id, leaf),
     do: eventually(fn -> Run.whereis(id) && match?(%{leaf: ^leaf, paused: true}, Run.snapshot(id)) end)
 
-  test "step mode holds each result until released; a held decision can be answered by a human" do
-    log = start_log!()
+  test "step mode holds each result until released; a held decision can be answered by a human", ctx do
+    log = start_log!(ctx)
     Xeito.Events.subscribe(:all)
     id = start(log, %{step: true, breakpoints: []})
 
@@ -46,18 +48,19 @@ defmodule Xeito.StepTest do
     assert {:error, :invalid_value} = Run.step(id, {:decide, :nonsense})
     assert :ok = Run.step(id, {:decide, :flaky})
     paused_in(id, :rerun)
-    assert :ok = Run.debug(id, %{step: false})
 
     [decision] =
       for {_, "decision_made", {:decision_made, _, d}} <- Log.read_run(log, id), do: d
 
     assert %{value: :flaky, actor: :human, confidence: 1.0} = decision
     assert [%{replaced: %{value: :code_bug}}] = decision.evidence
+
+    assert :ok = Run.debug(id, %{step: false})
     assert {:error, :not_paused} = Run.step(id)
   end
 
-  test "a decision breakpoint pauses only at that decision" do
-    log = start_log!()
+  test "a decision breakpoint pauses only at that decision", ctx do
+    log = start_log!(ctx)
     id = start(log, %{step: false, breakpoints: [{:decision, Triage}]})
 
     paused_in(id, :triage)

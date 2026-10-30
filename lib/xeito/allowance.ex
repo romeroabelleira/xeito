@@ -108,14 +108,17 @@ defmodule Xeito.Allowance do
   @doc false
   def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, __MODULE__))
 
-  @doc "What the tier's key may still spend (fetched at most once a minute); `nil` if unknown."
-  @spec remaining(keyword()) :: float() | nil
-  def remaining(cfg) do
+  @doc """
+  What the tier's key may still spend (fetched at most once a minute); `nil` if unknown. `now` is
+  the time in ms the minute is measured from, the monotonic clock unless a test says otherwise.
+  """
+  @spec remaining(keyword(), integer()) :: float() | nil
+  def remaining(cfg, now \\ now()) do
     k = {cfg[:url], cfg[:api_key]}
 
-    case GenServer.call(__MODULE__, {:remaining, k, now()}) do
+    case GenServer.call(__MODULE__, {:remaining, k, now}) do
       {:ok, left} -> left
-      :stale -> GenServer.call(__MODULE__, {:fetched, k, fetch_left(cfg), now()})
+      :stale -> GenServer.call(__MODULE__, {:fetched, k, fetch_left(cfg), now})
     end
   end
 

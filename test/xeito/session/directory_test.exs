@@ -7,12 +7,12 @@ defmodule Xeito.Session.DirectoryTest do
   alias Xeito.Session
   alias Xeito.Session.Directory
 
-  setup do
-    root = Path.join(System.tmp_dir!(), "xeito-dir-#{System.unique_integer([:positive])}")
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: root} = ctx do
     [ws, other] = for name <- ~w(ws other), do: Path.join(root, name)
     Enum.each([ws, other], &File.mkdir_p!/1)
-    on_exit(fn -> File.rm_rf(root) end)
-    %{log: start_log!(), ws: ws, other: other}
+    %{log: start_log!(ctx), ws: ws, other: other}
   end
 
   defp session(log, cwd) do

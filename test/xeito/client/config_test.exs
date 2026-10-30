@@ -23,4 +23,25 @@ defmodule Xeito.Client.ConfigTest do
     System.delete_env("XDG_CONFIG_HOME")
     assert Config.path() == Path.expand("~/.config/xeito/tui.json")
   end
+
+  @tag :tmp_dir
+  test "load/1 and save/2: preferences are merged over the defaults; a file that is not JSON reads as them",
+       %{tmp_dir: root} do
+    file = Path.join(root, "cfg/tui.json")
+
+    assert %{"status_bar" => %{"visible" => true, "hidden" => []}} =
+             Config.load(file)
+
+    :ok =
+      Config.save(
+        %{"status_bar" => %{"visible" => false, "hidden" => ["cpu"]}},
+        file
+      )
+
+    assert %{"status_bar" => %{"visible" => false, "hidden" => ["cpu"]}} =
+             Config.load(file)
+
+    File.write!(file, "not json")
+    assert %{"status_bar" => %{"visible" => true}} = Config.load(file)
+  end
 end

@@ -5,6 +5,8 @@ defmodule Xeito.Skills.BenchTest do
   alias Xeito.Skills
   alias Xeito.Skills.Bench
 
+  @moduletag :tmp_dir
+
   defp skill(name, description, opts \\ []),
     do: %{
       name: name,
@@ -20,45 +22,17 @@ defmodule Xeito.Skills.BenchTest do
       skill("brave-search", "Web search and content extraction via Brave Search API.")
     ]
 
-  defp tmp(name, content) do
-    path = Path.join(System.tmp_dir!(), "xeito-bench-#{System.unique_integer([:positive])}-#{name}")
+  defp tmp(dir, name, content) do
+    path = Path.join(dir, name)
     File.write!(path, content)
-    on_exit(fn -> File.rm(path) end)
     path
   end
 
-  describe "Skills.shortlist/2: the user's skills a turn may choose from" do
-    test "ranks the skills the model may invoke, and leaves out the others" do
-      manual = skill("transcribe", "Fetch transcripts of YouTube videos.", model_invocation: false)
-
-      assert ["youtube-transcript"] =
-               [manual | library()] |> Skills.shortlist("get the transcript of this youtube video") |> Enum.map(& &1.name)
-    end
-  end
-
-  describe "Skills.from_dirs/1" do
-    test "loads every SKILL.md under the directories, sorted, the first of a name winning" do
-      root = Path.join(System.tmp_dir!(), "xeito-bench-#{System.unique_integer([:positive])}")
-      on_exit(fn -> File.rm_rf(root) end)
-
-      for {dir, name, desc} <- [
-            {"a/b/beta", "beta", "Second."},
-            {"alpha", "alpha", "First."},
-            {"z/beta", "beta", "Shadowed."}
-          ] do
-        File.mkdir_p!(Path.join(root, dir))
-        File.write!(Path.join([root, dir, "SKILL.md"]), "---\nname: #{name}\ndescription: #{desc}\n---\nBody\n")
-      end
-
-      assert [%{name: "beta", description: "Second."}, %{name: "alpha"}] = Skills.from_dirs([root])
-      assert Skills.from_dirs([Path.join(root, "missing")]) == []
-    end
-  end
-
   describe "read_set/1: the benchmark's cases" do
-    test "one JSON object per line pairs a request with a skill, or with none; blank lines are skipped" do
+    test "one JSON object per line pairs a request with a skill, or with none; blank lines are skipped",
+         %{tmp_dir: dir} do
       path =
-        tmp("set.jsonl", """
+        tmp(dir, "set.jsonl", """
         {"request": "summarise this youtube talk", "skill": "youtube-transcript"}
 
         {"request": "rename this module", "skill": "none"}
@@ -70,11 +44,11 @@ defmodule Xeito.Skills.BenchTest do
              ]
     end
 
-    test "a line that is not a case names its line number" do
-      path = tmp("bad.jsonl", ~s({"request": "a", "skill": "b"}\n{"request": "no skill"}\n))
+    test "a line that is not a case names its line number", %{tmp_dir: dir} do
+      path = tmp(dir, "bad.jsonl", ~s({"request": "a", "skill": "b"}\n{"request": "no skill"}\n))
       assert_raise ArgumentError, ~r/line 2/, fn -> Bench.read_set(path) end
 
-      path = tmp("broken.jsonl", "not json\n")
+      path = tmp(dir, "broken.jsonl", "not json\n")
       assert_raise ArgumentError, ~r/line 1/, fn -> Bench.read_set(path) end
     end
   end

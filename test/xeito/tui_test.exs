@@ -5,7 +5,6 @@ defmodule Xeito.TuiTest do
   alias TermUI.Event
   alias TermUI.Widgets.TextInput
   alias Xeito.Client.Config
-  alias Xeito.Client.StatusBar
   alias Xeito.Tui
   alias Xeito.Tui.Banner
   alias Xeito.Tui.StatusLine
@@ -21,7 +20,7 @@ defmodule Xeito.TuiTest do
   defp cursor_drawn?(state), do: state |> View.input_line(20) |> inspect() =~ "bg: :yellow"
 
   test "the cursor blinks after a key, and stops blinking (solid) once idle" do
-    state = Timers.wake_cursor(state())
+    state = state() |> Map.put(:blink_ms, 1) |> Timers.wake_cursor()
     gen = state.blink
     assert cursor_drawn?(state)
 
@@ -42,28 +41,7 @@ defmodule Xeito.TuiTest do
     past = System.monotonic_time(:millisecond) - 1
     {idle, []} = Tui.handle_info({:blink, gen}, %{off | blink_until: past})
     assert idle.cursor_on
-    refute_receive {:blink, _}, 700
-  end
-
-  test "the status bar is one line, filled by priority up to the width" do
-    usage = StatusBar.new()
-    line = StatusBar.line(usage, nil, nil, [], 40)
-    assert String.length(line) <= 40 and line =~ "tok"
-    refute line =~ "\n"
-    assert String.length(StatusBar.line(usage, nil, nil, [], 200)) > 40
-    assert StatusBar.line(usage, nil, nil, StatusBar.segments(), 80) == ""
-  end
-
-  test "the status bar keeps the higher-priority segment when two do not fit" do
-    usage = StatusBar.new()
-    only = StatusBar.segments() -- ~w(calls tokens)
-    both = StatusBar.line(usage, nil, nil, only, 200)
-    assert both =~ "no model calls yet" and both =~ "tok"
-
-    # Exactly wide enough: both; one less: the higher-priority tokens segment alone.
-    assert StatusBar.line(usage, nil, nil, only, String.length(both)) == both
-    narrow = StatusBar.line(usage, nil, nil, only, String.length(both) - 1)
-    assert narrow =~ "tok" and not (narrow =~ "calls")
+    refute_receive {:blink, _}, 50
   end
 
   test "a newer key makes older blink timers stale" do
@@ -177,30 +155,6 @@ defmodule Xeito.TuiTest do
       assert {_, [^quit]} = submit(tui(), "/exit")
     end
 
-    test "a review answer approves or denies, and ends the wait" do
-      {state, []} = Tui.update({:review, "y"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"} = approve}
-      refute Map.has_key?(approve, "allow")
-      assert List.last(state.lines) == "  approved"
-      refute state.waiting
-
-      {state, []} = Tui.update({:review, "n"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "deny"}}
-      assert List.last(state.lines) == "  denied"
-    end
-
-    test "s and a approve and allow the command, for this session or always" do
-      {state, []} = Tui.update({:review, "s"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "session", "session" => "ses-t"}}
-      assert List.last(state.lines) == "  approved for this session"
-      refute state.waiting
-
-      {state, []} = Tui.update({:review, "a"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "always", "session" => "ses-t"}}
-      assert List.last(state.lines) == "  approved, always"
-      refute state.waiting
-    end
-
     test "Ctrl-T toggles the status bar and the daemon's monitor with it" do
       {state, []} = Tui.update(:toggle_bar, %{tui() | monitor: %{"gpu" => 1}})
       refute state.bar
@@ -230,20 +184,25 @@ defmodule Xeito.TuiTest do
 
     test "Enter on y or n approves or denies; on s or a, approves and allows the command" do
       {state, []} = submit(waiting(), "y")
-      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"}}
+      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"} = approve}
+      refute Map.has_key?(approve, "allow")
       refute state.waiting
       assert value(state) == ""
+      assert List.last(state.lines) == "  approved"
 
-      {_, []} = submit(waiting(), " n ")
+      {state, []} = submit(waiting(), " n ")
       assert_receive {:request, %{"cmd" => "deny"}}
+      assert List.last(state.lines) == "  denied"
 
       {state, []} = submit(waiting(), "s")
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "session"}}
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "session", "session" => "ses-t"}}
       refute state.waiting
+      assert List.last(state.lines) == "  approved for this session"
 
       {state, []} = submit(waiting(), " a ")
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "always"}}
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "always", "session" => "ses-t"}}
       refute state.waiting
+      assert List.last(state.lines) == "  approved, always"
     end
 
     test "other text answers it in words: sent as the prompt, the wait ends" do
@@ -836,19 +795,20 @@ defmodule Xeito.TuiTest do
     end
 
     test "the timer starts when work starts and stops when it stops, so an idle TUI sleeps" do
-      {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "thinking"})}, tui())
+      quick = Map.put(tui(), :spin_ms, 1)
+      {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "thinking"})}, quick)
       assert_receive {:spin, gen}, 500
 
       # More events while working start no second timer.
       {state, []} = Tui.handle_info({:xeito_event, event("state_entered", %{"state" => "executing"})}, state)
-      refute_receive {:spin, _}, 300
+      refute_receive {:spin, _}, 50
 
       {state, []} = Tui.handle_info({:spin, gen}, state)
       assert_receive {:spin, ^gen}, 500
 
       {done, []} = Tui.handle_info({:xeito_event, event("turn_finished", %{})}, state)
       {done, []} = Tui.handle_info({:spin, gen}, done)
-      refute_receive {:spin, _}, 300
+      refute_receive {:spin, _}, 50
       assert marker(done) == "○"
 
       # Waiting for you stops it too; a stale tick changes nothing.
@@ -880,6 +840,7 @@ defmodule Xeito.TuiTest do
     # A daemon that answers open, start, attach, history and prompts; `history` is what it reports
     # as earlier turns, and `continued` whether `open` found a session to continue.
     defp daemon(history, continued \\ false) do
+      # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
       dir = Path.join(System.tmp_dir!(), "xeito-tuid-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)
       socket = Path.join(dir, "d.sock")
@@ -913,16 +874,7 @@ defmodule Xeito.TuiTest do
     defp reply(%{"cmd" => "prompts"}, _), do: %{ok: true, prompts: ["/why", "fix the test"]}
     defp reply(_req, _), do: %{ok: true}
 
-    defp init_with(env) do
-      previous = Application.get_env(:xeito, :tui)
-      Application.put_env(:xeito, :tui, env)
-
-      on_exit(fn ->
-        if previous, do: Application.put_env(:xeito, :tui, previous), else: Application.delete_env(:xeito, :tui)
-      end)
-
-      Tui.init([])
-    end
+    defp init_with(opts), do: Tui.init(opts)
 
     test "a new session: started in the daemon, in the workspace it reports" do
       state = init_with(socket: daemon([]), cwd: "/given")
