@@ -46,7 +46,7 @@ defmodule Xeito.LogTest do
     Process.flag(:trap_exit, true)
 
     # An in-memory database stays in "memory" journal mode whatever is asked for.
-    assert {:error, {{:badmatch, [["memory"]]}, _}} = Log.start_link(path: ":memory:")
+    assert {:error, {:journal_mode, "memory"}} = Log.start_link(path: ":memory:")
   end
 
   test "writes the OCEL 2.0 relational layout", ctx do

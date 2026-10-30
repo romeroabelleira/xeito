@@ -187,7 +187,7 @@ defmodule Xeito.RunTest do
     assert_receive {:effect_called, 2, ^effect_id}, 2_000
     eventually(fn -> match?({:ok, %{status: :done}}, Run.result(log, id)) end)
 
-    assert [["safe", _undoable] | _] =
+    assert [["safe", "true"] | _] =
              Log.query(log, "SELECT replay, undoable FROM event_effect_requested WHERE effect_id = ?1", [effect_id])
   end
 

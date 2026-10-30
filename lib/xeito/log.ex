@@ -120,8 +120,19 @@ defmodule Xeito.Log do
   def init({path, opts}) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
-    # Fails where WAL is unsupported: SQLite answers with the mode it ended up in.
-    [["wal"]] = select(db, "PRAGMA journal_mode=WAL", [])
+
+    # Where WAL is unsupported, SQLite answers with the mode it ended up in.
+    case select(db, "PRAGMA journal_mode=WAL", []) do
+      [["wal"]] ->
+        state = open(db, opts)
+        {:ok, state, state.idle}
+
+      [[mode]] ->
+        {:stop, {:journal_mode, mode}}
+    end
+  end
+
+  defp open(db, opts) do
     # FULL, not NORMAL: an acknowledged event must survive a power cut, not only a crash.
     :ok = Sqlite3.execute(db, "PRAGMA synchronous=FULL")
     :ok = Sqlite3.set_busy_timeout(db, 5_000)
@@ -130,15 +141,13 @@ defmodule Xeito.Log do
     :ok = Store.prepare(db)
     if opts[:reconcile], do: reconcile_sessions(db)
 
-    state = %{
+    %{
       db: db,
       seqs: %{},
       idle: Keyword.get(opts, :idle_ms) || :infinity,
       workspace: opts[:workspace],
       check: Application.get_env(:xeito, :check_log_roundtrip, false)
     }
-
-    {:ok, state, state.idle}
   end
 
   @impl true

@@ -91,12 +91,20 @@ defmodule Xeito.RiskPropertyTest do
     end
   end
 
-  property "assess/2 agrees with the rules it summarises", %{cwd: cwd} do
+  property "assess/2 agrees with the rules it summarises, and its facts with each other", %{cwd: cwd} do
     check all(command <- command()) do
       facts = Risk.assess(command, cwd)
       assert facts.repeatable == Risk.repeatable?(command)
       assert facts.verdict == (verdict(command, cwd) || Risk.undoable(%{command: command, cwd: cwd}))
-      if facts.verdict == :safe and facts.written != [], do: assert(facts.undoable, inspect(command))
+
+      # A safe write is one undo holds; a write outside is never safe; a forbidden command never runs
+      # twice; undo has nothing to say of a command that writes nothing, and inside-or-outside
+      # nothing of paths the text does not name.
+      assert facts.verdict != :safe or facts.written == [] or facts.undoable, inspect(command)
+      assert facts.outside != true or facts.verdict != :safe, inspect(command)
+      assert facts.verdict != :forbidden or not facts.repeatable, inspect(command)
+      assert facts.written == [] == is_nil(facts.undoable), inspect(command)
+      assert facts.written == :unknown == is_nil(facts.outside), inspect(command)
     end
   end
 

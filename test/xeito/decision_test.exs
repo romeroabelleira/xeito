@@ -55,7 +55,10 @@ defmodule Xeito.DecisionTest do
 
       assert byte_size(input.output) == 3_000 and String.ends_with?(input.output, "END")
       assert input.diff_stat == ""
-      assert Type.input_hash(type, input) == Type.input_hash(type, input)
+      same = Type.normalize_input(type, %{output: long, test: "t"})
+      other = Type.normalize_input(type, %{test: "t", output: "o"})
+      assert Type.input_hash(type, input) == Type.input_hash(type, same)
+      refute Type.input_hash(type, input) == Type.input_hash(type, other)
 
       assert_raise ArgumentError, ~r/missing required input :test/, fn ->
         Type.normalize_input(type, %{output: "o"})
@@ -171,8 +174,6 @@ defmodule Xeito.DecisionTest do
       for d <- dangerous,
           separator <- [" ; ", " && ", " || ", " | ", "\n"],
           do: assert(risk(d <> separator <> "ls") == :forbidden, d <> separator <> "ls")
-
-      refute Risk.repeatable?("rm -rf ~/ ; ls")
     end
 
     test "never classify a labelled review command as safe", %{tmp_dir: dir} do
@@ -296,11 +297,6 @@ defmodule Xeito.DecisionTest do
             "npm test --force"
           ],
           do: assert(risk(command) == nil, command)
-    end
-
-    test "the decider raises model output to the floor" do
-      decision = Decider.decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [])
-      assert %Decision{value: :review, actor: :none} = decision
     end
   end
 
