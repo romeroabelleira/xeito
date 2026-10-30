@@ -114,6 +114,33 @@ defmodule Xeito.Decisions.Risk.CommandsTest do
     assert effect("git branch new") == :unknown
   end
 
+  test "idempotent?/1: reads, and the writes a second run leaves as the first did" do
+    for segment <- [
+          "ls -la",
+          "touch a b",
+          "mkdir -p out/x",
+          "mkdir -vp out",
+          "rm -f a",
+          "rm -rf build",
+          "git status"
+        ],
+        do: assert(Commands.idempotent?(segment), segment)
+
+    for segment <- [
+          "mkdir out",
+          "rm a",
+          "rm -r dir",
+          "cp a b",
+          "mv a b",
+          "tee a",
+          "sed -i 's/a/b/' a",
+          "sort -o a b",
+          "make",
+          "rm -f $X"
+        ],
+        do: refute(Commands.idempotent?(segment), segment)
+  end
+
   test "words: plain or single-quoted, globs only when allowed" do
     assert Commands.words("rm 'a b' c", :literal) == {:ok, ["rm", "a b", "c"]}
     assert Commands.words("rm *.ex", :literal) == :error

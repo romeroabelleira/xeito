@@ -622,7 +622,13 @@ defmodule Xeito.Run do
     Event.new(
       "effect_requested",
       {:effect_requested, effect},
-      %{"effect_id" => effect.id, "kind" => effect.kind, "args" => effect.args, "replay" => Effect.replay(effect)},
+      %{
+        "effect_id" => effect.id,
+        "kind" => effect.kind,
+        "args" => effect.args,
+        "replay" => Effect.replay(effect),
+        "undoable" => Effect.undoable(effect)
+      },
       [
         {effect.id, "effect", "of"}
       ]

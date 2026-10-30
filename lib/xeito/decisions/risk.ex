@@ -84,12 +84,69 @@ defmodule Xeito.Decisions.Risk do
   end
 
   @doc """
-  Whether `command` may run again with no further effect, as after a crash: every part is safe by
-  rule without writing (reading, building, testing), and nothing is forbidden. A write inside the
-  workspace is safe to run once, not twice.
+  Whether `command` may run again with no further effect, as after a crash: nothing is forbidden,
+  there is no redirect, and every part reads or makes a write a second run leaves as the first
+  did (`Xeito.Decisions.Risk.Commands.idempotent?/1`: `touch`, `mkdir -p`, `rm -f`).
   """
   @spec repeatable?(String.t()) :: boolean()
-  def repeatable?(command), do: not forbidden?(command) and all_segments_safe?(command)
+  def repeatable?(command), do: not forbidden?(command) and all_segments?(command, &idempotent_segment?/1)
+
+  @type facts :: %{
+          verdict: :safe | :forbidden | nil,
+          effects: [:read | :write | :exec | :unknown],
+          written: [String.t()] | :unknown,
+          outside: boolean() | nil,
+          undoable: boolean() | nil,
+          repeatable: boolean()
+        }
+
+  @doc """
+  What the rules know of `command` in workspace `cwd`, apart: the verdict of both rules; what its
+  parts do; the paths it writes, as written (`:unknown` when the text does not say); whether one is
+  outside the workspace (`nil`: unknown); whether undo's snapshot takes the command back (`nil`:
+  it writes nothing; files outside, which undo backs up when named, do not count); and whether it
+  is `repeatable?/1`.
+  """
+  @spec assess(String.t(), Path.t()) :: facts()
+  def assess(command, cwd) do
+    input = %{command: command, cwd: cwd}
+
+    written =
+      case written_paths(command) do
+        {:ok, paths} -> paths
+        :error -> :unknown
+      end
+
+    %{
+      verdict: classify(input) || undoable(input),
+      effects: effects(command),
+      written: written,
+      outside: outside(written, cwd),
+      undoable: undo_holds(written, input),
+      repeatable: repeatable?(command)
+    }
+  end
+
+  defp effects(command) do
+    case parse(command) do
+      {:ok, segments, redirects} ->
+        kinds = for segment <- segments, segment != "", do: kind(Commands.effect(segment))
+        Enum.uniq(kinds ++ if(redirects == [], do: [], else: [:write]))
+
+      :unsafe ->
+        [:unknown]
+    end
+  end
+
+  defp kind({:writes, _paths}), do: :write
+  defp kind(effect), do: effect
+
+  defp outside(:unknown, _cwd), do: nil
+  defp outside(paths, cwd), do: Enum.any?(paths, &(not inside?(&1, cwd)))
+
+  # A literal write is held when the write rule passes; one the text cannot name, when undo's rule does.
+  defp undo_holds([], _input), do: nil
+  defp undo_holds(_written, input), do: writes_inside?(input.command, input.cwd) or undoable(input) == :safe
 
   # Each part counts as well as the whole, so a command after a forbidden one hides nothing
   # (`rm -rf ~/ ; ls`). The split ignores quotes on purpose: a false match only blocks.
@@ -98,12 +155,17 @@ defmodule Xeito.Decisions.Risk do
     Enum.any?(parts, fn part -> Enum.any?(forbidden_patterns(), &Regex.match?(&1, part)) end)
   end
 
-  defp all_segments_safe?(command) do
+  defp all_segments_safe?(command), do: all_segments?(command, &safe_segment?/1)
+
+  # Every part, when the command has no redirect and no substitution.
+  defp all_segments?(command, test) do
     case segments(command) do
-      {:ok, segments} -> segments |> Enum.reject(&(&1 == "")) |> Enum.all?(&safe_segment?/1)
+      {:ok, segments} -> segments |> Enum.reject(&(&1 == "")) |> Enum.all?(test)
       :unsafe -> false
     end
   end
+
+  defp idempotent_segment?(segment), do: not String.contains?(segment, @excluded) and Commands.idempotent?(segment)
 
   # Read-only by the command table (`Xeito.Decisions.Risk.Commands`), and nothing excluded.
   defp safe_segment?(segment), do: not String.contains?(segment, @excluded) and Commands.effect(segment) == :read

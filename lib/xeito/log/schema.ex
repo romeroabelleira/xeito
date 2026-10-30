@@ -15,7 +15,7 @@ defmodule Xeito.Log.Schema do
     "transition" => ~w(from_state to_state event_name actor implicit),
     "state_exited" => ~w(state),
     "state_entered" => ~w(state),
-    "effect_requested" => ~w(effect_id kind args replay),
+    "effect_requested" => ~w(effect_id kind args replay undoable),
     "effect_completed" => ~w(effect_id kind result),
     "decision_made" =>
       ~w(effect_id decision_type value confidence actor model latency_ms input_hash tokens_in tokens_out usd joules_est),

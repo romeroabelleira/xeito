@@ -122,7 +122,7 @@ Decisions are keyed by `(type, type_version, input_hash, decider)`.
 | `Delegate?` | `:local, :large, :remote, :human` | rule + the calibration table |
 | `PlanShape` | `:single_edit, :multi_file, :needs_research` | large |
 
-`Risk` answers one of three questions about a command. Whether `/undo` can take its effect back, and whether it may run again after a crash, are facts its rules compute and log beside the verdict, not values of the type ([command risk](../concepts/command-risk.md)).
+`Risk` answers one of three questions about a command. Whether `/undo` can take its effect back, and whether it may run again after a crash, are facts its rules compute (`Xeito.Decisions.Risk.assess/2`), not values of the type; they are logged with the command's effect (`undoable`, and `replay`, which a crash recovery follows) ([command risk](../concepts/command-risk.md)).
 
 ## System One models: an external ecosystem to plug into (Sept 2026)
 

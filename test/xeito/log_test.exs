@@ -116,7 +116,8 @@ defmodule Xeito.LogTest do
     existing = %{"event_effect_requested" => ~w(ocel_id ocel_time effect_id kind args)}
 
     assert Xeito.Log.Schema.upgrade(existing) == [
-             "ALTER TABLE event_effect_requested ADD COLUMN replay TEXT"
+             "ALTER TABLE event_effect_requested ADD COLUMN replay TEXT",
+             "ALTER TABLE event_effect_requested ADD COLUMN undoable TEXT"
            ]
   end
 

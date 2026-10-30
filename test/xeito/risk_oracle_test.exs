@@ -48,9 +48,10 @@ defmodule Xeito.RiskOracleTest do
         safe and seen.changed != [] and (seen.undoable != true or seen.outside),
         "safe by rule, but undo does not restore it"
       ) ++
+      check(Risk.repeatable?(command) and not seen.repeatable, "repeatable by rule, but it is not") ++
       check(
-        Risk.repeatable?(command) and (seen.changed != [] or not seen.repeatable),
-        "repeatable by rule, but it is not"
+        Risk.assess(command, ex.input.cwd).undoable == true and seen.changed != [] and seen.undoable != true,
+        "undoable by rule, but undo does not restore it"
       ) ++
       check(safe and not within_written?(command, seen.changed), "safe by rule, but it changes paths it does not name")
   end

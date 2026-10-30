@@ -13,7 +13,8 @@ defmodule Xeito.Decisions.Risk.Commands do
   A record is `%{class: class}` (`:read`, `:trusted`, `:write_args`: writes the paths among its
   arguments), with optional `cases` (a flag that changes the class: `:exec`, `:unknown`, or
   `:write_flag`, which writes the flag's value) and `subcommands`, or `%{handler: name}` for a
-  command parsed by hand. Long options match by prefix, as getopt and git accept abbreviations;
+  command parsed by hand. A writer's `idempotent` (`:always`, or the flags that make it so) says
+  when a second run leaves what the first did: `idempotent?/1`. Long options match by prefix, as getopt and git accept abbreviations;
   short ones inside a cluster (`-iz`). A write is only claimed for literal shell words.
   """
 
@@ -66,9 +67,9 @@ defmodule Xeito.Decisions.Risk.Commands do
     "sed" => %{handler: :sed},
     "cd" => %{handler: :cd},
     "xargs" => %{handler: :xargs},
-    "touch" => @writer,
-    "mkdir" => @writer,
-    "rm" => @writer,
+    "touch" => %{class: :write_args, idempotent: :always},
+    "mkdir" => %{class: :write_args, idempotent: %{short: "p"}},
+    "rm" => %{class: :write_args, idempotent: %{short: "f"}},
     "mv" => @writer,
     "cp" => @writer,
     "tee" => @writer,
@@ -110,7 +111,24 @@ defmodule Xeito.Decisions.Risk.Commands do
 
   @doc "Whether `command` writes the paths among its arguments (`rm`, `cp`, …)."
   @spec writer?(String.t()) :: boolean()
-  def writer?(command), do: @table[command] == @writer
+  def writer?(command), do: match?(%{class: :write_args}, @table[command])
+
+  @doc """
+  Whether a second run of the segment leaves what the first did: a read, or a write by a command
+  whose record says so (`touch`, `mkdir -p`, `rm -f`).
+  """
+  @spec idempotent?(String.t()) :: boolean()
+  def idempotent?(segment) do
+    case {effect(segment), arguments(segment)} do
+      {:read, _} -> true
+      {{:writes, _}, [command | args]} -> idempotent_write?(@table[command][:idempotent], args)
+      _ -> false
+    end
+  end
+
+  defp idempotent_write?(:always, _args), do: true
+  defp idempotent_write?(nil, _args), do: false
+  defp idempotent_write?(flag, args), do: applies?(flag, args)
 
   # The segment's words with the shell's quotes dropped: enough to read flags.
   defp arguments(segment),

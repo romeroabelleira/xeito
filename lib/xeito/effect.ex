@@ -18,6 +18,8 @@ defmodule Xeito.Effect do
   | `:swap`   | `:swapped`            | `%{ok: boolean, ms: integer}` (escalation) |
   """
 
+  alias Xeito.Decisions.Risk
+
   @enforce_keys [:kind, :args, :reply]
   defstruct [:id, :kind, :args, :reply]
 
@@ -41,15 +43,23 @@ defmodule Xeito.Effect do
   @doc """
   Whether the effect may run again after a crash (`:safe`), or must end as interrupted
   (`:unsafe`): an edit has replaced its text once already, and a command may run again only when
-  `Xeito.Decisions.Risk.repeatable?/1` says so. A child machine resumes from its own log.
+  `Xeito.Decisions.Risk.repeatable?/1` says so: a read, or a write a second run leaves as the
+  first did. A child machine resumes from its own log.
   """
   @spec replay(t()) :: :safe | :unsafe
   def replay(%__MODULE__{kind: :edit}), do: :unsafe
 
-  def replay(%__MODULE__{kind: :bash, args: %{cmd: cmd}}),
-    do: if(Xeito.Decisions.Risk.repeatable?(cmd), do: :safe, else: :unsafe)
+  def replay(%__MODULE__{kind: :bash, args: %{cmd: cmd}}), do: if(Risk.repeatable?(cmd), do: :safe, else: :unsafe)
 
   def replay(%__MODULE__{}), do: :safe
+
+  @doc """
+  For a command, whether undo's snapshot would take it back (`Xeito.Decisions.Risk.assess/2`);
+  `nil` for a command that writes nothing, and for any other kind of effect. Logged with the request.
+  """
+  @spec undoable(t()) :: boolean() | nil
+  def undoable(%__MODULE__{kind: :bash, args: %{cmd: cmd} = args}), do: Risk.assess(cmd, args[:cwd] || "").undoable
+  def undoable(%__MODULE__{}), do: nil
 
   @doc "Run a shell command. Options: `:cwd`, `:timeout` (ms, default 60 000), `:reply`."
   @spec bash(String.t(), keyword()) :: t()

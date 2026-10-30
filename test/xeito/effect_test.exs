@@ -26,9 +26,20 @@ defmodule Xeito.EffectTest do
       assert Effect.replay(Effect.edit("a.ex", "old", "new")) == :unsafe
     end
 
-    test "a command only when it is repeatable" do
+    test "a command only when it is repeatable: a read, or a write a second run leaves as the first" do
       assert Effect.replay(Effect.bash("mix test")) == :safe
+      assert Effect.replay(Effect.bash("mkdir -p out && touch out/x")) == :safe
       assert Effect.replay(Effect.bash("git push")) == :unsafe
+      assert Effect.replay(Effect.bash("git branch -D x")) == :unsafe
     end
+  end
+
+  @tag :tmp_dir
+  test "undoable/1: for a command, whether undo would take it back; nil for a read or another kind",
+       %{tmp_dir: dir} do
+    assert Effect.undoable(Effect.bash("touch a.txt", cwd: dir)) == true
+    assert Effect.undoable(Effect.bash("echo x > ../x", cwd: dir)) == false
+    assert Effect.undoable(Effect.bash("ls", cwd: dir)) == nil
+    assert Effect.undoable(Effect.read("a.ex")) == nil
   end
 end

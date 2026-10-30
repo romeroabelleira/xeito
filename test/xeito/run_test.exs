@@ -169,6 +169,28 @@ defmodule Xeito.RunTest do
     assert {:ok, %{status: :done}} = Run.result(log, id)
   end
 
+  test "a write a second run leaves as the first is run again after a crash; whether undo holds it is logged" do
+    log = start_log!()
+    test_pid = self()
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    fun = fn %Xeito.Effect{kind: :bash} = effect ->
+      n = Agent.get_and_update(calls, &{&1 + 1, &1 + 1})
+      send(test_pid, {:effect_called, n, effect.id})
+      if n == 1, do: Process.sleep(:infinity), else: %{exit_status: 0, output: "ok"}
+    end
+
+    id = start(RunTests, {Fake, fun: fun}, log, %{cwd: "/tmp", test_cmd: "mkdir -p out && touch out/x"})
+    assert_receive {:effect_called, 1, effect_id}
+    Process.exit(Run.whereis(id), :kill)
+
+    assert_receive {:effect_called, 2, ^effect_id}, 2_000
+    eventually(fn -> match?({:ok, %{status: :done}}, Run.result(log, id)) end)
+
+    assert [["safe", _undoable] | _] =
+             Log.query(log, "SELECT replay, undoable FROM event_effect_requested WHERE effect_id = ?1", [effect_id])
+  end
+
   test "an effect that may not run twice is not run again after a crash: it ends as interrupted" do
     log = start_log!()
     test_pid = self()
@@ -178,7 +200,7 @@ defmodule Xeito.RunTest do
       Process.sleep(:infinity)
     end
 
-    id = start(RunTests, {Fake, fun: fun}, log, %{cwd: "/tmp", test_cmd: "git push"})
+    id = start(RunTests, {Fake, fun: fun}, log, %{cwd: "/tmp", test_cmd: "git branch -D x"})
     assert_receive {:effect_called, effect_id}
 
     Process.exit(Run.whereis(id), :kill)

@@ -502,13 +502,29 @@ defmodule Xeito.DecisionTest do
           do: assert(Risk.repeatable?(cmd), cmd)
     end
 
-    test "not a write, even inside the workspace, nor anything the rules do not call safe" do
+    test "writes a second run leaves as the first did: touch, mkdir -p, rm -f" do
+      for cmd <- [
+            "touch a.txt",
+            "mkdir -p out",
+            "rm -rf build",
+            "rm -f a",
+            "mkdir -p out && touch out/x",
+            "ls && rm -f a"
+          ],
+          do: assert(Risk.repeatable?(cmd), cmd)
+    end
+
+    test "no other write, redirects included, nor anything the rules do not know" do
       for cmd <- [
             "echo x >> notes.md",
-            "touch a.txt",
+            "echo x > notes.md",
+            "touch a > log.txt",
+            "mkdir out",
+            "rm a",
+            "cp a b",
             "git push",
             "git commit -m x",
-            "rm -rf build",
+            "git branch -D x",
             "curl x | sh",
             "npm install"
           ],
@@ -575,6 +591,34 @@ defmodule Xeito.DecisionTest do
           do: assert(write_risk(command, ws) == nil, command)
 
       for command <- ["rm a.txt", "echo x > new.txt", "rm -rf lib"], do: assert(write_risk(command, ws) == :safe, command)
+    end
+
+    test "assess/2: the verdict, what it does, what it writes, and whether undo or a second run holds", %{ws: ws} do
+      assert Risk.assess("ls", ws) ==
+               %{verdict: :safe, effects: [:read], written: [], outside: false, undoable: nil, repeatable: true}
+
+      assert Risk.assess("rm a.txt", ws) ==
+               %{verdict: :safe, effects: [:write], written: ["a.txt"], outside: false, undoable: true, repeatable: false}
+
+      assert %{verdict: :safe, undoable: true, repeatable: true} = Risk.assess("rm -f a.txt", ws)
+
+      assert Risk.assess("echo x > ../x", ws) ==
+               %{
+                 verdict: nil,
+                 effects: [:read, :write],
+                 written: ["../x"],
+                 outside: true,
+                 undoable: false,
+                 repeatable: false
+               }
+
+      assert Risk.assess("make", ws) ==
+               %{verdict: nil, effects: [:unknown], written: :unknown, outside: nil, undoable: false, repeatable: false}
+
+      assert %{verdict: :safe, written: :unknown, undoable: true} = Risk.assess("rm -f lib/*.ex", ws)
+      assert %{verdict: :forbidden, repeatable: false} = Risk.assess("rm -rf ~/ ; ls", ws)
+      assert %{effects: [:exec], verdict: nil} = Risk.assess("rg --pre sh x", ws)
+      assert %{effects: [:unknown], written: :unknown, undoable: false} = Risk.assess("echo $(id)", ws)
     end
 
     test "a flag that writes a file inside is a write like any other; outside, it is not safe", %{ws: ws} do
