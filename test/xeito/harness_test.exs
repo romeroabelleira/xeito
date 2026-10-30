@@ -104,7 +104,6 @@ defmodule Xeito.HarnessTest do
       ] ++
         if(calls == [],
           do: [],
-          # --- tools -------------------------------------------------------------------------------
           else: [
             %{
               "message" => %{
@@ -506,7 +505,6 @@ defmodule Xeito.HarnessTest do
   end
 
   test "fix_failing_test delegates the fix to a chat run and verifies it", %{ws: ws} = ctx do
-    # --- delegation: fix_failing_test hands the fix to a chat child run ------------------------
     log = start_log!(ctx)
     File.write!(Path.join(ws, "status.txt"), "broken\n")
 
@@ -544,7 +542,6 @@ defmodule Xeito.HarnessTest do
   end
 
   defp session(ws, log, cfg) do
-    # --- sessions ----------------------------------------------------------------------------
     {:ok, id} =
       Session.start(
         cwd: ws,
@@ -943,8 +940,6 @@ defmodule Xeito.HarnessTest do
 
     assert %{"ok" => false, "error" => "no such session"} =
              Client.request(client, %{"cmd" => "status", "session" => "nope"})
-
-    # --- the client API over the Unix socket -------------------------------------------------
 
     assert %{"ok" => true, "status" => %{"history" => 2}} =
              Client.request(client, %{"cmd" => "status", "session" => session})

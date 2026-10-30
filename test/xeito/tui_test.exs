@@ -155,30 +155,6 @@ defmodule Xeito.TuiTest do
       assert {_, [^quit]} = submit(tui(), "/exit")
     end
 
-    test "a review answer approves or denies, and ends the wait" do
-      {state, []} = Tui.update({:review, "y"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"} = approve}
-      refute Map.has_key?(approve, "allow")
-      assert List.last(state.lines) == "  approved"
-      refute state.waiting
-
-      {state, []} = Tui.update({:review, "n"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "deny"}}
-      assert List.last(state.lines) == "  denied"
-    end
-
-    test "s and a approve and allow the command, for this session or always" do
-      {state, []} = Tui.update({:review, "s"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "session", "session" => "ses-t"}}
-      assert List.last(state.lines) == "  approved for this session"
-      refute state.waiting
-
-      {state, []} = Tui.update({:review, "a"}, %{tui() | waiting: true})
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "always", "session" => "ses-t"}}
-      assert List.last(state.lines) == "  approved, always"
-      refute state.waiting
-    end
-
     test "Ctrl-T toggles the status bar and the daemon's monitor with it" do
       {state, []} = Tui.update(:toggle_bar, %{tui() | monitor: %{"gpu" => 1}})
       refute state.bar
@@ -208,20 +184,25 @@ defmodule Xeito.TuiTest do
 
     test "Enter on y or n approves or denies; on s or a, approves and allows the command" do
       {state, []} = submit(waiting(), "y")
-      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"}}
+      assert_receive {:request, %{"cmd" => "approve", "session" => "ses-t"} = approve}
+      refute Map.has_key?(approve, "allow")
       refute state.waiting
       assert value(state) == ""
+      assert List.last(state.lines) == "  approved"
 
-      {_, []} = submit(waiting(), " n ")
+      {state, []} = submit(waiting(), " n ")
       assert_receive {:request, %{"cmd" => "deny"}}
+      assert List.last(state.lines) == "  denied"
 
       {state, []} = submit(waiting(), "s")
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "session"}}
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "session", "session" => "ses-t"}}
       refute state.waiting
+      assert List.last(state.lines) == "  approved for this session"
 
       {state, []} = submit(waiting(), " a ")
-      assert_receive {:request, %{"cmd" => "approve", "allow" => "always"}}
+      assert_receive {:request, %{"cmd" => "approve", "allow" => "always", "session" => "ses-t"}}
       refute state.waiting
+      assert List.last(state.lines) == "  approved, always"
     end
 
     test "other text answers it in words: sent as the prompt, the wait ends" do
@@ -893,16 +874,7 @@ defmodule Xeito.TuiTest do
     defp reply(%{"cmd" => "prompts"}, _), do: %{ok: true, prompts: ["/why", "fix the test"]}
     defp reply(_req, _), do: %{ok: true}
 
-    defp init_with(env) do
-      previous = Application.get_env(:xeito, :tui)
-      Application.put_env(:xeito, :tui, env)
-
-      on_exit(fn ->
-        if previous, do: Application.put_env(:xeito, :tui, previous), else: Application.delete_env(:xeito, :tui)
-      end)
-
-      Tui.init([])
-    end
+    defp init_with(opts), do: Tui.init(opts)
 
     test "a new session: started in the daemon, in the workspace it reports" do
       state = init_with(socket: daemon([]), cwd: "/given")

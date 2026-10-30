@@ -43,9 +43,11 @@ defmodule Xeito.Tui do
 
   # --- init ----------------------------------------------------------------------------------
 
+  # The settings come from the application environment (`mix xeito.tui` puts them there); what the
+  # runtime passes to `init/1` comes over them, so a test can give its own without touching it.
   @impl true
-  def init(_runtime_opts) do
-    opts = Application.get_env(:xeito, :tui, [])
+  def init(runtime_opts) do
+    opts = Keyword.merge(Application.get_env(:xeito, :tui, []), runtime_opts)
     {:ok, client} = Client.connect(Keyword.fetch!(opts, :socket))
     {session, status, continued} = open(client, opts)
     cwd = status["cwd"] || opts[:cwd]

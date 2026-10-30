@@ -5,9 +5,6 @@ defmodule Xeito.EscalationTest do
   alias Xeito.Budget
   alias Xeito.Decisions.Risk
   alias Xeito.Decisions.Triage
-
-  # --- stubs -------------------------------------------------------------------------------
-
   alias Xeito.Escalation
   alias Xeito.Log
   alias Xeito.Machines.FixFailingTest
@@ -128,8 +125,6 @@ defmodule Xeito.EscalationTest do
 
       %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
     end
-
-    # --- tests -------------------------------------------------------------------------------
   end
 
   defp decide(type, input, opts) do

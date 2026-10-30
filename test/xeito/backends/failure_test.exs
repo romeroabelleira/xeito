@@ -95,15 +95,5 @@ defmodule Xeito.Backends.FailureTest do
       assert_received {:retry, %{attempt: 2, of: 3, wait_ms: 3_000, status: 429}}
       assert_received {:retry, %{attempt: 3, of: 3, wait_ms: 2_000, status: "connection"}}
     end
-
-    test "a transport error is retried like a transient failure" do
-      {:ok, calls} = Agent.start_link(fn -> 0 end)
-
-      call = fn ->
-        if Agent.get_and_update(calls, &{&1 + 1, &1 + 1}) == 0, do: {:error, :timeout}, else: {:ok, :answer}
-      end
-
-      assert Failure.run(call, sleep: sleeps()) == {:ok, :answer}
-    end
   end
 end

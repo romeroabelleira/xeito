@@ -26,13 +26,13 @@ defmodule Xeito.Effects.LocalTest do
   end
 
   test "a command's output is published as it runs, for the run that asked for it", %{ws: ws} do
-    Xeito.Events.subscribe("run-live")
+    Xeito.Events.subscribe(:all)
     effect = %{Effect.bash("echo hello", cwd: ws) | id: "run-live/e1"}
 
     Local.run(effect, run_id: "run-live", undo: false)
     assert_received {:xeito, "run-live", %{type: "output", attrs: %{"effect_id" => "run-live/e1", "text" => "hello\n"}}}
 
-    # Without a run, nobody follows it.
+    # Without a run, nobody follows it: no client of any run hears of the output.
     Local.run(Effect.bash("echo quiet", cwd: ws), [])
     refute_received {:xeito, _, %{type: "output"}}
   end

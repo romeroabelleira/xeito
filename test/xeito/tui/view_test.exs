@@ -19,15 +19,17 @@ defmodule Xeito.Tui.ViewTest do
   end
 
   test "the input line draws a block cursor at the typing position and scrolls to keep it visible" do
-    st = typed(state(), "hello")
-    line = inspect(View.input_line(st, 20))
-    # The block sits after the text, on a space; an empty line shows the dimmed placeholder.
-    assert line =~ ~s(content: "hello") and line =~ "bg: :yellow"
+    # The block sits right after the text, on a space, with nothing after it.
+    assert %{children: [%{content: "hello"}, %{content: " ", style: %{bg: :yellow}}, %{content: ""}]} =
+             View.input_line(typed(state(), "hello"), 20)
+
+    # An empty line shows the dimmed placeholder.
     assert inspect(View.input_line(state(), 20)) =~ "ask, or /help"
 
+    # A line longer than the width scrolls so that the cursor stays in the last column.
     long = typed(state(), String.duplicate("x", 30) <> "END")
-    shown = long |> View.input_line(20) |> inspect()
-    assert shown =~ "END" and not (shown =~ String.duplicate("x", 20))
+    assert %{children: [%{content: before}, %{content: " ", style: %{bg: :yellow}}, _]} = View.input_line(long, 20)
+    assert String.length(before) == 19 and String.ends_with?(before, "END")
   end
 
   test "in the blink's off phase the cursor cell is drawn plain" do

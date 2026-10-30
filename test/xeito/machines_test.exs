@@ -48,7 +48,6 @@ defmodule Xeito.MachinesTest do
 
   defp assistant(content, []), do: %{"role" => "assistant", "content" => content}
 
-  # --- skills --------------------------------------------------------------------------------
   defp assistant(content, calls) do
     tool_calls = for {n, a} <- calls, do: %{"function" => %{"name" => n, "arguments" => a}}
     Map.put(assistant(content, []), "tool_calls", tool_calls)
@@ -109,7 +108,6 @@ defmodule Xeito.MachinesTest do
 
     File.write!(Path.join(ws, "b.txt"), "new\n")
     id = start(Commit, %{cwd: ws}, chat_stub(self(), [{"Add b.txt", []}]), log)
-    # --- check -----------------------------------------------------------------------------------
     eventually(fn -> leaf(id) == :ask_human end)
     Run.send_event(id, :denied, %{}, :human)
     await_exit(id)
@@ -143,7 +141,6 @@ defmodule Xeito.MachinesTest do
 
   test "check asks a human when the attempts are used up", %{ws: ws} = ctx do
     log = start_log!(ctx)
-    # --- routing and intent rules ------------------------------------------------------------
     cfg = chat_stub(self(), [{"I could not fix it.", []}])
     id = start(Check, %{cwd: ws, check_cmd: "exit 1", max_attempts: 1}, cfg, log)
     eventually(fn -> leaf(id) == :ask_human end)

@@ -177,19 +177,18 @@ defmodule Xeito.Tools.ShapeTest do
                "at lines 2-4"
     end
 
-    test "project files stay whole to 2,000 lines; dependency sources are shaped from 400", %{
+    test "project files stay whole to 2,000 lines and dependency sources to 400; one line more is shaped", %{
       ws: ws
     } do
-      body = Enum.map_join(1..600, "\n", &"line #{&1}")
-      File.write!(Path.join(ws, "notes.txt"), body)
-      File.write!(Path.join(ws, "deps/lib_x/notes.txt"), body)
-
-      read = fn path ->
+      read = fn path, lines ->
+        File.write!(Path.join(ws, path), Enum.map_join(1..lines, "\n", &"line #{&1}"))
         Local.run(Effect.read(path, cwd: ws), [])
       end
 
-      refute Map.has_key?(read.("notes.txt"), :shaped)
-      assert read.("deps/lib_x/notes.txt").shaped =~ "[shaped: first 250 of 600 lines"
+      refute Map.has_key?(read.("notes.txt", 2_000), :shaped)
+      assert read.("notes.txt", 2_001).shaped =~ "[shaped: first 250 of 2001 lines"
+      refute Map.has_key?(read.("deps/lib_x/notes.txt", 400), :shaped)
+      assert read.("deps/lib_x/notes.txt", 401).shaped =~ "[shaped: first 250 of 401 lines"
     end
   end
 

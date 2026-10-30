@@ -63,9 +63,9 @@ defmodule Mix.Tasks.Xeito.ChatTest do
       send(self(), {:xeito_event, %{"event" => "disconnected"}})
       assert capture_io("", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end) =~ "daemon disconnected"
     end
+  end
 
-    test "no daemon at the socket is an error" do
-      assert_raise Mix.Error, ~r/^no daemon at \/nonexistent/, fn -> Chat.run(["--socket", "/nonexistent/x.sock"]) end
-    end
+  test "no daemon at the socket is an error" do
+    assert_raise Mix.Error, ~r/^no daemon at \/nonexistent/, fn -> Chat.run(["--socket", "/nonexistent/x.sock"]) end
   end
 end
