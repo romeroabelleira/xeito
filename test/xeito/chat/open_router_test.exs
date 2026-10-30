@@ -206,7 +206,7 @@ defmodule Xeito.Chat.OpenRouterTest do
       assert {:ok, %{content: "hi", usd: 0.5, model: "m/x", latency_ms: ms}} =
                OpenRouter.complete([%{role: "user", content: "q"}], [], cfg, fn _ -> :ok end)
 
-      assert is_integer(ms)
+      assert ms >= 0
       assert_received {:sent, "/api/v1/chat/completions", ["Bearer k"], %{"model" => "m/x", "stream" => true}}
     end
 

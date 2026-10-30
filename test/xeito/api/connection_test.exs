@@ -26,7 +26,10 @@ defmodule Xeito.Api.ConnectionTest do
     assert %{"ok" => true, "status" => %{"cwd" => ^ws}} = req(client, "status", %{"session" => id})
   end
 
-  test "attach follows a live session, resumes a closed one, and needs a workspace to", %{client: client, ws: ws} do
+  test "attach follows a live session, starts an unknown id given a workspace, and needs one to", %{
+    client: client,
+    ws: ws
+  } do
     id = start(client, ws)
     assert %{"ok" => true, "session" => ^id, "status" => %{"cwd" => ^ws}} = req(client, "attach", %{"session" => id})
 
@@ -138,20 +141,22 @@ defmodule Xeito.Api.ConnectionTest do
   describe "the connection process" do
     defp connections, do: Xeito.ApiConnections |> DynamicSupervisor.which_children() |> Enum.map(&elem(&1, 1))
 
-    defp new_connection(path) do
-      # The setup's client connects asynchronously too; let it settle first.
-      Process.sleep(100)
+    # The connection supervisor is the application's, so a connection of an earlier test may still
+    # be in it; a round trip on the setup's client puts its connection in `before` for sure.
+    defp new_connection(path, client) do
+      %{"ok" => false} = req(client, "no-such-cmd")
       before = connections()
       {:ok, socket} = :gen_tcp.connect({:local, path}, 0, [:binary, packet: :line, active: false])
-      Process.sleep(100)
+      eventually(fn -> length(connections() -- before) == 1 end)
       [conn] = connections() -- before
       {socket, conn}
     end
 
     test "a line longer than the limit, or a socket error, closes the connection; other messages are ignored", %{
-      path: path
+      path: path,
+      client: client
     } do
-      {socket, conn} = new_connection(path)
+      {socket, conn} = new_connection(path, client)
       ref = Process.monitor(conn)
 
       send(conn, :something_else)
@@ -160,7 +165,7 @@ defmodule Xeito.Api.ConnectionTest do
       :ok = :gen_tcp.send(socket, :binary.copy("x", 4_194_400))
       assert_receive {:DOWN, ^ref, :process, ^conn, :normal}, 2_000
 
-      {_socket, other} = new_connection(path)
+      {_socket, other} = new_connection(path, client)
       ref = Process.monitor(other)
       send(other, {:tcp_error, :port, :closed})
       assert_receive {:DOWN, ^ref, :process, ^other, :normal}, 2_000

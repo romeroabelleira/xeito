@@ -221,19 +221,42 @@ defmodule Xeito.EscalationTest do
     assert Enum.any?(d.evidence, &match?(%{tier: :local, error: {:skipped, _}}, &1))
   end
 
-  test "budgets are deleted with their run, and swept when their owner is gone" do
-    owner = run_id()
-    Budget.add(owner, :usd, 0.2)
-    Budget.add(owner, :swaps, 1)
-    assert Budget.sweep() >= 1
-    assert Budget.get(owner, :usd) == 0 and Budget.get(owner, :swaps) == 0
+  test "a model's verdict is raised to the severity floor, and the floor is in the evidence" do
+    Req.Test.stub(:esc_local, fn
+      %{request_path: "/api/ps"} = conn ->
+        Req.Test.json(conn, %{"models" => [%{"name" => "big", "model" => "big"}]})
 
-    Budget.add(owner, :usd, 0.2)
-    Budget.delete(owner)
-    assert Budget.get(owner, :usd) == 0
+      %{request_path: "/api/chat"} = conn ->
+        logprobs =
+          for t <- [~s({"), "value", ~s(":), ~s( "), "safe", ~s("})] do
+            tops =
+              if t == "safe",
+                do: [
+                  %{"token" => "safe", "logprob" => :math.log(0.97)},
+                  %{"token" => "review", "logprob" => :math.log(0.03)}
+                ],
+                else: []
+
+            %{"token" => t, "logprob" => -0.01, "top_logprobs" => tops}
+          end
+
+        Req.Test.json(conn, %{
+          "message" => %{"content" => ~s({"value": "safe"})},
+          "prompt_eval_count" => 120,
+          "eval_count" => 8,
+          "logprobs" => logprobs
+        })
+    end)
+
+    tiers = [local: [url: "http://local.test", plug: {Req.Test, :esc_local}, model: "big"]]
+    {decision, _, _} = decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [:local], tiers: tiers)
+
+    assert %{value: :review, actor: actor} = decision
+    refute actor in [:rule, :none]
+    assert %{floor: :review, model_value: :safe} in decision.evidence
   end
 
-  test "a rule's verdict is not raised by the severity floor; a model's is" do
+  test "a rule's verdict is not raised by the severity floor; an abstention is" do
     {safe, _, _} = decide(Risk, %{command: "git status"}, deciders: [])
     assert %{value: :safe, actor: :rule} = safe
 

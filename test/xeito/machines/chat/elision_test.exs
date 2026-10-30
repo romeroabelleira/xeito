@@ -48,11 +48,11 @@ defmodule Xeito.Machines.Chat.ElisionTest do
     assert length(stubbed) == 12 and hd(stubbed) == "ses-x/t1/e4"
   end
 
-  test "the latest whole read of recent project files stays whole; older reads and dependencies are elided" do
+  test "the latest whole read of recent project files stays whole; older reads and other old outputs are elided" do
     read = fn n, path -> n |> tool() |> Map.put(:read, path) |> Map.put(:about, "read of #{path}") end
 
     tools =
-      [read.(1, "lib/tui.ex"), read.(2, "lib/tui.ex"), 3 |> tool() |> Map.put(:about, "read of deps/x.ex")] ++
+      [read.(1, "lib/tui.ex"), read.(2, "lib/tui.ex"), tool(3)] ++
         Enum.map(4..15, &tool/1)
 
     stubbed = stubbed(Elision.elide(conversation(tools)))

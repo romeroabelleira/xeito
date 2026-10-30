@@ -27,6 +27,7 @@ defmodule Mix.Tasks.Xeito.MapTest do
   end
 
   test "--functions lists every module's functions" do
-    assert output(["--functions"]) =~ "\n  verdict("
+    text = output(["--functions"])
+    assert text =~ "\n  verdict(" and text =~ "\n  estimate("
   end
 end

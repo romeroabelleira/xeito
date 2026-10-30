@@ -110,7 +110,8 @@ defmodule Xeito.MutateTest do
     test "a word of a ~w sigil is removed, one at a time" do
       mutants = Mutate.mutants("@safe ~w(ls cat pwd)", "m.ex")
       assert Enum.map(mutants, & &1.description) == ["word removed: ls", "word removed: cat", "word removed: pwd"]
-      assert code(Enum.at(mutants, 1)) == "@safe ~w(ls pwd)"
+      [_, second, _] = mutants
+      assert code(second) == "@safe ~w(ls pwd)"
     end
 
     test "only the given lines, when asked" do

@@ -136,7 +136,10 @@ defmodule Mix.Tasks.Xeito.RunTest do
 
     {out, ""} = run(%{ctx | socket: "/nonexistent/x.sock"}, ["--print-skill", "greet"])
     assert out == "---\nname: greet\ndescription: Greet.\n---\nSay hello.\n"
-    assert_raise Mix.Error, "no skill named \"nope\"", fn -> run(ctx, ["--print-skill", "nope"]) end
+
+    assert_raise Mix.Error, "no skill named \"nope\"", fn ->
+      run(%{ctx | socket: "/nonexistent/x.sock"}, ["--print-skill", "nope"])
+    end
   end
 
   test "what the daemon refuses, or a bad option, is an error before anything is sent", ctx do

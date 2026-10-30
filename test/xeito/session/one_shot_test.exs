@@ -57,6 +57,7 @@ defmodule Xeito.Session.OneShotTest do
                prepare!("", [machine: "run_tests"], state(dir))
 
       assert %{machine: Chat, input: %{tools: false}} = prepare!("hi", [machine: "chat"], state(dir))
+      assert %{machine: Chat, input: %{tools: ["read"]}} = prepare!("hi", [machine: "chat", tools: ["read"]], state(dir))
 
       assert {:error, "unknown machine \"nope\"; available: " <> names} =
                OneShot.prepare("x", [machine: "nope"], state(dir))

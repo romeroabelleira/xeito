@@ -52,7 +52,7 @@ defmodule Xeito.Session.DirectoryTest do
              %{id: ^old, prompts: 1, last_prompt: "fix the banner"}
            ] = Directory.sessions(log, ws)
 
-    assert is_binary(last_b)
+    assert {:ok, _, 0} = DateTime.from_iso8601(last_b)
     assert Directory.latest(log, ws) == b
     assert Directory.latest(log, Path.join(other, "none")) == nil
   end

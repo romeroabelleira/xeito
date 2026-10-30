@@ -16,7 +16,6 @@ defmodule Xeito.HarnessTest do
   alias Xeito.RunSupervisor
   alias Xeito.Session
   alias Xeito.Session.Allowed
-  alias Xeito.Session.Git
   alias Xeito.Session.Router
 
   setup {Req.Test, :set_req_test_to_shared}
@@ -160,7 +159,7 @@ defmodule Xeito.HarnessTest do
     assert %{exit_status: 127, output: "workspace missing: " <> _} =
              Local.run(Effect.bash("ls", cwd: gone), [])
 
-    assert Git.status(gone) == nil
+    refute File.exists?(gone)
   end
 
   test "the transcript shows an edit as a compact diff" do
@@ -644,7 +643,7 @@ defmodule Xeito.HarnessTest do
     assert text =~ "Intent: question by local"
   end
 
-  test "session: routes failing tests to fix_failing_test and relays approvals", %{ws: ws} do
+  test "session: relays an approval to the waiting run; the router picks machines by intent and text", %{ws: ws} do
     log = start_log!()
 
     cfg =

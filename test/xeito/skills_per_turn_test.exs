@@ -65,7 +65,7 @@ defmodule Xeito.SkillsPerTurnTest do
       assert :none = Decider.apply_rules(type, input("why does this crash"))
     end
 
-    test "is a built-in type with labelled examples" do
+    test "is a built-in type with four values" do
       assert Skill in Xeito.Decisions.all()
       assert %{name: "skill", values: values} = Decision.type!(Skill)
       assert Keyword.keys(values) == [:first, :second, :third, :none]

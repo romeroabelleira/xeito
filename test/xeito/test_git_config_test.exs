@@ -29,5 +29,6 @@ defmodule Xeito.TestGitConfigTest do
     args = ["-c", "gpg.format=ssh", "-c", "gpg.ssh.program=/bin/false", "commit", "-q", "--allow-empty", "-m", "x"]
     assert {:exited, 0, _} = OsCommand.run("git", args, cd: dir)
     assert {"main\n", 0} = System.cmd("git", ["branch", "--show-current"], cd: dir)
+    assert {"Xeito Test <test@xeito.invalid>\n", 0} = System.cmd("git", ["log", "-1", "--format=%an <%ae>"], cd: dir)
   end
 end

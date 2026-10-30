@@ -1,6 +1,6 @@
 defmodule Xeito.Tiers.QueueTest do
   @moduledoc "Background calls (P4f step 4) take a tier's slot only when no other call waits for it."
-  use ExUnit.Case, async: true
+  use Xeito.Case, async: true
 
   alias Xeito.Tiers.Queue
 
@@ -24,17 +24,15 @@ defmodule Xeito.Tiers.QueueTest do
     end)
   end
 
-  defp until(fun), do: if(fun.(), do: :ok, else: Process.sleep(5) && until(fun))
-
   test "a background call waits until no other call waits" do
     tier = tier()
     first = hold(tier, :normal)
     assert_receive {:running, pid} when pid == first.pid
 
     background = hold(tier, :background)
-    until(fn -> Queue.status(tier) == {1, 1} end)
+    eventually(fn -> Queue.status(tier) == {1, 1} end)
     normal = hold(tier, :normal)
-    until(fn -> Queue.status(tier) == {1, 2} end)
+    eventually(fn -> Queue.status(tier) == {1, 2} end)
 
     send(first.pid, :finish)
     assert_receive {:running, pid} when pid == normal.pid
@@ -61,9 +59,9 @@ defmodule Xeito.Tiers.QueueTest do
     first = hold(tier, :normal)
     assert_receive {:running, _}
     a = hold(tier, :background)
-    until(fn -> Queue.status(tier) == {1, 1} end)
+    eventually(fn -> Queue.status(tier) == {1, 1} end)
     b = hold(tier, :background)
-    until(fn -> Queue.status(tier) == {1, 2} end)
+    eventually(fn -> Queue.status(tier) == {1, 2} end)
 
     send(first.pid, :finish)
     assert_receive {:running, pid} when pid == a.pid

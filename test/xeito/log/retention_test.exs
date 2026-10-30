@@ -119,7 +119,13 @@ defmodule Xeito.Log.RetentionTest do
     {:ok, db} = Sqlite3.open(path(ws))
     on_exit(fn -> Sqlite3.close(db) end)
 
-    assert length(Retention.sessions(db)) == 4
+    assert db |> Retention.sessions() |> Enum.map(& &1.id) |> Enum.sort() == [
+             "ses-crashed",
+             "ses-newest",
+             "ses-old",
+             "ses-open"
+           ]
+
     # The two most recently active sessions (ses-open, ses-newest) are kept; an open session is
     # never a candidate anyway.
     plan = Retention.plan(db, keep: 2)
@@ -128,7 +134,9 @@ defmodule Xeito.Log.RetentionTest do
 
     # Status changes are not activity: closing a session a year later leaves it a year old.
     {:ok, next_year, _} = DateTime.from_iso8601("#{Date.utc_today().year + 1}-12-31T00:00:00Z")
-    assert length(Retention.plan(db, older_than_days: 30, now: next_year)) == 3
+
+    assert db |> Retention.plan(older_than_days: 30, now: next_year) |> Enum.map(& &1.id) |> Enum.sort() ==
+             ["ses-crashed", "ses-newest", "ses-old"]
 
     {:ok, %{sessions: 2, events: events}} = Retention.prune(db, plan)
     assert events > 0

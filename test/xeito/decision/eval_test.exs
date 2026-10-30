@@ -160,7 +160,7 @@ defmodule Xeito.Decision.EvalTest do
       [ls, other, _] = Eval.run(Risk, :rules, @examples)
       assert %{predicted: :safe, confidence: 1.0, label: :safe, lang: "en", dangerous: false} = ls
       assert %{predicted: :abstain, confidence: nil, probabilities: %{}} = other
-      assert is_integer(ls.latency_ms)
+      assert ls.latency_ms >= 0
     end
 
     test "the baseline falls back to the most frequent label" do

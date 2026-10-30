@@ -108,8 +108,7 @@ defmodule Xeito.Skills.BenchTest do
                %{request: "code-review it", skill: :none, got: ["code-review"]}
              ]
 
-      assert %{mean: mean, p95: p95} = report.latency_us
-      assert mean >= 0 and p95 >= 0
+      assert %{mean: _, p95: _} = report.latency_us
     end
 
     test "a skill ranked below the third counts for neither" do

@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Xeito.ChatTest do
       assert out =~ "nothing_to_approve"
     end
 
-    test "a prompt continued with \\ is sent as one prompt of several lines", ctx do
+    test "a line continued with \\ is not sent until it ends", ctx do
       # `y\` and an empty line are one prompt, "y\n": the answer y, with nothing waiting for it.
       out = capture_io("y\\\n\n", fn -> Chat.run(["--socket", ctx.socket, "--cwd", ctx.ws]) end)
       assert out =~ "nothing_to_approve"

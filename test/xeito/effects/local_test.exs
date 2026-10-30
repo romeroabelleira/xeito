@@ -214,7 +214,7 @@ defmodule Xeito.Effects.LocalTest do
       run = "local-swap-#{System.unique_integer([:positive])}"
       effect = %Effect{kind: :swap, args: %{tier: :local, parent: run}, reply: :swapped}
       assert %{ok: true, ms: ms} = Local.run(effect, local_tier(:local_swap))
-      assert is_integer(ms)
+      assert ms >= 0
       assert Xeito.Budget.get(run, :swaps) == 1
 
       assert %{ok: true} = Local.run(%{effect | args: %{tier: :local, parent: nil}}, local_tier(:local_swap2))

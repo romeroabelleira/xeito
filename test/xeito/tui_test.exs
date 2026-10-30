@@ -805,7 +805,7 @@ defmodule Xeito.TuiTest do
       assert List.last(rows) =~ ~r/^ ◆ state idle .* review: y \/ n \/ s \/ a/
     end
 
-    test "the header names the machine; where commands run is in the status line" do
+    test "the header names the machine" do
       [header | _] = %{tui(status_bar: false) | machine: "Chat"} |> Tui.view() |> screen()
       assert String.trim_trailing(header) == " xeito · Chat"
     end
@@ -1044,7 +1044,7 @@ defmodule Xeito.TuiTest do
       assert List.last(state.lines) =~ "✗ no such session"
     end
 
-    test "after a switch, events of the other session are not shown" do
+    test "events of another session are not shown" do
       state = tui()
       other = %{"event" => "notice", "session" => "ses-other", "attrs" => %{"text" => "elsewhere"}}
       assert {^state, []} = Tui.handle_info({:xeito_event, other}, state)

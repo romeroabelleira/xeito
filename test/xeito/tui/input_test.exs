@@ -40,7 +40,9 @@ defmodule Xeito.Tui.InputTest do
     assert state.prompt_history == ["a"]
   end
 
-  test "the commands are the daemon's and the TUI's own" do
-    assert Input.commands() == Enum.sort(~w(quit exit statusbar legend sessions skills) ++ Xeito.Session.commands())
+  test "the commands are the daemon's and the TUI's own, sorted, each once" do
+    commands = Input.commands()
+    assert commands == commands |> Enum.uniq() |> Enum.sort()
+    assert "approve" in commands and "quit" in commands and "statusbar" in commands
   end
 end

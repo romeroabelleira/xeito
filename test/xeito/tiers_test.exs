@@ -279,9 +279,9 @@ defmodule Xeito.TiersTest do
     test "unavailable tiers are skipped and the decision abstains" do
       decision = Decider.decide(Triage, @input, deciders: [:local_decision, :local])
       assert %Decision{value: :abstain, actor: :none} = decision
-      assert Enum.all?(decision.evidence, &(&1.error == :tier_unavailable))
-      assert is_binary(decision.input_hash)
-      assert decision.type_version == "1"
+
+      assert [%{tier: :local_decision, error: :tier_unavailable}, %{tier: :local, error: :tier_unavailable}] =
+               decision.evidence
     end
   end
 

@@ -58,8 +58,11 @@ defmodule Xeito.Skills.IndexTest do
 
     test "at most k, the best first" do
       many = for n <- 1..5, do: skill("search-#{n}", "Search the web for pages.")
-      assert length(Index.search(many, "search the web")) == 3
-      assert length(Index.search(many, "search the web", k: 5)) == 5
+      assert [_, _, _] = Index.search(many, "search the web")
+      assert [_, _, _, _, _] = Index.search(many, "search the web", k: 5)
+
+      best = [skill("web-search", "Search the web for pages.") | many]
+      assert ["web-search" | _] = best |> Index.search("web search") |> names()
     end
 
     test "diacritics are ignored" do
@@ -68,7 +71,7 @@ defmodule Xeito.Skills.IndexTest do
 
     test "the query syntax of the index is not the request's" do
       for request <- [~s(fix "it" NEAR\( review* -bar AND: ^tdd), "OR OR review", "review:"] do
-        assert is_list(Index.search(library(), request))
+        assert "code-review" in names(Index.search(library(), request)), request
       end
     end
 

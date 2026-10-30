@@ -22,7 +22,7 @@ defmodule Xeito.SessionTest do
   end
 
   describe "a prompt with a request id is admitted once" do
-    test "a repeat gets the same answer and does nothing", %{id: id, ws: ws} do
+    test "a repeat is acknowledged and does nothing", %{id: id, ws: ws} do
       assert :ok = Session.prompt(id, "/run touch a.txt", "r-1")
       assert_receive {:xeito, _, %{type: "turn_finished"}}, 5_000
       File.rm!(Path.join(ws, "a.txt"))

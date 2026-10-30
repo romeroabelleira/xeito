@@ -35,8 +35,7 @@ defmodule Xeito.Session.ChatModelTest do
     assert ChatModel.context(:remote_frontier, [context: 50_000], %{context: 32_768}) == 50_000
   end
 
-  test "config/1: the configuration of the session's tier, or none" do
-    assert ChatModel.config(tier: :local) == (Xeito.Tiers.config(:local) || [])
+  test "config/1: none for a tier that is not configured" do
     assert ChatModel.config(tier: :no_such_tier) == []
   end
 

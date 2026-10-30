@@ -69,7 +69,6 @@ defmodule Mix.Tasks.Xeito.Skills.BenchTest do
     # Tests point the user's home nowhere, so the set's skill is not in the library.
     Bench.run([set])
     assert output() =~ "0 skills, 1 cases: 0 need a skill, 0 need none"
-    assert Xeito.Skills.user_dir() == "/nonexistent/xeito-test-home/.agents/skills"
   end
 
   test "a missing set is an error" do

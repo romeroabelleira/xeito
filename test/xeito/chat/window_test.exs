@@ -184,7 +184,7 @@ defmodule Xeito.Chat.WindowTest do
   end
 
   describe "truncated?" do
-    test "a prompt cut by the server comes back as half its context plus two" do
+    test "a prompt cut by the server comes back as half its context plus one to three" do
       assert Window.truncated?(32_770, 65_536)
       assert Window.truncated?(16_387, 32_768)
       refute Window.truncated?(30_000, 65_536)

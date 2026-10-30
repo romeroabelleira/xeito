@@ -185,7 +185,7 @@ defmodule Xeito.UndoTest do
       assert [%{id: "ses-a/t1/e1"}] = Undo.steps(ws, "ses-a")
     end
 
-    test "files the project ignores do not count", %{ws: ws} do
+    test "an ignored directory does not count toward the file limit", %{ws: ws} do
       put(ws, ".gitignore", "big/\n")
       put(ws, "f1.txt", "1\n")
       for i <- 1..3, do: put(ws, "big/#{i}", "#{i}\n")

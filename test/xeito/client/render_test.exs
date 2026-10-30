@@ -9,7 +9,7 @@ defmodule Xeito.Client.RenderTest do
   defp completed(kind, result), do: line("effect_completed", %{"kind" => kind, "result" => result})
 
   describe "runs" do
-    test "escalation and intent runs are folded into their decision" do
+    test "the states of escalation and intent runs are not shown" do
       assert line("state_entered", %{"state" => "classify"}, "ses-1/t1/esc") == ""
       assert line("state_entered", %{"state" => "classify"}, "ses-1/t1/intent") == ""
     end

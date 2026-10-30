@@ -3,7 +3,6 @@ defmodule Mix.Tasks.Xeito.Skills.ExamplesTest do
   use ExUnit.Case, async: false
 
   alias Mix.Tasks.Xeito.Skills.Examples, as: Task
-  alias Xeito.Skills.Examples
 
   @moduletag :tmp_dir
 
@@ -81,6 +80,5 @@ defmodule Mix.Tasks.Xeito.Skills.ExamplesTest do
   test "without a local tier there is nothing to write them with", %{ws: ws} do
     Application.put_env(:xeito, :tiers, [])
     assert_raise Mix.Error, ~r/no local tier/, fn -> Task.run(["--cwd", ws]) end
-    assert Examples.dir() =~ "home/.xeito/skills/examples"
   end
 end

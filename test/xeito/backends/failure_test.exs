@@ -60,6 +60,10 @@ defmodule Xeito.Backends.FailureTest do
 
       Agent.update(calls, fn _ -> -10 end)
       assert {:error, {:http, 503, "busy"}} = Failure.run(call, sleep: sleeps())
+      assert Agent.get(calls, & &1) == -7
+      assert_received {:slept, 1_000}
+      assert_received {:slept, 2_000}
+      refute_received {:slept, _}
     end
 
     test "an overflow, a quota refusal and a transport error say what happened" do

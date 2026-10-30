@@ -451,6 +451,8 @@ defmodule Xeito.SessionCommandsTest do
 
     [{pid, _}] = Registry.lookup(Xeito.SessionRegistry, id)
     send(pid, {:xeito, run, %{type: "output", attrs: %{"effect_id" => run <> "/e1", "text" => "late\n"}}})
+    # Still paused: `/run true` would finish at once if the output had moved the run on.
+    refute_receive {:xeito, _, %{type: "turn_finished"}}, 300
 
     :ok = Session.prompt(id, "/next")
     assert_receive {:xeito, _, %{type: "turn_finished", attrs: %{"status" => :done}}}, 5_000
@@ -528,6 +530,11 @@ defmodule Xeito.SessionCommandsTest do
       await_exit(run)
       assert %{waiting: nil} = Session.status(id)
       assert {:error, "nothing is waiting for approval"} = reply(id, "/approve session")
+
+      [{pid, _}] = Registry.lookup(Xeito.SessionRegistry, id)
+      %{cwd: cwd, allowed: allowed} = :sys.get_state(pid)
+      assert Allowed.scope(cwd, allowed, bash("mix ci")) == :session
+      assert Allowed.scope(cwd, allowed, bash("mix test")) == nil
     end
 
     test "approved, but the workspace file cannot be written", %{id: id, log: log, ws: ws} do
