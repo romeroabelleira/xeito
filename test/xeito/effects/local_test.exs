@@ -9,6 +9,13 @@ defmodule Xeito.Effects.LocalTest do
   # The workspace is the test's own directory.
   setup %{tmp_dir: dir}, do: %{ws: dir}
 
+  test "now and random read the clock and the randomness the sandbox does not have" do
+    assert %{value: now} = Local.run(Effect.now(), [])
+    assert is_integer(now) and now > 1_700_000_000_000
+    assert %{value: random} = Local.run(Effect.random(), [])
+    assert is_float(random) and random >= 0 and random < 1
+  end
+
   test "bash runs in the workspace and reports the exit status", %{ws: ws} do
     assert %{exit_status: 0, output: output} = Local.run(Effect.bash("pwd", cwd: ws), [])
     # `pwd` prints the physical path; on macOS the temp directory is behind a symlink (/var -> /private/var).

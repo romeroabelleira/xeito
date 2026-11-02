@@ -49,6 +49,6 @@ defmodule Xeito.Run.RecoveryTest do
       {5, "effect_requested", {:effect_requested, %{child | id: "r/e1/c2"}}}
     ]
 
-    assert {:ok, %{desync: nil, pending: [^script]}} = Recovery.rebuild(Scripted, entries)
+    assert {:ok, %{desync: nil, pending: [^script], children: %{"r/e1" => 2}}} = Recovery.rebuild(Scripted, entries)
   end
 end

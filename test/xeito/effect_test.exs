@@ -12,6 +12,15 @@ defmodule Xeito.EffectTest do
              Effect.script("1 + 1", cwd: "/w")
 
     assert %Effect{args: %{timeout: 5_000}, reply: :tool_done} = Effect.script("1", timeout: 5_000, reply: :tool_done)
+    # The sandbox's fingerprint, so a replay knows whether the script would see the same allow-list.
+    assert Effect.script("1").args.sandbox == Xeito.Scripts.Allowlist.fingerprint()
+  end
+
+  test "now/0 and random/0: a reading of the runner's clock or randomness, logged so a replay sees it" do
+    assert %Effect{kind: :now, args: %{}, reply: :now} = Effect.now()
+    assert %Effect{kind: :random, args: %{}, reply: :random} = Effect.random()
+    assert Effect.replay(Effect.now()) == :safe
+    assert Effect.replay(Effect.random()) == :safe
   end
 
   describe "child effects: the calls a script makes" do
@@ -44,8 +53,8 @@ defmodule Xeito.EffectTest do
       assert Effect.replay(Effect.edit("a.ex", "old", "new")) == :unsafe
     end
 
-    test "a script may not yet: its calls ran once already, and nothing replays them for it" do
-      assert Effect.replay(Effect.script("Script.bash(\"ls\")", cwd: "/w")) == :unsafe
+    test "a script may: run again, it is fed the results its calls got the first time" do
+      assert Effect.replay(Effect.script("Script.bash(\"ls\")", cwd: "/w")) == :safe
     end
 
     test "a command only when it is repeatable: a read, or a write a second run leaves as the first" do

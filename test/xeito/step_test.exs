@@ -69,4 +69,50 @@ defmodule Xeito.StepTest do
     refute Run.snapshot(id).paused
     Run.send_event(id, :give_up)
   end
+
+  test "step mode pauses before each of a script's inner results, then before the script's own", ctx do
+    log = start_log!(ctx)
+    Xeito.Events.subscribe(:all)
+    test = self()
+
+    fun = fn
+      %Xeito.Effect{kind: :script, id: id} ->
+        [run, _] = String.split(id, "/e", parts: 2)
+        %{ok: true, content: "A"} = Run.child(run, id, Xeito.Effect.read("a.ex", cwd: "/w"))
+        %{value: 7} = Run.child(run, id, Xeito.Effect.now())
+        send(test, :script_done)
+        %{ok: true, content: "done"}
+
+      %Xeito.Effect{kind: :read} ->
+        %{ok: true, content: "A"}
+
+      %Xeito.Effect{kind: :now} ->
+        %{value: 7}
+    end
+
+    {:ok, id} =
+      RunSupervisor.start_run(Xeito.TestMachines.Scripted, %{cwd: "/w"},
+        run_id: run_id(),
+        log: log,
+        runner: {Xeito.Effects.Fake, fun: fun},
+        debug: %{step: true, breakpoints: []}
+      )
+
+    paused_in(id, :running)
+    assert_receive {:xeito, ^id, %{type: "paused", attrs: %{"state" => :running, "kind" => :read}}}
+    refute_received :script_done
+    assert :ok = Run.step(id)
+
+    paused_in(id, :running)
+    assert_receive {:xeito, ^id, %{type: "paused", attrs: %{"kind" => :now}}}
+    assert :ok = Run.step(id)
+
+    assert_receive :script_done, 2_000
+    paused_in(id, :running)
+    assert_receive {:xeito, ^id, %{type: "paused", attrs: %{"kind" => :script}}}
+    assert :ok = Run.step(id)
+
+    await_exit(id)
+    assert {:ok, %{status: :done, ctx: %{output: "done"}}} = Run.result(log, id)
+  end
 end

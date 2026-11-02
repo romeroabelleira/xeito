@@ -237,7 +237,9 @@ defmodule Xeito.Run do
       tasks: %{},
       # Child effects: how many each parent has asked for, and who waits for each child's result.
       children: %{},
-      waiting: %{}
+      waiting: %{},
+      # A recovered run's scripts are fed the results their calls got before the crash.
+      recovered: false
     }
 
     case logged(data.log, run_id) do
@@ -291,7 +293,7 @@ defmodule Xeito.Run do
         {:stop, {:recovery_failed, {:desync, id}}}
 
       {:ok, rebuilt} ->
-        data = %{data | ctx: rebuilt.ctx, effect_count: rebuilt.effect_count}
+        data = %{data | ctx: rebuilt.ctx, effect_count: rebuilt.effect_count, children: rebuilt.children, recovered: true}
 
         event =
           Event.new("run_recovered", {:run_recovered, rebuilt.leaf}, %{
@@ -576,9 +578,11 @@ defmodule Xeito.Run do
     if Machine.final?(machine, leaf) do
       finish(leaf, data, from)
     else
+      context = [log: data.log, run_id: data.run_id, debug: data.debug, recovered: data.recovered]
+
       tasks =
         for effect <- effects,
-            pid = Effects.dispatch(data.runner, effect, self(), log: data.log, run_id: data.run_id, debug: data.debug),
+            pid = Effects.dispatch(data.runner, effect, self(), context),
             into: data.tasks,
             do: {effect.id, pid}
 

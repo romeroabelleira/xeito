@@ -16,6 +16,19 @@ defmodule Xeito.Scripts.Allowlist do
                         localtime_to_universaltime universaltime_to_localtime unique_integer make_ref
                         phash2 time_offset)a
 
+  @doc """
+  A short name for this allow-list and Dune's version, logged with each script
+  (`Xeito.Effect.script/2`): a replay under another sandbox could see other functions, so it is refused.
+  """
+  @spec fingerprint() :: String.t()
+  def fingerprint do
+    {@restricted_modules, @restricted_erlang, Application.spec(:dune, :vsn)}
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 12)
+  end
+
   @impl true
   def fun_status(module, _fun, _arity) when module in [Xeito.Scripts.Api, Script], do: :allowed
   def fun_status(module, _fun, _arity) when module in @restricted_modules, do: :restricted

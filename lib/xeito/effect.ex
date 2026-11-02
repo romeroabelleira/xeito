@@ -12,6 +12,8 @@ defmodule Xeito.Effect do
   | `:write`  | `:written`            | `%{ok: true}` or `%{ok: false, error: term}` |
   | `:edit`   | `:edited`             | `%{ok: true}` or `%{ok: false, error: term}` (old text must match once) |
   | `:script` | `:scripted`           | `%{ok: true, content: output}` or `%{ok: false, error: reason}` (`Xeito.Effects.Script`) |
+  | `:now`    | `:now`                | `%{value: unix_ms}`: the runner's clock, which a script has no other way to read |
+  | `:random` | `:random`             | `%{value: float}`: the runner's randomness, in `[0, 1)` |
   | `:chat`   | `:chatted`            | `%{content, tool_calls, model, tokens_in, tokens_out}` or `%{error: reason}` |
   | `:machine`| `:child_done`         | `%{run_id, status, state, ctx}` of a child run of another machine |
   | `:decide` | `{:decided, value}`   | `%{value: term}`                         |
@@ -21,7 +23,8 @@ defmodule Xeito.Effect do
 
   A script's calls are **child effects** of the script's: numbered under its id (`<id>/c<n>`,
   `child_id/2`), requested and completed by the run like any effect, with the script's effect
-  as their parent in the log.
+  as their parent in the log. A script run again (recovery, `mix xeito.log verify`) is fed their
+  logged results (`Xeito.Scripts.Replay`), which is why the clock and randomness are effects too.
   """
 
   alias Xeito.Decisions.Risk
@@ -30,7 +33,20 @@ defmodule Xeito.Effect do
   defstruct [:id, :kind, :args, :reply]
 
   @type kind ::
-          :bash | :read | :fetch | :write | :edit | :script | :chat | :machine | :decide | :tier | :probe | :swap
+          :bash
+          | :read
+          | :fetch
+          | :write
+          | :edit
+          | :script
+          | :now
+          | :random
+          | :chat
+          | :machine
+          | :decide
+          | :tier
+          | :probe
+          | :swap
   @type t :: %__MODULE__{id: String.t() | nil, kind: kind(), args: map(), reply: term()}
 
   # Result types by kind, as in the table above. Runners may add keys (a shaped output's `ref`,
@@ -50,11 +66,11 @@ defmodule Xeito.Effect do
   Whether the effect may run again after a crash (`:safe`), or must end as interrupted
   (`:unsafe`): an edit has replaced its text once already, and a command may run again only when
   `Xeito.Decisions.Risk.repeatable?/1` says so: a read, or a write a second run leaves as the
-  first did. A child machine resumes from its own log.
+  first did. A child machine resumes from its own log; a script runs again fed the logged results
+  of its calls, so only the calls it had not made run.
   """
   @spec replay(t()) :: :safe | :unsafe
   def replay(%__MODULE__{kind: :edit}), do: :unsafe
-  def replay(%__MODULE__{kind: :script}), do: :unsafe
 
   def replay(%__MODULE__{kind: :bash, args: %{cmd: cmd}}), do: if(Risk.repeatable?(cmd), do: :safe, else: :unsafe)
 
@@ -97,16 +113,31 @@ defmodule Xeito.Effect do
 
   @doc """
   Run a script (`Xeito.Effects.Script`) in the session's sandbox, its calls confined to the
-  workspace `:cwd`. Options: `:timeout` (ms, the whole script, default 300 000), `:reply`.
+  workspace `:cwd`; `sandbox` is the allow-list's fingerprint (`Xeito.Scripts.Allowlist`), so a
+  replay knows the script would see the same. Options: `:timeout` (ms, the whole script, default
+  300 000), `:reply`.
   """
   @spec script(String.t(), keyword()) :: t()
   def script(code, opts \\ []) do
     %__MODULE__{
       kind: :script,
-      args: %{code: code, cwd: opts[:cwd], timeout: Keyword.get(opts, :timeout, 300_000)},
+      args: %{
+        code: code,
+        cwd: opts[:cwd],
+        timeout: Keyword.get(opts, :timeout, 300_000),
+        sandbox: Xeito.Scripts.Allowlist.fingerprint()
+      },
       reply: Keyword.get(opts, :reply, :scripted)
     }
   end
+
+  @doc "A reading of the runner's clock (Unix milliseconds), for a script."
+  @spec now() :: t()
+  def now, do: %__MODULE__{kind: :now, args: %{}, reply: :now}
+
+  @doc "A reading of the runner's randomness (a float in `[0, 1)`), for a script."
+  @spec random() :: t()
+  def random, do: %__MODULE__{kind: :random, args: %{}, reply: :random}
 
   @doc "The id of the `n`th child effect of effect `parent`."
   @spec child_id(String.t(), pos_integer()) :: String.t()

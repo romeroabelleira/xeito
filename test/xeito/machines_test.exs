@@ -8,6 +8,8 @@ defmodule Xeito.MachinesTest do
   alias Xeito.Machines.Commit
   alias Xeito.Run
   alias Xeito.RunSupervisor
+  alias Xeito.Scripts.Host
+  alias Xeito.TestMachines.Scripted
 
   @moduletag :tmp_dir
 
@@ -83,7 +85,7 @@ defmodule Xeito.MachinesTest do
     File.write!(Path.join(ws, "a.ex"), "defmodule A do\nend\n")
     File.write!(Path.join(ws, "b.ex"), "defmodule B do\n  # TODO: later\nend\n")
     session = run_id()
-    on_exit(fn -> Xeito.Scripts.Host.stop(session) end)
+    on_exit(fn -> Host.stop(session) end)
 
     code = """
     files = Script.bash("ls *.ex")["output"] |> String.split("\\n", trim: true)
@@ -93,7 +95,7 @@ defmodule Xeito.MachinesTest do
     """
 
     {:ok, id} =
-      RunSupervisor.start_run(Xeito.TestMachines.Scripted, %{cwd: ws, code: code},
+      RunSupervisor.start_run(Scripted, %{cwd: ws, code: code},
         run_id: session <> "/t1",
         log: log,
         runner: {Local, []}
@@ -112,6 +114,42 @@ defmodule Xeito.MachinesTest do
              {"#{id}/e1/c2", :read, "a.ex"},
              {"#{id}/e1/c3", :read, "b.ex"}
            ]
+  end
+
+  @tag :sandbox
+  test "a run killed during a script runs it again fed the logged results, and only the rest runs for real",
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
+    File.write!(Path.join(ws, "a.ex"), "first\n")
+    File.write!(Path.join(ws, "b.ex"), "second\n")
+    session = run_id()
+    on_exit(fn -> Host.stop(session) end)
+    Xeito.Events.subscribe(:all)
+
+    code = ~s|a = Script.read("a.ex")["content"]; b = Script.read("b.ex")["content"]; String.trim(a <> b)|
+    id = session <> "/t1"
+
+    {:ok, ^id} =
+      RunSupervisor.start_run(Scripted, %{cwd: ws, code: code},
+        run_id: id,
+        log: log,
+        runner: {Local, []}
+      )
+
+    assert_receive {:xeito, ^id, %{type: "effect_completed", attrs: %{"effect_id" => first}}}, 5_000
+    assert first == id <> "/e1/c1"
+    # What the first run saw is in the log; the file changes before the second run.
+    File.write!(Path.join(ws, "a.ex"), "changed\n")
+    old_pid = Run.whereis(id)
+    Process.exit(old_pid, :kill)
+
+    await_exit(id)
+    assert {:ok, %{status: :done, ctx: %{output: "first\nsecond"}}} = Run.result(log, id)
+
+    requested = for {_, "effect_requested", {:effect_requested, e}} <- Log.read_run(log, id), do: {e.id, e.args[:path]}
+    # a.ex was read once: the recovered script was fed its logged content.
+    assert Enum.count(requested, &match?({_, "a.ex"}, &1)) == 1
+    assert Enum.any?(Log.read_run(log, id), &match?({_, "run_recovered", _}, &1))
   end
 
   test "commit drafts a message, waits for approval, and commits", %{ws: ws} = ctx do

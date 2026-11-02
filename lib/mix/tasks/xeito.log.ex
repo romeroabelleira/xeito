@@ -16,7 +16,9 @@ defmodule Mix.Tasks.Xeito.Log do
 
   `verify` replays every run from the log (`Xeito.Run.Recovery`) and checks that the replay
   requests exactly the effects the log recorded, for chat calls the exact messages the model
-  saw. Runs of a machine version that is no longer the current one are skipped.
+  saw; each finished script runs again in a sandbox VM, fed the logged results of its calls,
+  and must make the same calls and give the same result (`Xeito.Scripts.Replay`). Runs of a
+  machine version that is no longer the current one are skipped.
 
   `compact` rewrites events stored before the compact layout (`Xeito.Log.Store`: message chains
   stored once, results not repeated, compressed terms), then compacts the file. Old logs read fine
@@ -45,6 +47,8 @@ defmodule Mix.Tasks.Xeito.Log do
   alias Xeito.Log.Sql
   alias Xeito.Log.Store
   alias Xeito.Run.Recovery
+  alias Xeito.Scripts.Replay
+  alias Xeito.Scripts.Sandbox
 
   @switches [cwd: :string, older_than: :integer, keep: :integer, apply: :boolean]
 
@@ -156,7 +160,7 @@ defmodule Mix.Tasks.Xeito.Log do
   end
 
   defp verify(db) do
-    results = for run <- runs(db), do: {run, verify_run(db, run)}
+    results = verify_runs(db, runs(db), nil, [])
 
     for {run, result} <- results, result not in [:ok, :skipped] do
       Mix.shell().info("#{run}: #{inspect(result)}")
@@ -172,28 +176,61 @@ defmodule Mix.Tasks.Xeito.Log do
     if counts[:failed], do: Mix.raise("verify found runs that do not replay")
   end
 
-  defp verify_run(db, run) do
-    case read_run(db, run) do
-      [{_, "run_started", {:run_started, module, _version, _input}} | _] = entries ->
-        replay(module, entries)
+  # One sandbox VM serves every run with a script, and is stopped at the end.
+  defp verify_runs(_db, [], nil, results), do: Enum.reverse(results)
 
-      _ ->
-        {:error, :no_run_started}
-    end
-  rescue
-    e -> {:error, Exception.message(e)}
+  defp verify_runs(_db, [], sandbox, results) do
+    Sandbox.stop(sandbox)
+    Enum.reverse(results)
   end
 
-  defp replay(module, entries) do
+  defp verify_runs(db, [run | rest], sandbox, results) do
+    {result, sandbox} = verify_run(db, run, sandbox)
+    verify_runs(db, rest, sandbox, [{run, result} | results])
+  end
+
+  defp verify_run(db, run, sandbox) do
+    case read_run(db, run) do
+      [{_, "run_started", {:run_started, module, _version, _input}} | _] = entries ->
+        replay(module, entries, sandbox)
+
+      _ ->
+        {{:error, :no_run_started}, sandbox}
+    end
+  rescue
+    e -> {{:error, Exception.message(e)}, sandbox}
+  end
+
+  defp replay(module, entries, sandbox) do
     if Code.ensure_loaded?(module) do
       case Recovery.rebuild(module, entries) do
-        {:ok, %{desync: nil}} -> :ok
-        {:ok, %{desync: id}} -> {:desync, id}
-        {:error, {:version_mismatch, _}} -> :skipped
-        {:error, reason} -> {:error, reason}
+        {:ok, %{desync: nil}} -> scripts(entries, sandbox)
+        {:ok, %{desync: id}} -> {{:desync, id}, sandbox}
+        {:error, {:version_mismatch, _}} -> {:skipped, sandbox}
+        {:error, reason} -> {{:error, reason}, sandbox}
       end
     else
-      :skipped
+      {:skipped, sandbox}
+    end
+  end
+
+  # The sandbox VM is started by the first run with a script and kept for the rest.
+  defp scripts(entries, sandbox) do
+    case Replay.scripts(entries) do
+      [] -> {:ok, sandbox}
+      _scripts -> with_sandbox(entries, sandbox || start_sandbox())
+    end
+  end
+
+  defp with_sandbox(_entries, {:error, reason}), do: {{:error, {:sandbox, reason}}, nil}
+  defp with_sandbox(entries, sandbox), do: Replay.verify(entries, sandbox)
+
+  defp start_sandbox do
+    {:ok, _} = Application.ensure_all_started(:erlexec)
+
+    case Sandbox.start() do
+      {:ok, sandbox} -> sandbox
+      {:error, reason} -> {:error, reason}
     end
   end
 

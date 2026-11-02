@@ -4,7 +4,8 @@ defmodule Xeito.Run.Recovery do
 
   - Folds the input and received events through `Xeito.Machine.Engine`, as the live run does.
   - `pending`: requested effects with no logged result; the run re-dispatches them (at least once).
-    A script's child effects are neither expected nor pending: the script's own effect is.
+    A script's child effects are neither expected nor pending: the script's own effect is, and
+    `children` counts them per parent, so the run numbers the next ones after them.
   - `desync`: id of the first effect the replay requests that differs from the logged one; the
     run refuses to recover then.
   """
@@ -18,6 +19,7 @@ defmodule Xeito.Run.Recovery do
           ctx: map(),
           effect_count: non_neg_integer(),
           pending: [Effect.t()],
+          children: %{optional(String.t()) => pos_integer()},
           finished: boolean(),
           replayed: non_neg_integer(),
           desync: String.t() | nil
@@ -39,6 +41,7 @@ defmodule Xeito.Run.Recovery do
         requested: %{},
         order: [],
         expected: started.effects,
+        children: %{},
         finished: false,
         replayed: 0,
         desync: nil
@@ -84,8 +87,8 @@ defmodule Xeito.Run.Recovery do
 
   defp requested(acc, effect) do
     if Effect.child?(effect) do
-      # A script's call: requested by the script, not the machine, and re-run with it.
-      acc
+      # A script's call: requested by the script, not the machine, and fed to it when it runs again.
+      %{acc | children: Map.update(acc.children, Effect.parent(effect.id), 1, &(&1 + 1))}
     else
       acc = check(acc, effect)
       %{acc | requested: Map.put(acc.requested, effect.id, effect), order: [effect.id | acc.order]}
@@ -104,7 +107,7 @@ defmodule Xeito.Run.Recovery do
     pending = acc.order |> Enum.reverse() |> Enum.flat_map(&List.wrap(acc.requested[&1]))
 
     acc
-    |> Map.take([:leaf, :ctx, :effect_count, :finished, :replayed, :desync])
+    |> Map.take([:leaf, :ctx, :effect_count, :children, :finished, :replayed, :desync])
     |> Map.put(:pending, pending)
   end
 end

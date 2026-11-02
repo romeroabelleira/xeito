@@ -64,6 +64,45 @@ defmodule Mix.Tasks.Xeito.LogTest do
     assert run(ws, ["verify"]) =~ "1 runs: 1 replay exactly, 0 skipped (machine changed since), 0 failed"
   end
 
+  @tag :sandbox
+  test "verify runs each script again, fed the results its calls got; a call that differs is a desync naming it",
+       %{ws: ws} do
+    File.write!(Path.join(ws, "a.ex"), "defmodule A do\nend\n")
+    log = Xeito.Log.for_workspace(ws)
+    id = "ses-lt-script-#{System.unique_integer([:positive])}"
+    on_exit(fn -> Xeito.Scripts.Host.stop(id) end)
+    code = ~s|[Script.read("a.ex")["content"], Script.now()] \|> Enum.map(&inspect/1) \|> Enum.join(" ")|
+
+    {:ok, run} =
+      Xeito.RunSupervisor.start_run(Xeito.TestMachines.Scripted, %{cwd: ws, code: code},
+        run_id: id <> "/t1",
+        log: log,
+        runner: {Xeito.Effects.Local, []}
+      )
+
+    await_exit(run)
+    assert {:ok, %{status: :done}} = Xeito.Run.result(log, run)
+
+    assert run(ws, ["verify"]) =~ "2 runs: 2 replay exactly, 0 skipped (machine changed since), 0 failed"
+
+    # The log says the script read b.ex: the script, run again, asks for a.ex.
+    {:ok, db} = Sqlite3.open(Path.join([ws, ".xeito", "log.sqlite"]))
+    tampered = %{Xeito.Effect.read("b.ex", cwd: ws) | id: run <> "/e1/c1"}
+    blob = Base.encode16(:erlang.term_to_binary({:effect_requested, tampered}))
+
+    :ok =
+      Sqlite3.execute(
+        db,
+        "UPDATE xeito_term SET term = x'#{blob}' WHERE run_id = '#{run}' AND seq = (SELECT seq FROM xeito_term " <>
+          "WHERE run_id = '#{run}' AND type = 'effect_requested' ORDER BY seq LIMIT 1 OFFSET 1)"
+      )
+
+    Sqlite3.close(db)
+
+    assert_raise Mix.Error, "verify found runs that do not replay", fn -> run(ws, ["verify"]) end
+    assert output() =~ "#{run}: {:desync, \"#{run}/e1/c1\"}"
+  end
+
   test "verify fails on a run that does not replay", %{ws: ws} do
     {:ok, db} = Sqlite3.open(Path.join([ws, ".xeito", "log.sqlite"]))
 

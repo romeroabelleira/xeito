@@ -32,6 +32,11 @@ defmodule Xeito.Scripts.AllowlistTest do
     end
   end
 
+  test "the fingerprint names this allow-list and Dune's version: short, stable, and logged with each script" do
+    assert Allowlist.fingerprint() == Allowlist.fingerprint()
+    assert Allowlist.fingerprint() =~ ~r/^[0-9a-f]{8,16}$/
+  end
+
   test "the script API is allowed by name, under its short name too" do
     assert Allowlist.fun_status(Xeito.Scripts.Api, :read, 1) == :allowed
     assert Allowlist.fun_status(Script, :read, 1) == :allowed
