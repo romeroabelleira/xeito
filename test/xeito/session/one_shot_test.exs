@@ -43,7 +43,7 @@ defmodule Xeito.Session.OneShotTest do
       assert %{tools: ["read"], skill_candidates: []} = prepare!("hi", [tools: ["read"]], state(dir)).input
       assert %{tools: ["read", "skill"]} = prepare!("hi", [tools: ["read", "skill"]], state(dir)).input
 
-      assert {:error, "unknown tool \"fly\"; the tools are read, write, edit, bash, skill, fetch"} =
+      assert {:error, "unknown tool \"fly\"; the tools are read, write, edit, bash, script, skill, fetch"} =
                OneShot.prepare("hi", [tools: ["read", "fly"]], state(dir))
     end
 

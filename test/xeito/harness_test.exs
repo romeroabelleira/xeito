@@ -439,7 +439,7 @@ defmodule Xeito.HarnessTest do
     assert [%{"role" => "system"}, %{"role" => "user", "content" => "What is here?"}] =
              first["messages"]
 
-    assert Enum.map(first["tools"], & &1["function"]["name"]) == ~w(read write edit bash)
+    assert Enum.map(first["tools"], & &1["function"]["name"]) == ~w(read write edit bash script)
 
     assert_received {:chat_request, second}
     tool = List.last(second["messages"])

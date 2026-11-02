@@ -1,6 +1,6 @@
 defmodule Xeito.Tools do
   @moduledoc """
-  The model's tools (`read`, `write`, `edit`, `bash`, `skill`, `fetch`): their specs, and each call as an `Xeito.Effect`.
+  The model's tools (`read`, `write`, `edit`, `bash`, `script`, `skill`, `fetch`): their specs, and each call as an `Xeito.Effect`.
 
   * Calls become effects run by the policy-checked runner, never by the model client.
   * `read`, `write` and `edit` are confined to the workspace by `Xeito.Effects.Local`.
@@ -8,6 +8,9 @@ defmodule Xeito.Tools do
     `.xeito/`) and tell the model why.
   * `bash` passes the `Xeito.Decisions.Risk` decision first; `timeout_s` defaults to 60 seconds,
     at most `max_bash_timeout_s/0`.
+  * `script` runs a program in the session's sandbox (`Xeito.Effects.Script`); its calls are
+    gated one by one, so the call itself needs no decision. `timeout_s` defaults to 300 seconds,
+    at most `max_script_timeout_s/0`.
   * `skill` is offered only when the run has skills and reads only inside the skill's directory.
   * `fetch` (a URL as Markdown, `Xeito.Effects.Fetch`) is offered only when the run's `network`
     (the policy's setting) is not `:forbidden`; what it returns is public input.
@@ -16,30 +19,41 @@ defmodule Xeito.Tools do
 
   alias Xeito.Effect
 
-  @names ~w(read write edit bash)
+  @names ~w(read write edit bash script)
 
-  # Seconds. `Xeito.Machines.Chat`'s `executing` timeout must outlast the maximum.
+  # Seconds. `Xeito.Machines.Chat`'s `executing` timeout must outlast both maximums.
   @default_bash_timeout_s 60
   @max_bash_timeout_s 600
+  @default_script_timeout_s 300
+  @max_script_timeout_s 600
 
   @doc "The longest a model may ask a `bash` command to run, in seconds."
   @spec max_bash_timeout_s() :: pos_integer()
   def max_bash_timeout_s, do: @max_bash_timeout_s
+
+  @doc "The longest a model may ask a `script` to run, in seconds, its commands included."
+  @spec max_script_timeout_s() :: pos_integer()
+  def max_script_timeout_s, do: @max_script_timeout_s
 
   @doc """
   A `bash` call's timeout in milliseconds from its `timeout_s` argument, capped at the maximum.
   Numeric strings are accepted; anything else that is not a positive number gets the default.
   """
   @spec bash_timeout_ms(term()) :: pos_integer()
-  def bash_timeout_ms(seconds) when is_binary(seconds), do: seconds |> Float.parse() |> parsed_seconds()
+  def bash_timeout_ms(seconds), do: timeout_ms(seconds, @default_bash_timeout_s, @max_bash_timeout_s)
 
-  def bash_timeout_ms(seconds) when is_number(seconds) and seconds > 0,
-    do: round(min(seconds, @max_bash_timeout_s) * 1_000)
+  @doc "A `script` call's timeout in milliseconds, as `bash_timeout_ms/1` with the script's default and maximum."
+  @spec script_timeout_ms(term()) :: pos_integer()
+  def script_timeout_ms(seconds), do: timeout_ms(seconds, @default_script_timeout_s, @max_script_timeout_s)
 
-  def bash_timeout_ms(_other), do: @default_bash_timeout_s * 1_000
+  defp timeout_ms(seconds, default, max) when is_binary(seconds),
+    do: seconds |> Float.parse() |> parsed_seconds(default, max)
 
-  defp parsed_seconds({seconds, ""}), do: bash_timeout_ms(seconds)
-  defp parsed_seconds(_not_a_number), do: bash_timeout_ms(nil)
+  defp timeout_ms(seconds, _default, max) when is_number(seconds) and seconds > 0, do: round(min(seconds, max) * 1_000)
+  defp timeout_ms(_other, default, _max), do: default * 1_000
+
+  defp parsed_seconds({seconds, ""}, default, max), do: timeout_ms(seconds, default, max)
+  defp parsed_seconds(_not_a_number, default, max), do: timeout_ms(nil, default, max)
 
   @doc "The core tool names."
   @spec names() :: [String.t()]
@@ -121,6 +135,29 @@ defmodule Xeito.Tools do
         ["command"]
       ),
       spec(
+        "script",
+        "Run a short Elixir program in a sandbox to do in one call what would take many: loop " <>
+          "over files or command output, filter, count, group, and return only what matters. It " <>
+          "reaches the project only through Script.read(path), which gives " <>
+          ~s|%{"ok" => true, "content" => text} or %{"ok" => false, "error" => reason}, and | <>
+          ~s|Script.bash(command), which gives %{"exit_status" => n, "output" => text}; only | <>
+          "commands that are safe by rule run (reads, grep, git status, the project's tests), " <>
+          "one that would need review fails with an error, and a forbidden one stops the script. " <>
+          "Script.text(value) adds a line to the output; the program's last value is output too. " <>
+          "No File, System, Process, clock or randomness: use Script.now() and Script.random(). " <>
+          "Long output is shortened for you, as a command's is.",
+        %{
+          program: %{type: "string", description: "the Elixir program; Enum, String, Map, Regex and Script are available"},
+          timeout_s: %{
+            type: "integer",
+            description:
+              "seconds it may run, its commands included (default #{@default_script_timeout_s}, " <>
+                "at most #{@max_script_timeout_s})"
+          }
+        },
+        ["program"]
+      ),
+      spec(
         "skill",
         "Load a skill's instructions (SKILL.md), or another file inside that skill's directory.",
         %{
@@ -186,15 +223,23 @@ defmodule Xeito.Tools do
 
   defp skill_effect(_args, _ctx), do: nil
 
-  # nil for arguments of the wrong shape.
+  # nil for arguments of the wrong shape; the name is one `names_for/1` offered.
   defp tool_effect("read", args, opts), do: read_effect(args, opts)
   defp tool_effect("write", args, opts), do: write_effect(args, opts)
   defp tool_effect("edit", args, opts), do: edit_effect(args, opts)
 
-  defp tool_effect("bash", %{"command" => c} = args, opts) when is_binary(c),
+  defp tool_effect("bash", args, opts), do: bash_effect(args, opts)
+  defp tool_effect("script", args, opts), do: script_effect(args, opts)
+
+  defp bash_effect(%{"command" => c} = args, opts) when is_binary(c),
     do: Effect.bash(c, [timeout: bash_timeout_ms(args["timeout_s"])] ++ opts)
 
-  defp tool_effect(_name, _args, _opts), do: nil
+  defp bash_effect(_args, _opts), do: nil
+
+  defp script_effect(%{"program" => code} = args, opts) when is_binary(code) and code != "",
+    do: Effect.script(code, [timeout: script_timeout_ms(args["timeout_s"])] ++ opts)
+
+  defp script_effect(_args, _opts), do: nil
 
   defp read_effect(%{"result" => r}, opts) when is_binary(r) and r != "", do: Effect.read("", [result: r] ++ opts)
   defp read_effect(%{"path" => p} = args, opts) when is_binary(p), do: Effect.read(p, read_view(args) ++ opts)

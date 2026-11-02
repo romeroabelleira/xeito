@@ -4,10 +4,12 @@ defmodule Xeito.Run.Recovery do
 
   - Folds the input and received events through `Xeito.Machine.Engine`, as the live run does.
   - `pending`: requested effects with no logged result; the run re-dispatches them (at least once).
+    A script's child effects are neither expected nor pending: the script's own effect is.
   - `desync`: id of the first effect the replay requests that differs from the logged one; the
     run refuses to recover then.
   """
 
+  alias Xeito.Effect
   alias Xeito.Machine
   alias Xeito.Machine.Engine
 
@@ -15,7 +17,7 @@ defmodule Xeito.Run.Recovery do
           leaf: Machine.state_name(),
           ctx: map(),
           effect_count: non_neg_integer(),
-          pending: [Xeito.Effect.t()],
+          pending: [Effect.t()],
           finished: boolean(),
           replayed: non_neg_integer(),
           desync: String.t() | nil
@@ -71,10 +73,7 @@ defmodule Xeito.Run.Recovery do
     end
   end
 
-  defp fold(_machine, {_, "effect_requested", {:effect_requested, effect}}, acc) do
-    acc = check(acc, effect)
-    %{acc | requested: Map.put(acc.requested, effect.id, effect), order: [effect.id | acc.order]}
-  end
+  defp fold(_machine, {_, "effect_requested", {:effect_requested, effect}}, acc), do: requested(acc, effect)
 
   defp fold(_machine, {_, "effect_completed", {:effect_completed, id, _result}}, acc) do
     %{acc | requested: Map.delete(acc.requested, id)}
@@ -82,6 +81,16 @@ defmodule Xeito.Run.Recovery do
 
   defp fold(_machine, {_, "run_finished", _}, acc), do: %{acc | finished: true}
   defp fold(_machine, _other, acc), do: acc
+
+  defp requested(acc, effect) do
+    if Effect.child?(effect) do
+      # A script's call: requested by the script, not the machine, and re-run with it.
+      acc
+    else
+      acc = check(acc, effect)
+      %{acc | requested: Map.put(acc.requested, effect.id, effect), order: [effect.id | acc.order]}
+    end
+  end
 
   # The logged effects follow the step that requested them, in order.
   defp check(%{expected: [expected | rest]} = acc, logged) do

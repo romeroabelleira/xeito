@@ -10,6 +10,7 @@ defmodule Xeito.Tools.Shape do
     * **Large file reads**: dependency and generated files (`third_party?/1`) become an outline
       or their first part past 400 lines; the project's own files stay whole up to 2,000 lines.
     * **Fetched pages**: cut like a third-party file, to their first part past 400 lines.
+    * **Script output** (`Xeito.Effects.Script`): as shell output.
 
   Shaped shell text ends with how to read the full output back (`read` with `result:`). Output
   that shaping would not shorten by at least 20% is left alone.
@@ -46,6 +47,9 @@ defmodule Xeito.Tools.Shape do
       else: result
   end
 
+  def shape(%Effect{kind: :script} = effect, %{ok: true, content: content} = result) when is_binary(content),
+    do: script(effect, content, result)
+
   # --- shell output --------------------------------------------------------------------------
   def shape(%Effect{kind: :read, args: args}, %{ok: true, content: content} = result) when is_binary(content) do
     if explicit?(args), do: result, else: read(args.path, content, result)
@@ -59,6 +63,11 @@ defmodule Xeito.Tools.Shape do
     do: read(Path.join("deps", URI.parse(url).host || "page"), content, result)
 
   def fetched(_effect, result), do: result
+
+  defp script(effect, content, result) do
+    {text, before, now} = bash("", content)
+    if shorter?(content, text), do: Map.put(result, :shaped, text <> footer(effect, before, now)), else: result
+  end
 
   # An outline, symbol, line range or stored result is exactly what was asked for.
   defp explicit?(args), do: Enum.any?([:outline, :symbol, :lines, :result], &Map.has_key?(args, &1))

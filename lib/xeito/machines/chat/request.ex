@@ -22,8 +22,9 @@ defmodule Xeito.Machines.Chat.Request do
 
   @default_system """
   You are a coding assistant working in a software project. Use the tools to inspect and change
-  the project: read, write, edit (exact replacement) and bash (runs in the project root). Keep
-  answers short. When the task is done, answer without calling a tool.
+  the project: read, write, edit (exact replacement) and bash (runs in the project root). For
+  busywork over many files or lines (classify, count, group, filter), write one script instead
+  of many calls. Keep answers short. When the task is done, answer without calling a tool.
   """
 
   @doc "The default system prompt; the session adds project context."

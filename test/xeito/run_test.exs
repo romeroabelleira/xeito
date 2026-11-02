@@ -10,6 +10,7 @@ defmodule Xeito.RunTest do
   alias Xeito.Machines.RunTests
   alias Xeito.Run
   alias Xeito.RunSupervisor
+  alias Xeito.TestMachines.Counter
   alias Xeito.TestMachines.Sleepy
 
   @ctx %{cwd: "/tmp", test_cmd: "mix test"}
@@ -25,7 +26,7 @@ defmodule Xeito.RunTest do
 
   test "an internal transition is logged, and the run stays where it was" do
     log = start_log!()
-    id = start(Xeito.TestMachines.Counter, :none, log, %{})
+    id = start(Counter, :none, log, %{})
 
     assert {:ok, :idle} = Run.send_event(id, :note)
     assert {:ok, :idle} = Run.send_event(id, :note)
@@ -100,6 +101,69 @@ defmodule Xeito.RunTest do
 
     await_exit(id)
     assert {:ok, %{status: :failed, state: :failed, ctx: %{attempts: 1}}} = Run.result(log, id)
+  end
+
+  describe "child/3: the calls a script makes, as effects of the run" do
+    # A fake script runner: its "script" asks the run for two reads and a command, as a script's calls do.
+    defp script_runner(test) do
+      fun = fn
+        %Xeito.Effect{kind: :script, id: id} ->
+          [run, _] = String.split(id, "/e", parts: 2)
+          first = Run.child(run, id, Xeito.Effect.read("a.ex", cwd: "/w"))
+          second = Run.child(run, id, Xeito.Effect.bash("ls", cwd: "/w"))
+          send(test, {:children, first, second})
+          %{ok: true, content: "done"}
+
+        %Xeito.Effect{kind: :read} ->
+          %{ok: true, content: "defmodule A"}
+
+        %Xeito.Effect{kind: :bash} ->
+          %{exit_status: 0, output: "a.ex\n"}
+      end
+
+      {Fake, fun: fun}
+    end
+
+    test "each child is numbered under its parent, logged with it as parent, and answered to the caller" do
+      log = start_log!()
+      id = start(Xeito.TestMachines.Scripted, script_runner(self()), log, %{cwd: "/w"})
+
+      assert_receive {:children, %{ok: true, content: "defmodule A"}, %{exit_status: 0, output: "a.ex\n"}}, 2_000
+      await_exit(id)
+      assert {:ok, %{status: :done, ctx: %{output: "done"}}} = Run.result(log, id)
+
+      effects =
+        for {_, type, term} <- Log.read_run(log, id), type in ~w(effect_requested effect_completed) do
+          case term do
+            {:effect_requested, effect} -> {:requested, effect.id, effect.kind}
+            {:effect_completed, eid, _} -> {:completed, eid}
+          end
+        end
+
+      assert effects == [
+               {:requested, "#{id}/e1", :script},
+               {:requested, "#{id}/e1/c1", :read},
+               {:completed, "#{id}/e1/c1"},
+               {:requested, "#{id}/e1/c2", :bash},
+               {:completed, "#{id}/e1/c2"},
+               {:completed, "#{id}/e1"}
+             ]
+
+      # The children relate to the script's effect as their parent, in the OCEL event-object table.
+      assert [["#{id}/e1", "parent"], ["#{id}/e1", "parent"]] ==
+               Log.query(
+                 log,
+                 "SELECT eo.ocel_object_id, eo.ocel_qualifier FROM event_object eo " <>
+                   "JOIN event_effect_requested r ON r.ocel_id = eo.ocel_event_id " <>
+                   "WHERE eo.ocel_qualifier = 'parent' ORDER BY r.ocel_id"
+               )
+    end
+
+    test "a child of an effect that is not in flight is refused" do
+      log = start_log!()
+      id = start(Counter, :none, log, %{})
+      assert {:error, :no_parent} = Run.child(id, "#{id}/e9", Xeito.Effect.read("a.ex", cwd: "/w"))
+    end
   end
 
   test "an unhandled timeout fails the run" do

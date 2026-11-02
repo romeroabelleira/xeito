@@ -11,12 +11,17 @@ defmodule Xeito.Effect do
   | `:fetch`  | `:fetched`            | `%{ok: true, content: markdown, url, status, title}` or `%{ok: false, error: term}` |
   | `:write`  | `:written`            | `%{ok: true}` or `%{ok: false, error: term}` |
   | `:edit`   | `:edited`             | `%{ok: true}` or `%{ok: false, error: term}` (old text must match once) |
+  | `:script` | `:scripted`           | `%{ok: true, content: output}` or `%{ok: false, error: reason}` (`Xeito.Effects.Script`) |
   | `:chat`   | `:chatted`            | `%{content, tool_calls, model, tokens_in, tokens_out}` or `%{error: reason}` |
   | `:machine`| `:child_done`         | `%{run_id, status, state, ctx}` of a child run of another machine |
   | `:decide` | `{:decided, value}`   | `%{value: term}`                         |
   | `:tier`   | `:tier_done`          | a tier result, or `%{tier: t, error: reason}` (escalation) |
   | `:probe`  | `:probed`             | `%{loaded: boolean, swap_allowed: boolean}` (escalation) |
   | `:swap`   | `:swapped`            | `%{ok: boolean, ms: integer}` (escalation) |
+
+  A script's calls are **child effects** of the script's: numbered under its id (`<id>/c<n>`,
+  `child_id/2`), requested and completed by the run like any effect, with the script's effect
+  as their parent in the log.
   """
 
   alias Xeito.Decisions.Risk
@@ -25,7 +30,7 @@ defmodule Xeito.Effect do
   defstruct [:id, :kind, :args, :reply]
 
   @type kind ::
-          :bash | :read | :fetch | :write | :edit | :chat | :machine | :decide | :tier | :probe | :swap
+          :bash | :read | :fetch | :write | :edit | :script | :chat | :machine | :decide | :tier | :probe | :swap
   @type t :: %__MODULE__{id: String.t() | nil, kind: kind(), args: map(), reply: term()}
 
   # Result types by kind, as in the table above. Runners may add keys (a shaped output's `ref`,
@@ -49,6 +54,7 @@ defmodule Xeito.Effect do
   """
   @spec replay(t()) :: :safe | :unsafe
   def replay(%__MODULE__{kind: :edit}), do: :unsafe
+  def replay(%__MODULE__{kind: :script}), do: :unsafe
 
   def replay(%__MODULE__{kind: :bash, args: %{cmd: cmd}}), do: if(Risk.repeatable?(cmd), do: :safe, else: :unsafe)
 
@@ -88,6 +94,36 @@ defmodule Xeito.Effect do
       reply: Keyword.get(opts, :reply, :read)
     }
   end
+
+  @doc """
+  Run a script (`Xeito.Effects.Script`) in the session's sandbox, its calls confined to the
+  workspace `:cwd`. Options: `:timeout` (ms, the whole script, default 300 000), `:reply`.
+  """
+  @spec script(String.t(), keyword()) :: t()
+  def script(code, opts \\ []) do
+    %__MODULE__{
+      kind: :script,
+      args: %{code: code, cwd: opts[:cwd], timeout: Keyword.get(opts, :timeout, 300_000)},
+      reply: Keyword.get(opts, :reply, :scripted)
+    }
+  end
+
+  @doc "The id of the `n`th child effect of effect `parent`."
+  @spec child_id(String.t(), pos_integer()) :: String.t()
+  def child_id(parent, n), do: "#{parent}/c#{n}"
+
+  @doc "The id of the effect a child effect id belongs to, or `nil` for an effect of the run's own."
+  @spec parent(String.t()) :: String.t() | nil
+  def parent(id) do
+    case Regex.run(~r{^(.+)/c\d+$}, id) do
+      [_, parent] -> parent
+      nil -> nil
+    end
+  end
+
+  @doc "Whether the effect is a child of another (a script's call)."
+  @spec child?(t()) :: boolean()
+  def child?(%__MODULE__{id: id}), do: is_binary(id) and parent(id) != nil
 
   @doc "Fetch a URL (`Xeito.Effects.Fetch`): its body as Markdown. Options: `:reply`."
   @spec fetch(String.t(), keyword()) :: t()

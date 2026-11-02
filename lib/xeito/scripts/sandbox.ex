@@ -5,10 +5,11 @@ defmodule Xeito.Scripts.Sandbox do
   and reaches the daemon only through `Xeito.Scripts.Protocol` on its stdin and stdout.
 
     * `start/1` starts the VM and waits for `ready`; `stop/1` ends it with its process group.
-    * `eval/4` sends a script with its limits and serves every call the script makes with
-      `on_call.(name, args)` until the outcome comes back: the last value and the script's stdio,
-      or the failure. A VM that stops or stays silent past `timeout_ms` is killed, and the
-      outcome is a `timeout` or `crashed` failure.
+    * `eval/5` sends a script with its limits and serves every call the script makes with
+      `on_call.(name, args, acc)`, which gives the value and the next accumulator, until the
+      outcome comes back: the last value and the script's stdio, or the failure, with the
+      accumulator. A VM that stops or stays silent past `timeout_ms` is killed, and the outcome
+      is a `timeout` or `crashed` failure.
 
   One sandbox per session is the intended use: its start-up is paid once.
   """
@@ -54,40 +55,44 @@ defmodule Xeito.Scripts.Sandbox do
     result
   end
 
+  @type on_call :: (String.t(), [term()], term() -> {term(), term()})
+
   @doc """
   Runs `code` in the VM. `limits`: `reductions`, `heap`, `timeout_ms` (also how long the daemon
-  waits for the VM between messages). Returns the outcome and the sandbox, or stops a VM that
-  failed the protocol and returns the failure.
+  waits for the VM between messages). Returns the outcome, the sandbox (`nil` once a VM that
+  failed the protocol or fell silent is stopped) and the accumulator `on_call` threaded through
+  the script's calls.
   """
-  @spec eval(t(), String.t(), map(), (String.t(), [term()] -> term())) :: {Vm.outcome(), t() | nil}
-  def eval(sandbox, code, limits, on_call) do
+  @spec eval(t(), String.t(), map(), term(), on_call()) :: {Vm.outcome(), t() | nil, term()}
+  def eval(sandbox, code, limits, acc, on_call) do
     timeout = Map.get(limits, "timeout_ms", 600_000)
     id = "s#{System.unique_integer([:positive])}"
     send_message(sandbox, %{t: "run", id: id, code: code, limits: limits})
-    converse(sandbox, id, timeout, on_call)
+    converse(sandbox, %{id: id, timeout: timeout, on_call: on_call}, acc)
   end
 
-  defp converse(sandbox, id, timeout, on_call) do
-    case receive_message(sandbox, timeout) do
-      {:ok, message, sandbox} -> handle(message, sandbox, id, timeout, on_call)
-      {:error, reason} -> {{:error, failure(reason, timeout)}, stop_quietly(sandbox, reason)}
+  defp converse(sandbox, run, acc) do
+    case receive_message(sandbox, run.timeout) do
+      {:ok, message, sandbox} -> handle(message, sandbox, run, acc)
+      {:error, reason} -> {{:error, failure(reason, run.timeout)}, stop_quietly(sandbox, reason), acc}
     end
   end
 
-  defp handle(%{"t" => "call", "name" => name, "args" => args}, sandbox, id, timeout, on_call) do
-    send_message(sandbox, %{t: "reply", id: id, value: on_call.(name, args)})
-    converse(sandbox, id, timeout, on_call)
+  defp handle(%{"t" => "call", "name" => name, "args" => args}, sandbox, run, acc) do
+    {value, acc} = run.on_call.(name, args, acc)
+    send_message(sandbox, %{t: "reply", id: run.id, value: value})
+    converse(sandbox, run, acc)
   end
 
-  defp handle(%{"t" => "done", "value" => value, "stdio" => stdio}, sandbox, _id, _timeout, _on_call),
-    do: {{:ok, value, stdio}, sandbox}
+  defp handle(%{"t" => "done", "value" => value, "stdio" => stdio}, sandbox, _run, acc),
+    do: {{:ok, value, stdio}, sandbox, acc}
 
-  defp handle(%{"t" => "failed", "type" => type, "message" => message} = failed, sandbox, _id, _timeout, _on_call),
-    do: {{:error, %{type: String.to_atom(type), message: message, stdio: failed["stdio"] || ""}}, sandbox}
+  defp handle(%{"t" => "failed", "type" => type, "message" => message} = failed, sandbox, _run, acc),
+    do: {{:error, %{type: String.to_atom(type), message: message, stdio: failed["stdio"] || ""}}, sandbox, acc}
 
-  defp handle(other, sandbox, _id, _timeout, _on_call) do
+  defp handle(other, sandbox, _run, acc) do
     stop(sandbox)
-    {{:error, %{type: :protocol, message: "unexpected message #{inspect(other)}", stdio: ""}}, nil}
+    {{:error, %{type: :protocol, message: "unexpected message #{inspect(other)}", stdio: ""}}, nil, acc}
   end
 
   defp failure(:timeout, timeout), do: %{type: :timeout, message: "the script did not finish in #{timeout} ms", stdio: ""}

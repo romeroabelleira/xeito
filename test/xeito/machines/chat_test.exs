@@ -2,6 +2,7 @@ defmodule Xeito.Machines.ChatTest do
   @moduledoc "Unit tests of the chat machine's guards and actions, on contexts, without a model."
   use ExUnit.Case, async: true
 
+  alias Xeito.Effect
   alias Xeito.Machine
   alias Xeito.Machine.Engine
   alias Xeito.Machines.Chat
@@ -487,9 +488,22 @@ defmodule Xeito.Machines.ChatTest do
     end
   end
 
-  test "a tool call's state outlasts the longest command a model may ask for, and its stop" do
+  test "a tool call's state outlasts the longest command or script a model may ask for, and its stop" do
     {state_ms, _event} = Machine.timeout(Machine.fetch!(Chat), :executing)
     # Xeito.Effects.OsCommand: SIGTERM, a grace period, SIGKILL, then the group's last output.
     assert state_ms > Xeito.Tools.max_bash_timeout_s() * 1_000 + 10_000
+    # A script's commands run within the script's own time limit (`Xeito.Effects.Script`).
+    assert state_ms > Xeito.Tools.max_script_timeout_s() * 1_000 + 10_000
+  end
+
+  test "a script call runs in executing without a risk check: its commands are gated one by one" do
+    call = %{name: "script", arguments: %{"program" => ~s|Script.bash("ls")|}}
+    ctx = ctx(%{current: call, pending: []})
+
+    assert [%Effect{kind: :script, args: %{code: ~s|Script.bash("ls")|, cwd: "/w"}, reply: :tool_done}] =
+             Chat.run_tool(ctx)
+
+    refute Chat.next_risky?(%{pending: [call]}, nil)
+    assert Chat.next_safe?(%{pending: [call]}, nil)
   end
 end

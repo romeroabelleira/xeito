@@ -27,6 +27,20 @@ defmodule Xeito.ToolsTest do
                effect("edit", %{"path" => ".git/config", "old_text" => "a", "new_text" => "b"})
     end
 
+    test "script: the program is the argument; its time limit is asked for as bash's, with a longer default" do
+      assert {:ok, %Effect{kind: :script, args: %{code: "1 + 1", cwd: "/w", timeout: 300_000}, reply: :tool_done}} =
+               effect("script", %{"program" => "1 + 1"})
+
+      assert {:ok, %Effect{args: %{timeout: 30_000}}} = effect("script", %{"program" => "1", "timeout_s" => 30})
+      assert {:ok, %Effect{args: %{timeout: 600_000}}} = effect("script", %{"program" => "1", "timeout_s" => 9_999})
+      assert {:error, "invalid arguments for script" <> _} = effect("script", %{"program" => ""})
+      assert {:error, "invalid arguments for script" <> _} = effect("script", %{"code" => "1"})
+      refute Tools.risky?(%{name: "script", arguments: %{"program" => "Script.bash(\"rm -rf /\")"}})
+      assert [%{function: %{name: "script", description: description}}] = Tools.specs(["script"])
+      assert description =~ "Script.read"
+      assert description =~ "Script.bash"
+    end
+
     test "bash takes the timeout the model asks for, in seconds, up to the maximum" do
       timeout = fn args ->
         {:ok, %Effect{args: %{timeout: ms}}} = effect("bash", Map.put(args, "command", "mix test"))
@@ -65,7 +79,7 @@ defmodule Xeito.ToolsTest do
       assert {:error, "invalid arguments for edit: " <> _} = effect("edit", %{"path" => "a.ex"})
       assert {:error, "invalid arguments for write: " <> _} = effect("write", %{"path" => "a.ex"})
       assert {:error, "invalid arguments for read: " <> _} = effect("read", %{})
-      assert {:error, "unknown tool \"fly\"; available: read, write, edit, bash"} = effect("fly", %{})
+      assert {:error, "unknown tool \"fly\"; available: read, write, edit, bash, script"} = effect("fly", %{})
 
       assert {:error, "no tools are available in this turn; answer in text"} =
                effect("bash", %{"command" => "ls"}, %{tools: false})
@@ -122,9 +136,9 @@ defmodule Xeito.ToolsTest do
   end
 
   test "names_for/1: fetch only where the run's network setting allows it" do
-    assert Tools.names_for(%{network: :forbidden}) == ~w(read write edit bash)
-    assert Tools.names_for(%{network: :allowed}) == ~w(read write edit bash fetch)
-    assert Tools.names_for(%{network: ["a.test"], skills: [%{name: "a"}]}) == ~w(read write edit bash skill fetch)
+    assert Tools.names_for(%{network: :forbidden}) == ~w(read write edit bash script)
+    assert Tools.names_for(%{network: :allowed}) == ~w(read write edit bash script fetch)
+    assert Tools.names_for(%{network: ["a.test"], skills: [%{name: "a"}]}) == ~w(read write edit bash script skill fetch)
     assert Tools.names_for(%{network: :allowed, tools: ~w(fetch)}) == ~w(fetch)
     assert Tools.names_for(%{tools: ~w(fetch)}) == []
   end
@@ -144,8 +158,8 @@ defmodule Xeito.ToolsTest do
   end
 
   test "names_for/1: the core tools, skill with skills, none when off, only those listed" do
-    assert Tools.names_for(%{}) == ~w(read write edit bash)
-    assert Tools.names_for(%{skills: [%{name: "a"}]}) == ~w(read write edit bash skill)
+    assert Tools.names_for(%{}) == ~w(read write edit bash script)
+    assert Tools.names_for(%{skills: [%{name: "a"}]}) == ~w(read write edit bash script skill)
     assert Tools.names_for(%{tools: false}) == []
     assert Tools.names_for(%{tools: ~w(bash read)}) == ~w(read bash)
     assert Tools.names_for(%{tools: ~w(skill read), skills: [%{name: "a"}]}) == ~w(read skill)

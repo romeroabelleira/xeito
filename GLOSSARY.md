@@ -42,7 +42,8 @@ for the details; `mix xeito.map` lists every module with its public functions.
 - **chat client**: one streamed model call with tools, by the chat tier's backend. `Xeito.Chat`
 - **message**: one entry of a conversation (Ollama's form, plus Xeito's bookkeeping keys); a **reply** is one model call's answer. `Xeito.Chat.Message`
 - **context window**: what a request may hold; old tool output is elided, then old turns summarised or dropped. `Xeito.Chat.Window`
-- **tools**: `read`, `write`, `edit`, `bash` (and `skill`), turned into effects. `Xeito.Tools`
+- **tools**: `read`, `write`, `edit`, `bash`, `script` (and `skill`, `fetch`), turned into effects. `Xeito.Tools`
+- **script**: a program the model hands busywork to, run in a sandbox VM of the session's; each call it makes is a child effect of the script's, logged and gated. `Xeito.Effects.Script`, `Xeito.Scripts.Host`
 - **shaping**: shortening tool output before the model reads it, readable back by its ref. `Xeito.Tools.Shape`
 - **review**: a command Risk did not call safe waits for a human (`/approve`, `/deny`). `Xeito.Session.Allowed`
 - **router**: picks the machine for a request from the Intent decision, by rules. `Xeito.Session.Router`

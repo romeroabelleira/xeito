@@ -7,6 +7,8 @@ defmodule Xeito.Effects.Local do
       timeout: `exit_status: 124`, `timed_out: true`, output so far; the command and every
       process it started are stopped.
     * `fetch` gets a URL as Markdown (`Xeito.Effects.Fetch`), where the policy's `network` allows it.
+    * `script` runs a program in the session's sandbox (`Xeito.Effects.Script`), its calls as
+      child effects of the run.
     * `read` / `write` / `edit` refuse paths outside the workspace. `edit` replaces exactly one
       occurrence of the old text, or fails with the file's closest region.
     * `chat` runs one chat-model turn (`Xeito.Chat`), streamed to `Xeito.Events`; `opts[:chat]`
@@ -31,6 +33,7 @@ defmodule Xeito.Effects.Local do
   alias Xeito.Effects.Fetch
   alias Xeito.Effects.MiseEnv
   alias Xeito.Effects.OsCommand
+  alias Xeito.Effects.Script
   alias Xeito.Escalation
   alias Xeito.Log
   alias Xeito.Policy
@@ -44,7 +47,7 @@ defmodule Xeito.Effects.Local do
 
   @impl true
   def run(%Effect{kind: :read} = effect, opts), do: file_effect(effect, opts)
-  def run(%Effect{kind: :fetch} = effect, opts), do: effect |> Shape.fetched(Fetch.run(effect, opts)) |> with_ref(effect)
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:fetch, :script], do: delegated(effect, opts)
   def run(%Effect{kind: kind} = effect, opts) when kind in [:write, :edit, :bash], do: step(effect, opts)
 
   def run(%Effect{kind: kind} = effect, opts) when kind in [:decide, :tier, :probe, :swap],
@@ -52,6 +55,11 @@ defmodule Xeito.Effects.Local do
 
   def run(%Effect{kind: :chat} = effect, opts), do: chat(effect, opts)
   def run(%Effect{kind: :machine} = effect, opts), do: machine(effect, opts)
+
+  defp delegated(%Effect{kind: :fetch} = effect, opts),
+    do: effect |> Shape.fetched(Fetch.run(effect, opts)) |> with_ref(effect)
+
+  defp delegated(%Effect{kind: :script} = effect, opts), do: Script.run(effect, opts)
 
   # A change requested by a run is recorded as an undo step (`Xeito.Undo`) unless `undo: false`.
   defp step(%Effect{id: id, args: args} = effect, opts) do

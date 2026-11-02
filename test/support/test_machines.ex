@@ -100,3 +100,26 @@ defmodule Xeito.TestMachines.AmbiguousType do
   value :test_flaky, "b"
   value :env_problem, "c"
 end
+
+defmodule Xeito.TestMachines.Scripted do
+  @moduledoc "Runs one script in the workspace and keeps its output."
+
+  use Xeito.Machine, version: "1.0.0"
+
+  initial :running
+
+  state :running, entry: :run_script, timeout: 60_000 do
+    on :scripted, to: :done, guard: :succeeded?, action: :record
+    on :scripted, to: :failed, action: :record
+  end
+
+  final :done
+  final :failed
+
+  @doc false
+  def run_script(ctx), do: [Xeito.Effect.script(Map.get(ctx, :code, "1"), cwd: ctx.cwd, timeout: 20_000)]
+  @doc false
+  def succeeded?(_ctx, result), do: result.ok
+  @doc false
+  def record(ctx, result), do: Map.merge(ctx, %{output: result[:content], error: result[:error]})
+end

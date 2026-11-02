@@ -37,6 +37,7 @@ defmodule Xeito.Session do
   alias Xeito.Machines.Chat
   alias Xeito.Run
   alias Xeito.RunSupervisor
+  alias Xeito.Scripts.Host
   alias Xeito.Session.Allowed
   alias Xeito.Session.Commands
   alias Xeito.Session.History
@@ -380,12 +381,16 @@ defmodule Xeito.Session do
   @impl true
   def terminate(reason, s) when reason in [:normal, :shutdown] or (is_tuple(reason) and elem(reason, 0) == :shutdown) do
     Budget.delete(s.id)
+    Host.stop(s.id)
     Log.put_object(s.log, s.id, "session", %{status: "closed"}, "status")
   catch
     :exit, _ -> :ok
   end
 
-  def terminate(_reason, s), do: Budget.delete(s.id)
+  def terminate(_reason, s) do
+    Budget.delete(s.id)
+    Host.stop(s.id)
+  end
 
   # By rule: the Intent decision sees only the message and takes "go ahead" for small talk.
   @continuations ~r/\A(go ahead|go on|continue|carry on|proceed|keep going|yes|yes,? (please|do it|go ahead)|do it|please do|ok,? (go ahead|continue|do it))[\s.!]*\z/i

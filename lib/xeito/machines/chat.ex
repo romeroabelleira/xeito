@@ -33,7 +33,8 @@ defmodule Xeito.Machines.Chat do
   system prompt first), or in `failed` with `ctx.error`.
 
   - Tool calls are proposals: each becomes an effect (`Xeito.Tools`); `bash` passes
-    `Xeito.Decisions.Risk` first; invalid calls get an error message, not a run.
+    `Xeito.Decisions.Risk` first; a `script` runs in `executing` and its commands are gated one
+    by one by the rules (`Xeito.Effects.Script`); invalid calls get an error message, not a run.
   - `max_steps` (default 25) bounds model turns. A stopped turn gets one last tool-less model
     turn (`wrapping_up`) to report.
   - An exact repeat of a call made in this turn is answered with the earlier result. A second
@@ -47,7 +48,7 @@ defmodule Xeito.Machines.Chat do
   calls run, repeats), `Chat.Limits` (steps, fixes, stopping), `Chat.Checks` and `Chat.Steering`.
   """
 
-  use Xeito.Machine, version: "0.13.0"
+  use Xeito.Machine, version: "0.14.0"
 
   alias Xeito.Chat.Window
   alias Xeito.Effect

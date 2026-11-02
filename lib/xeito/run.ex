@@ -12,6 +12,11 @@ defmodule Xeito.Run do
   Effect results arrive as messages and are logged with the event they produce. After a crash
   the supervisor restarts the run with the same `run_id`; `init/1` rebuilds it from the log
   (`Xeito.Run.Recovery`) and re-dispatches pending effects. Recovery refuses a changed machine version.
+
+  A script (`Xeito.Effects.Script`) asks the run for its calls with `child/3`: each is a child
+  effect of the script's, numbered under it, logged with it as parent, dispatched, held by step
+  mode and stopped by a halt like the run's own effects, and answered to the script rather than
+  to the machine.
   """
 
   @behaviour :gen_statem
@@ -100,6 +105,13 @@ defmodule Xeito.Run do
   """
   @spec step(run_id(), :next | {:decide, atom()}) :: :ok | {:error, atom()}
   def step(run_id, how \\ :next), do: :gen_statem.call(via(run_id), {:step, how})
+
+  @doc """
+  Runs `effect` as a child of effect `parent` (one in flight, a script) and returns its result;
+  `{:error, :no_parent}` when no such effect is in flight. Waits for as long as the effect takes.
+  """
+  @spec child(run_id(), String.t(), Effect.t()) :: Effect.result() | {:error, :no_parent}
+  def child(run_id, parent, %Effect{} = effect), do: :gen_statem.call(via(run_id), {:child, parent, effect}, :infinity)
 
   @doc "Returns `%{leaf: atom, ctx: map}` of a live run."
   @spec snapshot(run_id()) :: %{leaf: atom(), ctx: map()}
@@ -222,7 +234,10 @@ defmodule Xeito.Run do
       held: nil,
       queued: [],
       # The tasks of effects in flight, by effect id, so a halt can stop them.
-      tasks: %{}
+      tasks: %{},
+      # Child effects: how many each parent has asked for, and who waits for each child's result.
+      children: %{},
+      waiting: %{}
     }
 
     case logged(data.log, run_id) do
@@ -313,9 +328,18 @@ defmodule Xeito.Run do
   defp call(:snapshot, from, leaf, data),
     do: {:keep_state_and_data, [{:reply, from, %{leaf: leaf, ctx: data.ctx, paused: data.held != nil}}]}
 
+  defp call({:child, parent, effect}, from, _leaf, data), do: child_call(parent, effect, from, data)
   defp call({:debug, settings}, from, leaf, data), do: set_debug(settings, from, leaf, data)
-  defp call({:step, _how}, from, _leaf, %{held: nil}), do: {:keep_state_and_data, [{:reply, from, {:error, :not_paused}}]}
-  defp call({:step, how}, from, leaf, data), do: release(leaf, data, from, how)
+  defp call({:step, how}, from, leaf, data), do: step_call(how, from, leaf, data)
+
+  defp step_call(_how, from, _leaf, %{held: nil}), do: {:keep_state_and_data, [{:reply, from, {:error, :not_paused}}]}
+  defp step_call(how, from, leaf, data), do: release(leaf, data, from, how)
+
+  defp child_call(parent, effect, from, data) do
+    if Map.has_key?(data.effects, parent),
+      do: {:keep_state, dispatch_child(parent, effect, from, data)},
+      else: {:keep_state_and_data, [{:reply, from, {:error, :no_parent}}]}
+  end
 
   defp set_debug(settings, from, leaf, data) do
     data = %{data | debug: Map.merge(%{step: false, breakpoints: []}, settings)}
@@ -357,24 +381,40 @@ defmodule Xeito.Run do
             "effect_completed",
             {:effect_completed, id, result},
             %{"effect_id" => id, "kind" => effect.kind, "result" => result},
-            [
-              {id, "effect", "of"}
-            ]
+            objects(effect)
           )
 
-        {name, event_data} = Effect.to_event(effect, result)
-        prefix = [completed | decision_events(effect, result)]
-
-        process(
-          leaf,
-          %{data | effects: effects},
-          name,
-          event_data,
-          actor(effect, result),
-          prefix,
-          nil
-        )
+        case Map.pop(data.waiting, id) do
+          {nil, _} -> complete_own(leaf, %{data | effects: effects}, effect, result, completed)
+          {from, waiting} -> complete_child(%{data | effects: effects, waiting: waiting}, result, completed, from)
+        end
     end
+  end
+
+  defp complete_own(leaf, data, effect, result, completed) do
+    {name, event_data} = Effect.to_event(effect, result)
+    process(leaf, data, name, event_data, actor(effect, result), [completed | decision_events(effect, result)], nil)
+  end
+
+  # A child's result goes to the script that asked, not to the machine.
+  defp complete_child(data, result, completed, from) do
+    log!(data, [completed])
+    {:keep_state, data, [{:reply, from, result}]}
+  end
+
+  defp dispatch_child(parent, effect, from, data) do
+    n = Map.get(data.children, parent, 0) + 1
+    child = %{effect | id: Effect.child_id(parent, n)}
+    log!(data, [requested_event(child)])
+    pid = Effects.dispatch(data.runner, child, self(), log: data.log, run_id: data.run_id, debug: data.debug)
+
+    %{
+      data
+      | children: Map.put(data.children, parent, n),
+        effects: Map.put(data.effects, child.id, child),
+        tasks: Map.put(data.tasks, child.id, pid),
+        waiting: Map.put(data.waiting, child.id, from)
+    }
   end
 
   # --- step mode and breakpoints -------------------------------------------------------------
@@ -487,9 +527,7 @@ defmodule Xeito.Run do
         {:keep_state, data, reply(from, :ignored)}
 
       {:ok, step} ->
-        # Leaving a state makes effects in flight stale; an internal transition keeps waiting for them.
-        in_flight = if step.exited == [] and step.entered == [], do: data.effects, else: %{}
-        {effects, data} = number_effects(step.effects, %{data | ctx: step.ctx, effects: in_flight})
+        {effects, data} = number_effects(step.effects, %{leave(data, step) | ctx: step.ctx})
 
         transition =
           Event.new("transition", {:transition, step.from, step.to, name, actor}, %{
@@ -510,6 +548,15 @@ defmodule Xeito.Run do
 
         enter(step.to, data, effects, from)
     end
+  end
+
+  # Leaving a state makes effects in flight stale, and a script waiting for a child is told so;
+  # an internal transition keeps waiting for them.
+  defp leave(data, %{exited: [], entered: []}), do: data
+
+  defp leave(data, _step) do
+    Enum.each(data.waiting, fn {_id, from} -> :gen_statem.reply(from, {:error, :stale}) end)
+    %{data | effects: %{}, waiting: %{}}
   end
 
   @interrupted "interrupted: Xeito stopped while this was running, and did not run it again, " <>
@@ -629,10 +676,16 @@ defmodule Xeito.Run do
         "replay" => Effect.replay(effect),
         "undoable" => Effect.undoable(effect)
       },
-      [
-        {effect.id, "effect", "of"}
-      ]
+      objects(effect)
     )
+  end
+
+  # The effect itself, and for a child effect the script's effect it was called from.
+  defp objects(%Effect{id: id}) do
+    case Effect.parent(id) do
+      nil -> [{id, "effect", "of"}]
+      parent -> [{id, "effect", "of"}, {parent, "effect", "parent"}]
+    end
   end
 
   defp log!(data, events) do

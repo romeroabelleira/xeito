@@ -3,6 +3,7 @@ defmodule Xeito.MachinesTest do
   use Xeito.Case, async: false
 
   alias Xeito.Effects.Local
+  alias Xeito.Log
   alias Xeito.Machines.Check
   alias Xeito.Machines.Commit
   alias Xeito.Run
@@ -73,6 +74,44 @@ defmodule Xeito.MachinesTest do
     File.write!(Path.join(ws, "a.txt"), "one\n")
     git!(ws, ~w(add -A))
     git!(ws, ~w(commit -q -m init))
+  end
+
+  @tag :sandbox
+  test "a script's calls run through the runner as children of its effect; its output is the result",
+       %{ws: ws} = ctx do
+    log = start_log!(ctx)
+    File.write!(Path.join(ws, "a.ex"), "defmodule A do\nend\n")
+    File.write!(Path.join(ws, "b.ex"), "defmodule B do\n  # TODO: later\nend\n")
+    session = run_id()
+    on_exit(fn -> Xeito.Scripts.Host.stop(session) end)
+
+    code = """
+    files = Script.bash("ls *.ex")["output"] |> String.split("\\n", trim: true)
+    todo = Enum.filter(files, &String.contains?(Script.read(&1)["content"], "TODO"))
+    Script.text("checked \#{length(files)} files")
+    todo
+    """
+
+    {:ok, id} =
+      RunSupervisor.start_run(Xeito.TestMachines.Scripted, %{cwd: ws, code: code},
+        run_id: session <> "/t1",
+        log: log,
+        runner: {Local, []}
+      )
+
+    await_exit(id)
+    assert {:ok, %{status: :done, ctx: %{output: "checked 2 files\n[\"b.ex\"]"}}} = Run.result(log, id)
+
+    requested =
+      for {_, "effect_requested", {:effect_requested, effect}} <- Log.read_run(log, id),
+          do: {effect.id, effect.kind, effect.args[:cmd] || effect.args[:path]}
+
+    assert requested == [
+             {"#{id}/e1", :script, nil},
+             {"#{id}/e1/c1", :bash, "ls *.ex"},
+             {"#{id}/e1/c2", :read, "a.ex"},
+             {"#{id}/e1/c3", :read, "b.ex"}
+           ]
   end
 
   test "commit drafts a message, waits for approval, and commits", %{ws: ws} = ctx do

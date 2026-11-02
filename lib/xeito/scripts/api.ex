@@ -1,14 +1,17 @@
 defmodule Xeito.Scripts.Api do
   @moduledoc """
   What a script calls to reach the outside: each function is one request to the runner
-  (`Xeito.Scripts.Vm.call/2`), which answers it as an effect of its own, logged and gated.
+  (`Xeito.Scripts.Vm.call/2`), which answers it as an effect of its own, logged and gated
+  (`Xeito.Effects.Script`).
 
-  Results are maps with string keys, as JSON carries them: `read/1` and `bash/1` give
-  `%{"ok" => true, "content" => text}` or `%{"ok" => false, "error" => reason}`, and
-  `%{"exit_status" => n, "output" => text}`. `text/1` is the script's output for the model (the
-  last value of the script is, too). `now/0` and `random/0` come from the runner, so a replay
-  sees what the first run saw. `parallel/3` maps `fun` over `items`, at most `max:` (4) at a time
-  by the runner's account; here it is in order.
+  Results are maps with string keys, as JSON carries them: `read/1` gives
+  `%{"ok" => true, "content" => text}` or `%{"ok" => false, "error" => reason}`; `bash/1` gives
+  `%{"exit_status" => n, "output" => text}` for a command safe by rule, and
+  `%{"ok" => false, "error" => reason}` for one that would need a review (a forbidden one stops
+  the script). `text/1` adds a line to the script's output for the model (the last value of the
+  script is output, too) and returns it. `now/0` (Unix milliseconds) and `random/0` come from
+  the runner, so a replay sees what the first run saw. `parallel/3` maps `fun` over `items`, at
+  most `max:` (4) at a time by the runner's account; here it is in order.
   """
 
   alias Xeito.Scripts.Vm

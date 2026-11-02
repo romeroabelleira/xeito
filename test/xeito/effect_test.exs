@@ -7,6 +7,24 @@ defmodule Xeito.EffectTest do
     refute Map.has_key?(Effect.chat([%{role: "user", content: "hi"}]).args, :error)
   end
 
+  test "script/2: a program to run in the session's sandbox, with its workspace and time limit" do
+    assert %Effect{kind: :script, args: %{code: "1 + 1", cwd: "/w", timeout: 300_000}, reply: :scripted} =
+             Effect.script("1 + 1", cwd: "/w")
+
+    assert %Effect{args: %{timeout: 5_000}, reply: :tool_done} = Effect.script("1", timeout: 5_000, reply: :tool_done)
+  end
+
+  describe "child effects: the calls a script makes" do
+    test "a child's id is its parent's with a call number; the parent is read back from it" do
+      assert Effect.child_id("ses/t1/e3", 2) == "ses/t1/e3/c2"
+      assert Effect.parent("ses/t1/e3/c2") == "ses/t1/e3"
+      assert Effect.parent("ses/t1/e3") == nil
+      assert Effect.child?(%Effect{id: "ses/t1/e3/c12", kind: :read, args: %{}, reply: :read})
+      refute Effect.child?(%Effect{id: "ses/t1/e3", kind: :read, args: %{}, reply: :read})
+      refute Effect.child?(%Effect{id: nil, kind: :read, args: %{}, reply: :read})
+    end
+  end
+
   describe "replay/1: whether an effect may run again after a crash" do
     test "reading, deciding, asking a model and writing a whole file may" do
       for effect <- [
@@ -24,6 +42,10 @@ defmodule Xeito.EffectTest do
 
     test "an edit may not: its text was replaced once already" do
       assert Effect.replay(Effect.edit("a.ex", "old", "new")) == :unsafe
+    end
+
+    test "a script may not yet: its calls ran once already, and nothing replays them for it" do
+      assert Effect.replay(Effect.script("Script.bash(\"ls\")", cwd: "/w")) == :unsafe
     end
 
     test "a command only when it is repeatable: a read, or a write a second run leaves as the first" do

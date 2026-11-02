@@ -21,6 +21,18 @@ defmodule Xeito.Tools.ShapeTest do
     assert Tools.result_text(result) == "exit status 0\na.txt\nb.txt\n"
   end
 
+  test "a script's output is shaped like a command's, and the footer names the script's effect" do
+    effect = %{Effect.script("x", cwd: "/w") | id: "ses-x/t1/e7"}
+    short = Shape.shape(effect, %{ok: true, content: "checked 2 files\n[\"b.ex\"]"})
+    refute Map.has_key?(short, :shaped)
+
+    long = Shape.shape(effect, %{ok: true, content: Enum.map_join(1..300, "\n", &"line #{&1}")})
+    assert long.shaped =~ "line 1\n"
+    assert long.shaped =~ ~s([shaped: 300 → 4 lines; full output: read with result: "ses-x/t1/e7"])
+    assert Tools.result_text(long) == long.shaped
+    assert Shape.shape(effect, %{ok: false, error: "boom"}) == %{ok: false, error: "boom"}
+  end
+
   test "escape codes and progress redraws go, similar lines collapse" do
     progress = Enum.map_join(1..50, "\n", &"\e[32mCompiling #{&1} of 50 files\e[0m")
     redraw = "Downloading 10%\rDownloading 55%\rDownloading 100%"

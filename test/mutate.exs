@@ -36,6 +36,8 @@
     "test/xeito/machines/chat_test.exs"
   ],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
+  # Which commands a script may run, and when a script is stopped.
+  "lib/xeito/effects/script.ex" => ["test/xeito/effects/script_test.exs"],
   # Which commands run without asking the human again.
   "lib/xeito/session/allowed.ex" => ["test/xeito/session/allowed_test.exs"],
   # Which skills a turn may choose from, and so whether it needs a model call to decide.

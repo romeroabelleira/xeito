@@ -22,6 +22,8 @@ defmodule Xeito.Application do
           Xeito.RunSupervisor,
           {Registry, keys: :unique, name: Xeito.SessionRegistry},
           {DynamicSupervisor, name: Xeito.SessionSupervisor, strategy: :one_for_one},
+          {Registry, keys: :unique, name: Xeito.Scripts.HostRegistry},
+          {DynamicSupervisor, name: Xeito.Scripts.HostSupervisor, strategy: :one_for_one},
           {DynamicSupervisor, name: Xeito.ApiConnections, strategy: :one_for_one}
         ] ++ api_children()
 
