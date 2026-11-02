@@ -20,6 +20,7 @@ defmodule Xeito.Session.Router do
   alias Xeito.Machines.Commit
   alias Xeito.Machines.FixFailingTest
   alias Xeito.Machines.RunTests
+  alias Xeito.Machines.SelfRefine
   alias Xeito.Machines.Shell
   alias Xeito.Session.TaskRunner
 
@@ -33,6 +34,8 @@ defmodule Xeito.Session.Router do
     {"run_tests", RunTests, "run the test command once", "intent run + tests"},
     {"shell", Shell, "run one shell command, without a model or review; its output joins the conversation",
      "/run <command>"},
+    {"self_refine", SelfRefine, "draft an answer, critique it, revise it (an experiment: it did not beat one call)",
+     "mix xeito.run --machine self_refine"},
     {"chat", Chat, "free chat: read/write/edit/bash as effects, bash behind Risk", "anything else"}
   ]
 

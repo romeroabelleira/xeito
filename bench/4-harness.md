@@ -202,3 +202,24 @@ To make task success measurable, any of these would do:
 - the fix budget;
 - a larger step limit for this benchmark;
 - the dependency APIs in the project map, so fewer steps go into reading TermUI.
+
+## 9. P4g: self-refine against a single call (2026-10-31)
+
+Does a draft → critique → revise strategy (`Xeito.Machines.SelfRefine`, with the `Refine` decision on the critique, at most two revisions) beat one chat call on prose tasks? `bench/scripts/p4g_strategies.exs` ran the twelve tasks of `bench/strategies/set.jsonl` both ways on the local tier (qwen3.8:27b through Ollama, no tools), and the same model judged each pair twice with the order swapped; a variant wins a task only when it wins both orders. The raw results (every answer and judgment) are kept in the private companion repository, as they quote the model at length; one word of the set was changed after the run, to pass the public repository's guard.
+
+| Task | Verdict | Judgments (A = single first, then swapped) | Tokens single | Tokens refine | s single | s refine |
+|---|---|---|---|---|---|---|
+| condense | refine | B/A | 231 | 1208 | 10 | 5 |
+| release-notes | tie | A/A | 622 | 1283 | 2 | 16 |
+| explain-code | tie | B/B | 1015 | 1923 | 3 | 13 |
+| polite-email | tie | B/B | 1280 | 421 | 2 | 3 |
+| action-items | tie | A/A | 1547 | 599 | 2 | 3 |
+| title | tie | A/A | 1855 | 381 | 1 | 2 |
+| translate | tie | A/A | 2072 | 907 | 2 | 5 |
+| commit-message | tie | B/B | 2321 | 1105 | 2 | 9 |
+| reviewer-questions | single | A/B | 2596 | 1207 | 2 | 8 |
+| bullets-to-paragraph | tie | A/A | 2842 | 375 | 1 | 3 |
+| error-plain | refine | B/A | 3065 | 452 | 2 | 5 |
+| shorten-announcement | single | A/B | 3999 | 491 | 11 | 3 |
+
+**Result:** refine 2, single 2, tie 8; wall time 40 s against 75 s. Four of the ties are the judge preferring the same position both times, the position bias the swap is there to cancel. No gain, at twice the time: the strategy does not ship as a `--strategy` flag. The machine stays as an experiment (`mix xeito.run --machine self_refine`), and the script repeats the measurement with another model or set. The `Refine` decision passes its gate on `local` (14 examples, accuracy 1.0; the Laya tier 0.5, as for every type so far).

@@ -6,6 +6,7 @@ defmodule Xeito.Decisions do
     Xeito.Decisions.Triage,
     Xeito.Decisions.Risk,
     Xeito.Decisions.Done,
+    Xeito.Decisions.Refine,
     Xeito.Decisions.Skill
   ]
 

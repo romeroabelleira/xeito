@@ -388,7 +388,7 @@ Prompt caching is on for Anthropic models: from the third call of a turn on, the
 config :xeito, :policy, remote: :allowed, locality: :public, max_usd_per_run: 0.25
 ```
 
-With that config, typed decisions that list an off-box tier among their deciders may use it. OpenRouter requests always ask for providers that neither store nor train on prompts. Section 9 shows how to evaluate an off-box tier without touching the policy.
+The model's `fetch` tool (a URL as Markdown, scripts and navigation removed) is off for the same reason: `network: :allowed`, or a list of host names, switches it on, and what it returns is public input that may carry instructions meant for the model. With that config, typed decisions that list an off-box tier among their deciders may use it. OpenRouter requests always ask for providers that neither store nor train on prompts. Section 9 shows how to evaluate an off-box tier without touching the policy.
 
 ## 8. Inspecting the log
 
