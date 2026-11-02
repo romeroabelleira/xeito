@@ -16,6 +16,17 @@ defmodule Xeito.EffectTest do
     assert Effect.script("1").args.sandbox == Xeito.Scripts.Allowlist.fingerprint()
   end
 
+  test "remember/3: an object for the run's log, written by a script" do
+    assert %Effect{
+             kind: :remember,
+             args: %{id: "issue:42", type: "issue", attrs: %{"urgency" => "high"}},
+             reply: :remembered
+           } =
+             Effect.remember("issue:42", "issue", %{"urgency" => "high"})
+
+    assert Effect.replay(Effect.remember("issue:42", "issue", %{})) == :safe
+  end
+
   test "now/0 and random/0: a reading of the runner's clock or randomness, logged so a replay sees it" do
     assert %Effect{kind: :now, args: %{}, reply: :now} = Effect.now()
     assert %Effect{kind: :random, args: %{}, reply: :random} = Effect.random()

@@ -145,6 +145,10 @@ defmodule Xeito.Scripts.ReplayTest do
     assert Replay.describe(Effect.read("a.ex", cwd: @cwd)) == ~s(read "a.ex")
     assert Replay.describe(Effect.bash("ls -a", cwd: @cwd)) == ~s(bash "ls -a")
     assert Replay.describe(Effect.now()) == "now"
+    assert Replay.describe(Effect.write("a.ex", "x", cwd: @cwd)) == ~s(write "a.ex")
+    assert Replay.describe(Effect.edit("a.ex", "x", "y", cwd: @cwd)) == ~s(edit "a.ex")
+    assert Replay.describe(Effect.decide(Xeito.Decisions.Triage, %{})) == "decide Xeito.Decisions.Triage"
+    assert Replay.describe(Effect.remember("issue:42", "issue", %{})) == ~s(remember "issue:42")
   end
 
   test "scripts/1: the finished scripts of a run, each with its logged result" do

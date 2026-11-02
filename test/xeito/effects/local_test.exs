@@ -9,6 +9,26 @@ defmodule Xeito.Effects.LocalTest do
   # The workspace is the test's own directory.
   setup %{tmp_dir: dir}, do: %{ws: dir}
 
+  test "remember writes an object to the run's log, part of the run and from the script's effect" do
+    log = Xeito.Case.start_log!()
+    effect = %{Effect.remember("issue:42", "issue", %{"urgency" => "high"}) | id: "r/e1/c3"}
+    assert %{ok: true} = Local.run(effect, log: log, run_id: "r")
+
+    assert [["issue:42", "note"]] =
+             Xeito.Log.query(log, "SELECT ocel_id, ocel_type FROM object WHERE ocel_id = 'issue:42'")
+
+    assert [["issue", ~s({"urgency":"high"})]] =
+             Xeito.Log.query(log, "SELECT kind, attrs FROM object_note WHERE ocel_id = 'issue:42'")
+
+    assert [["r/e1", "from"], ["r", "part_of"]] =
+             Xeito.Log.query(
+               log,
+               "SELECT ocel_target_id, ocel_qualifier FROM object_object WHERE ocel_source_id = 'issue:42' ORDER BY 2"
+             )
+
+    assert %{ok: false, error: "no log to remember in"} = Local.run(effect, [])
+  end
+
   test "now and random read the clock and the randomness the sandbox does not have" do
     assert %{value: now} = Local.run(Effect.now(), [])
     assert is_integer(now) and now > 1_700_000_000_000

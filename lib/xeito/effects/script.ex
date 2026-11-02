@@ -10,6 +10,12 @@ defmodule Xeito.Effects.Script do
       to review fails that call with an error saying so; a forbidden one stops the script, and
       every later call fails with the reason.
     * A command's time limit is what is left of the script's (`args.timeout`), at least a second.
+    * `write` and `edit` are child effects too, refused in the directories the tools refuse
+      (`Xeito.Tools.refused/2`); the script's effect is the one undo step for all of them.
+    * `decide` runs a registered decision type by name and `classify` one `Xeito.Decisions.AdHoc`
+      type per question, each a child `decide` effect through the escalation ladder; the script
+      gets the value, the confidence, the actor and the model. `remember` writes an object to
+      the run's log through a child effect.
     * `text` adds a line to the output and streams it to clients as a command's output;
       `now` and `random` are child effects too (`Xeito.Effect.now/0`, `random/0`), so the log
       has what the script saw.
@@ -24,6 +30,9 @@ defmodule Xeito.Effects.Script do
   A halted run takes the session's sandbox with it; the next script starts a new one.
   """
 
+  alias Xeito.Decision
+  alias Xeito.Decisions
+  alias Xeito.Decisions.AdHoc
   alias Xeito.Decisions.Risk
   alias Xeito.Effect
   alias Xeito.Log
@@ -32,6 +41,7 @@ defmodule Xeito.Effects.Script do
   alias Xeito.Scripts.Host
   alias Xeito.Scripts.Protocol
   alias Xeito.Scripts.Replay
+  alias Xeito.Tools
   alias Xeito.Tools.Shape
 
   @type acc :: %{
@@ -121,7 +131,91 @@ defmodule Xeito.Effects.Script do
   defp call("bash", [command], acc) when is_binary(command), do: bash(command, acc)
   defp call("bash", _args, acc), do: {error("bash takes a command"), acc}
   defp call("text", [value], acc), do: text(value, acc)
-  defp call(name, args, acc), do: runner(name, args, acc)
+  defp call(name, args, acc), do: extended(name, args, acc)
+
+  defp extended("write", args, acc), do: write(args, acc)
+  defp extended("edit", args, acc), do: edit(args, acc)
+  defp extended("decide", args, acc), do: decide(args, acc)
+  defp extended("classify", args, acc), do: classify(args, acc)
+  defp extended("remember", args, acc), do: remember(args, acc)
+  defp extended(name, args, acc), do: runner(name, args, acc)
+
+  # --- writes --------------------------------------------------------------------------------
+
+  defp write([path, content], acc) when is_binary(path) and is_binary(content),
+    do: changed(acc, path, Effect.write(path, content, cwd: acc.cwd))
+
+  defp write(_args, acc), do: {error("write takes a path and the content"), acc}
+
+  defp edit([path, old, new], acc) when is_binary(path) and is_binary(old) and is_binary(new),
+    do: changed(acc, path, Effect.edit(path, old, new, cwd: acc.cwd))
+
+  defp edit(_args, acc), do: {error("edit takes a path, the old text and the new"), acc}
+
+  defp changed(acc, path, effect) do
+    case Tools.refused(path, acc.cwd) do
+      nil -> child(acc, effect)
+      reason -> {error(reason), acc}
+    end
+  end
+
+  # --- decisions and objects -----------------------------------------------------------------
+
+  defp decide([name, input], acc) when is_binary(name) and is_map(input) do
+    case Enum.find(Decisions.all(), &(Decision.type!(&1).name == name)) do
+      nil -> {error("unknown decision type #{inspect(name)}; the types are " <> type_names()), acc}
+      module -> acc |> child(Effect.decide(module, input)) |> verdict()
+    end
+  end
+
+  defp decide(_args, acc), do: {error("decide takes a type name and an input map"), acc}
+
+  defp remember([id, attrs], acc) when is_binary(id) and is_map(attrs),
+    do: child(acc, Effect.remember(id, Map.get(attrs, "type", "object"), Map.delete(attrs, "type")))
+
+  defp remember(_args, acc), do: {error("remember takes an id and a map of attributes"), acc}
+
+  defp type_names, do: Enum.map_join(Decisions.all(), ", ", &Decision.type!(&1).name)
+
+  # One ad-hoc decision per question, in name order; the first bad question refuses the call.
+  defp classify([questions, state], acc) when is_map(questions) and is_map(state) do
+    case types(questions) do
+      {:ok, types} ->
+        input = %{"state" => JSON.encode!(state)}
+
+        Enum.reduce(types, {%{}, acc}, fn {name, type}, {answers, acc} ->
+          {answer, acc} = acc |> child(Effect.decide(type, input)) |> verdict()
+          {Map.put(answers, name, answer), acc}
+        end)
+
+      {:error, reason} ->
+        {error(reason), acc}
+    end
+  end
+
+  defp classify(_args, acc), do: {error("classify takes a map of questions and a state map"), acc}
+
+  defp types(questions) do
+    Enum.reduce_while(Enum.sort(questions), {:ok, []}, fn {name, question}, {:ok, types} ->
+      case AdHoc.type(name, question) do
+        {:ok, type} -> {:cont, {:ok, types ++ [{name, type}]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  # What a script needs of a decision: the value, how sure, who decided.
+  defp verdict({%{"value" => value, "decision" => decision}, acc}) when is_map(decision) do
+    {%{
+       "value" => value,
+       "confidence" => decision["confidence"],
+       "actor" => decision["actor"],
+       "model" => decision["model"],
+       "probabilities" => decision["probabilities"] || %{}
+     }, acc}
+  end
+
+  defp verdict(error_and_acc), do: error_and_acc
 
   # What only the runner has: the clock and randomness, as effects, so the log has what the script saw.
   defp runner("now", [], acc), do: acc |> child(Effect.now()) |> value()

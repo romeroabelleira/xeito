@@ -38,6 +38,8 @@
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
   # Which commands a script may run, and when a script is stopped.
   "lib/xeito/effects/script.ex" => ["test/xeito/effects/script_test.exs"],
+  # What a script's question may become: bounded options, so a script cannot make atoms at will.
+  "lib/xeito/decisions/ad_hoc.ex" => ["test/xeito/decisions/ad_hoc_test.exs"],
   # What a script run again is fed, and when a call counts as the same one.
   "lib/xeito/scripts/replay.ex" => ["test/xeito/scripts/replay_test.exs", "test/xeito/effects/script_test.exs"],
   # Which commands run without asking the human again.

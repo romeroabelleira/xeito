@@ -8,7 +8,9 @@ defmodule Xeito.Effects.Local do
       process it started are stopped.
     * `fetch` gets a URL as Markdown (`Xeito.Effects.Fetch`), where the policy's `network` allows it.
     * `script` runs a program in the session's sandbox (`Xeito.Effects.Script`), its calls as
-      child effects of the run; `now` and `random` read the clock and randomness for it.
+      child effects of the run, and its changes as one undo step (the children record none:
+      `undo: false`); `now` and `random` read the clock and randomness for it, and `remember`
+      writes an object to the run's log (`opts[:log]`), part of the run and from the script.
     * `read` / `write` / `edit` refuse paths outside the workspace. `edit` replaces exactly one
       occurrence of the old text, or fails with the file's closest region.
     * `chat` runs one chat-model turn (`Xeito.Chat`), streamed to `Xeito.Events`; `opts[:chat]`
@@ -47,8 +49,8 @@ defmodule Xeito.Effects.Local do
 
   @impl true
   def run(%Effect{kind: :read} = effect, opts), do: file_effect(effect, opts)
-  def run(%Effect{kind: kind} = effect, opts) when kind in [:fetch, :script, :now, :random], do: delegated(effect, opts)
-  def run(%Effect{kind: kind} = effect, opts) when kind in [:write, :edit, :bash], do: step(effect, opts)
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:fetch, :now, :random, :remember], do: delegated(effect, opts)
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:write, :edit, :bash, :script], do: step(effect, opts)
 
   def run(%Effect{kind: kind} = effect, opts) when kind in [:decide, :tier, :probe, :swap],
     do: decision_effect(effect, opts)
@@ -59,8 +61,8 @@ defmodule Xeito.Effects.Local do
   defp delegated(%Effect{kind: :fetch} = effect, opts),
     do: effect |> Shape.fetched(Fetch.run(effect, opts)) |> with_ref(effect)
 
-  defp delegated(%Effect{kind: :script} = effect, opts), do: Script.run(effect, opts)
   defp delegated(%Effect{kind: :now}, _opts), do: %{value: System.system_time(:millisecond)}
+  defp delegated(%Effect{kind: :remember} = effect, opts), do: remember(effect, opts)
   defp delegated(%Effect{kind: :random}, _opts), do: %{value: :rand.uniform()}
 
   # A change requested by a run is recorded as an undo step (`Xeito.Undo`) unless `undo: false`.
@@ -71,7 +73,21 @@ defmodule Xeito.Effects.Local do
   end
 
   defp change(%Effect{kind: :bash} = effect, opts), do: bash(effect, opts)
+  defp change(%Effect{kind: :script} = effect, opts), do: Script.run(effect, opts)
   defp change(effect, opts), do: file_effect(effect, opts)
+
+  defp remember(%Effect{id: id, args: args}, opts) do
+    case opts[:log] do
+      nil ->
+        %{ok: false, error: "no log to remember in"}
+
+      log ->
+        Log.put_object(log, args.id, "note", %{kind: args.type, attrs: args.attrs})
+        if opts[:run_id], do: Log.relate(log, args.id, opts[:run_id], "part_of")
+        if parent = id && Effect.parent(id), do: Log.relate(log, args.id, parent, "from")
+        %{ok: true}
+    end
+  end
 
   # Files outside the workspace a command writes, backed up with the undo step.
   defp outside(%Effect{kind: :bash, args: %{cmd: cmd} = args}) do
@@ -89,6 +105,11 @@ defmodule Xeito.Effects.Local do
   defp label(%Effect{kind: :bash, args: %{cmd: cmd}}) do
     cmd = cmd |> String.split() |> Enum.join(" ")
     if String.length(cmd) > 60, do: "bash #{String.slice(cmd, 0, 60)}…", else: "bash #{cmd}"
+  end
+
+  defp label(%Effect{kind: :script, args: %{code: code}}) do
+    first = code |> String.split("\n", trim: true) |> List.first("") |> String.trim()
+    if String.length(first) > 60, do: "script #{String.slice(first, 0, 60)}…", else: "script #{first}"
   end
 
   defp label(%Effect{kind: kind, args: %{path: path}}), do: "#{kind} #{path}"

@@ -135,6 +135,12 @@ defmodule Xeito.ToolsTest do
     assert Tools.result_text(%{something: 1}) == "%{something: 1}"
   end
 
+  test "refused/2: why a path may not be written, or nil" do
+    assert Tools.refused("deps/x/a.ex", "/w") =~ "refused: deps/ holds fetched dependencies"
+    assert Tools.refused("/w/.git/config", "/w") =~ "refused: .git/"
+    assert Tools.refused("lib/a.ex", "/w") == nil
+  end
+
   test "names_for/1: fetch only where the run's network setting allows it" do
     assert Tools.names_for(%{network: :forbidden}) == ~w(read write edit bash script)
     assert Tools.names_for(%{network: :allowed}) == ~w(read write edit bash script fetch)

@@ -143,6 +143,10 @@ defmodule Xeito.Tools do
           ~s|Script.bash(command), which gives %{"exit_status" => n, "output" => text}; only | <>
           "commands that are safe by rule run (reads, grep, git status, the project's tests), " <>
           "one that would need review fails with an error, and a forbidden one stops the script. " <>
+          "Script.write(path, content) and Script.edit(path, old, new) change files (undone as one step). " <>
+          ~s|Script.classify(%{"name" => %{"type" => "choice", "options" => [...], "criteria" => "..."}}, state) | <>
+          ~s|asks a small model (types: choice, bool, score with "range" => [min, max]) and gives | <>
+          ~s|%{"name" => %{"value" => ..., "confidence" => ...}}; Script.remember(id, attrs) keeps an object in the log. | <>
           "Script.text(value) adds a line to the output; the program's last value is output too. " <>
           "No File, System, Process, clock or randomness: use Script.now() and Script.random(). " <>
           "Long output is shortened for you, as a command's is.",
@@ -279,14 +283,20 @@ defmodule Xeito.Tools do
   def protected_dirs, do: Map.keys(@protected)
 
   defp protected(path, opts) do
-    root = Path.expand(Keyword.get(opts, :cwd) || ".")
+    case refused(path, Keyword.get(opts, :cwd) || ".") do
+      nil -> nil
+      reason -> {:error, reason}
+    end
+  end
+
+  @doc "Why `path` in workspace `cwd` may not be written (a protected directory), or `nil`."
+  @spec refused(Path.t(), Path.t()) :: String.t() | nil
+  def refused(path, cwd) do
+    root = Path.expand(cwd)
 
     case path |> Path.expand(root) |> Path.relative_to(root) |> Path.split() do
-      [dir | _] when is_map_key(@protected, dir) ->
-        {:error, "refused: #{dir}/ #{Map.fetch!(@protected, dir)}"}
-
-      _ ->
-        nil
+      [dir | _] when is_map_key(@protected, dir) -> "refused: #{dir}/ #{Map.fetch!(@protected, dir)}"
+      _ -> nil
     end
   end
 

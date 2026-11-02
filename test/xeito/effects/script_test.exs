@@ -1,6 +1,8 @@
 defmodule Xeito.Effects.ScriptTest do
   use ExUnit.Case, async: true
 
+  alias Xeito.Decision.Type
+  alias Xeito.Decisions.Triage
   alias Xeito.Effect
   alias Xeito.Effects.Local
   alias Xeito.Effects.Script
@@ -93,6 +95,131 @@ defmodule Xeito.Effects.ScriptTest do
       assert {%{"ok" => false, "error" => "unknown call nope/2"}, ^acc} = Script.handle("nope", [1, 2], acc)
       assert {%{"ok" => false, "error" => "read takes a path"}, ^acc} = Script.handle("read", [1], acc)
       assert {%{"ok" => false, "error" => "bash takes a command"}, ^acc} = Script.handle("bash", [], acc)
+    end
+  end
+
+  describe "handle/3: writes, decisions and objects" do
+    test "write and edit become child effects; a protected directory is refused as for the tools", %{tmp_dir: ws} do
+      assert {%{"ok" => true}, acc} = Script.handle("write", ["a.txt", "one\n"], acc(ws))
+      assert_received {:child, "r/e1", %Effect{kind: :write, args: %{path: "a.txt", content: "one\n", cwd: ^ws}}}
+      assert File.read!(Path.join(ws, "a.txt")) == "one\n"
+
+      assert {%{"ok" => true}, acc} = Script.handle("edit", ["a.txt", "one", "two"], acc)
+      assert_received {:child, "r/e1", %Effect{kind: :edit, args: %{path: "a.txt", old: "one", new: "two"}}}
+      assert File.read!(Path.join(ws, "a.txt")) == "two\n"
+
+      assert {%{"ok" => false, "error" => "old_text not found" <> _}, acc} =
+               Script.handle("edit", ["a.txt", "zzz", "y"], acc)
+
+      assert {%{"ok" => false, "error" => "refused: deps/ " <> _}, acc} = Script.handle("write", ["deps/x.ex", "x"], acc)
+
+      assert {%{"ok" => false, "error" => "refused: .git/ " <> _}, acc} =
+               Script.handle("edit", [".git/HEAD", "a", "b"], acc)
+
+      refute_received {:child, _, %Effect{kind: :write}}
+
+      for args <- [["a"], ["a", 1], [1, "x"]] do
+        assert {%{"ok" => false, "error" => "write takes a path and the content"}, ^acc} =
+                 Script.handle("write", args, acc)
+      end
+
+      for args <- [[1], [1, "a", "b"], ["a", 1, "b"], ["a", "b", 1]] do
+        assert {%{"ok" => false, "error" => "edit takes a path, the old text and the new"}, ^acc} =
+                 Script.handle("edit", args, acc)
+      end
+    end
+
+    test "decide runs a registered type by name, as a child decide effect, and gives the script the verdict",
+         %{tmp_dir: ws} do
+      child = fn "r/e1", %Effect{kind: :decide, args: %{decision: Triage, input: input}} ->
+        send(self(), {:decided, input})
+        decision = %Xeito.Decision{type: Triage, value: :flaky, confidence: 0.9, actor: :local_decision, model: "m"}
+        %{value: :flaky, decision: Xeito.Decision.to_map(%{decision | probabilities: %{flaky: 0.9, code_bug: 0.1}})}
+      end
+
+      input = %{"test" => "t", "output" => "timeout"}
+
+      assert {%{
+                "value" => "flaky",
+                "confidence" => 0.9,
+                "actor" => "local_decision",
+                "model" => "m",
+                "probabilities" => probabilities
+              }, _acc} = Script.handle("decide", ["triage", input], acc(ws, child))
+
+      assert probabilities == %{"flaky" => 0.9, "code_bug" => 0.1}
+      assert_received {:decided, ^input}
+
+      assert {%{"ok" => false, "error" => "unknown decision type \"nope\"; the types are " <> names}, _} =
+               Script.handle("decide", ["nope", %{}], acc(ws))
+
+      assert names =~ "triage"
+
+      for args <- [[1], [1, %{}], ["triage", "x"]] do
+        assert {%{"ok" => false, "error" => "decide takes a type name and an input map"}, _} =
+                 Script.handle("decide", args, acc(ws))
+      end
+
+      # A decision that could not be made comes back as the runner reported it.
+      undecided = fn _, %Effect{kind: :decide} -> %{value: :abstain, error: "no tier could decide"} end
+
+      assert {%{"value" => "abstain", "error" => "no tier could decide"}, _} =
+               Script.handle("decide", ["triage", %{}], acc(ws, undecided))
+    end
+
+    test "classify runs one ad-hoc decision per question, on the decision tiers, and answers by name",
+         %{tmp_dir: ws} do
+      child = fn "r/e1", %Effect{kind: :decide, args: %{decision: %Type{name: name} = type, input: input}} ->
+        send(self(), {:asked, name, type, input})
+        [value | _] = Type.values(type)
+        decision = %Xeito.Decision{type: type, value: value, confidence: 0.7, actor: :local, model: "m"}
+        %{value: value, decision: Xeito.Decision.to_map(decision)}
+      end
+
+      questions = %{
+        "urgency" => %{"type" => "choice", "options" => ["low", "high"], "criteria" => "How urgent?"},
+        "fixable" => %{"type" => "bool", "criteria" => "Can it be fixed now?"}
+      }
+
+      assert {%{"fixable" => %{"value" => "yes", "confidence" => 0.7}, "urgency" => %{"value" => "low"}}, _acc} =
+               Script.handle("classify", [questions, %{"todo" => "fix later"}], acc(ws, child))
+
+      assert_received {:asked, "classify:fixable", %{deciders: [:local_decision, :local]},
+                       %{"state" => ~s({"todo":"fix later"})}}
+
+      assert_received {:asked, "classify:urgency", _, _}
+
+      bad = %{"urgency" => %{"type" => "rank"}}
+
+      assert {%{"ok" => false, "error" => "urgency: unknown question type" <> _}, _} =
+               Script.handle("classify", [bad, %{}], acc(ws))
+
+      for args <- [[[], 1], [%{}, 1], [[], %{}]] do
+        assert {%{"ok" => false, "error" => "classify takes a map of questions and a state map"}, _} =
+                 Script.handle("classify", args, acc(ws))
+      end
+
+      refute_received {:asked, _, _, _}
+    end
+
+    test "remember writes an object to the log through a child effect", %{tmp_dir: ws} do
+      child = fn "r/e1", %Effect{kind: :remember} = effect ->
+        send(self(), {:remembered, effect})
+        %{ok: true}
+      end
+
+      assert {%{"ok" => true}, _} =
+               Script.handle("remember", ["issue:42", %{"type" => "issue", "urgency" => "high"}], acc(ws, child))
+
+      assert_received {:remembered, %Effect{args: %{id: "issue:42", type: "issue", attrs: %{"urgency" => "high"}}}}
+
+      assert {%{"ok" => true}, _} = Script.handle("remember", ["note:1", %{"text" => "x"}], acc(ws, child))
+      assert_received {:remembered, %Effect{args: %{id: "note:1", type: "object", attrs: %{"text" => "x"}}}}
+
+      for args <- [[1, 2], [1, %{}], ["id", 2]] do
+        assert {%{"ok" => false, "error" => "remember takes an id and a map of attributes"}, _} =
+                 Script.handle("remember", args, acc(ws))
+      end
     end
   end
 

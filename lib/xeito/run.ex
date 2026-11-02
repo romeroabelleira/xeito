@@ -408,7 +408,9 @@ defmodule Xeito.Run do
     n = Map.get(data.children, parent, 0) + 1
     child = %{effect | id: Effect.child_id(parent, n)}
     log!(data, [requested_event(child)])
-    pid = Effects.dispatch(data.runner, child, self(), log: data.log, run_id: data.run_id, debug: data.debug)
+    # A script's changes are one undo step, the script's: its children record none of their own.
+    context = [log: data.log, run_id: data.run_id, debug: data.debug, undo: false]
+    pid = Effects.dispatch(data.runner, child, self(), context)
 
     %{
       data
@@ -640,7 +642,7 @@ defmodule Xeito.Run do
         {:decision_made, id, d},
         %{
           "effect_id" => id,
-          "decision_type" => inspect(d.type),
+          "decision_type" => Decision.describe(d.type),
           "value" => d.value,
           "confidence" => d.confidence,
           "actor" => d.actor,

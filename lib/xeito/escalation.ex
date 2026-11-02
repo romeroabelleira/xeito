@@ -27,7 +27,7 @@ defmodule Xeito.Escalation do
     * `:available?` — tier availability function (tests)
     * `:timeout` — how long to wait for the run (default 15 minutes)
   """
-  @spec decide(module(), map(), keyword()) :: Decision.t()
+  @spec decide(module() | Type.t(), map(), keyword()) :: Decision.t()
   def decide(type_module, input, opts) do
     started = System.monotonic_time(:millisecond)
     log = Keyword.fetch!(opts, :log)

@@ -152,6 +152,32 @@ defmodule Xeito.MachinesTest do
     assert Enum.any?(Log.read_run(log, id), &match?({_, "run_recovered", _}, &1))
   end
 
+  @tag :sandbox
+  test "a script's writes are one undo step, labelled by the script", %{ws: ws} = ctx do
+    log = start_log!(ctx)
+    session = run_id()
+    on_exit(fn -> Host.stop(session) end)
+    code = ~s|Script.write("a.txt", "one\\n"); Script.write("b.txt", "two\\n"); Script.bash("echo three > c.txt"); :ok|
+
+    {:ok, id} =
+      RunSupervisor.start_run(Scripted, %{cwd: ws, code: code},
+        run_id: session <> "/t1",
+        log: log,
+        runner: {Local, []}
+      )
+
+    await_exit(id)
+    assert {:ok, %{status: :done}} = Run.result(log, id)
+    assert File.exists?(Path.join(ws, "c.txt"))
+
+    assert [%{id: ^id <> "/e1", label: "script " <> label}] = Xeito.Undo.steps(ws, session)
+    assert label =~ ~s(Script.write("a.txt")
+    assert {:ok, _} = Xeito.Undo.undo(ws, session, 1)
+    refute File.exists?(Path.join(ws, "a.txt"))
+    refute File.exists?(Path.join(ws, "b.txt"))
+    refute File.exists?(Path.join(ws, "c.txt"))
+  end
+
   test "commit drafts a message, waits for approval, and commits", %{ws: ws} = ctx do
     log = start_log!(ctx)
     repo!(ws)

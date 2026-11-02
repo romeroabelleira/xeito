@@ -25,7 +25,8 @@ defmodule Xeito.Decision do
       end
 
   `Xeito.Decider.decide/3` evaluates a type and returns a `%Xeito.Decision{}`. `:abstain` is an
-  implicit value of every type.
+  implicit value of every type. A type may also be a `Xeito.Decision.Type` built at run time
+  (`Xeito.Decisions.AdHoc`), wherever a module is taken.
   """
 
   alias Xeito.Decision.Type
@@ -48,7 +49,7 @@ defmodule Xeito.Decision do
   @type actor ::
           :rule | :local_decision | :remote_decision | :local | :remote | :remote_frontier | :human | :none
   @type t :: %__MODULE__{
-          type: module(),
+          type: module() | Type.t(),
           type_version: String.t() | nil,
           value: atom(),
           confidence: float() | nil,
@@ -90,9 +91,15 @@ defmodule Xeito.Decision do
     end
   end
 
-  @doc "The compiled type definition of a decision module."
-  @spec type!(module()) :: Type.t()
+  @doc "The compiled type definition of a decision module, or the type itself when built at run time."
+  @spec type!(module() | Type.t()) :: Type.t()
+  def type!(%Type{} = type), do: type
   def type!(module), do: module.__decision__()
+
+  @doc "A decision type's name for logs and reports: the module, or an ad-hoc type's name."
+  @spec describe(module() | Type.t()) :: String.t()
+  def describe(%Type{name: name}), do: name
+  def describe(module), do: inspect(module)
 
   @doc "The decision as plain data for logs and reports."
   @spec to_map(t()) :: map()

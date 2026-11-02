@@ -14,6 +14,7 @@ defmodule Xeito.Effect do
   | `:script` | `:scripted`           | `%{ok: true, content: output}` or `%{ok: false, error: reason}` (`Xeito.Effects.Script`) |
   | `:now`    | `:now`                | `%{value: unix_ms}`: the runner's clock, which a script has no other way to read |
   | `:random` | `:random`             | `%{value: float}`: the runner's randomness, in `[0, 1)` |
+  | `:remember` | `:remembered`       | `%{ok: true}` or `%{ok: false, error: term}`: an object written to the run's log by a script |
   | `:chat`   | `:chatted`            | `%{content, tool_calls, model, tokens_in, tokens_out}` or `%{error: reason}` |
   | `:machine`| `:child_done`         | `%{run_id, status, state, ctx}` of a child run of another machine |
   | `:decide` | `{:decided, value}`   | `%{value: term}`                         |
@@ -41,6 +42,7 @@ defmodule Xeito.Effect do
           | :script
           | :now
           | :random
+          | :remember
           | :chat
           | :machine
           | :decide
@@ -135,6 +137,11 @@ defmodule Xeito.Effect do
   @spec now() :: t()
   def now, do: %__MODULE__{kind: :now, args: %{}, reply: :now}
 
+  @doc "An object `id` of the script's `type` with `attrs`, for the run's log as a `note` object (`Xeito.Log.Schema`)."
+  @spec remember(String.t(), String.t(), map()) :: t()
+  def remember(id, type, attrs),
+    do: %__MODULE__{kind: :remember, args: %{id: id, type: type, attrs: attrs}, reply: :remembered}
+
   @doc "A reading of the runner's randomness (a float in `[0, 1)`), for a script."
   @spec random() :: t()
   def random, do: %__MODULE__{kind: :random, args: %{}, reply: :random}
@@ -221,7 +228,7 @@ defmodule Xeito.Effect do
   end
 
   @doc "Request a typed decision of `type` (a `Xeito.Decision` module) over `input`."
-  @spec decide(module(), map()) :: t()
+  @spec decide(module() | Xeito.Decision.Type.t(), map()) :: t()
   def decide(type, input \\ %{}) do
     %__MODULE__{kind: :decide, args: %{decision: type, input: input}, reply: :decided}
   end

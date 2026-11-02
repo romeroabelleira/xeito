@@ -20,7 +20,7 @@ defmodule Xeito.Decider do
   Decides `type_module` for `input`. Options: `:deciders` (tier list), `:tiers` (config
   overrides per tier, e.g. `[local: [url: ...]]`).
   """
-  @spec decide(module(), map(), keyword()) :: Decision.t()
+  @spec decide(module() | Type.t(), map(), keyword()) :: Decision.t()
   def decide(type_module, input, opts \\ []) do
     type = Decision.type!(type_module)
     started = System.monotonic_time(:millisecond)

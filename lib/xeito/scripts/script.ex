@@ -9,6 +9,11 @@ defmodule Script do
 
   defdelegate read(path), to: Api
   defdelegate bash(command), to: Api
+  defdelegate write(path, content), to: Api
+  defdelegate edit(path, old, new), to: Api
+  defdelegate decide(type, input), to: Api
+  defdelegate classify(questions, state), to: Api
+  defdelegate remember(id, attrs), to: Api
   defdelegate text(value), to: Api
   defdelegate now(), to: Api
   defdelegate random(), to: Api

@@ -35,7 +35,9 @@ defmodule Xeito.Log.Schema do
     "run" => ~w(machine machine_version status),
     "machine" => ~w(name version),
     "effect" => ~w(kind),
-    "session" => ~w(cwd status)
+    "session" => ~w(cwd status),
+    # What a script remembers (`Xeito.Effect.remember/3`): its own type as `kind`, its attributes as JSON.
+    "note" => ~w(kind attrs)
   }
 
   @doc "Event types and their attribute columns."
