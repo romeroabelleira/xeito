@@ -40,6 +40,9 @@ defmodule Xeito.Client.OneShot do
           dry_run: boolean(),
           list: boolean(),
           print_skill: String.t() | nil,
+          print_functions: boolean(),
+          vars: %{String.t() => String.t()},
+          contexts: [String.t()],
           yes: boolean(),
           continue: boolean(),
           session: String.t() | nil,
@@ -85,6 +88,9 @@ defmodule Xeito.Client.OneShot do
     print_prompt: :boolean,
     list: :boolean,
     print_skill: :string,
+    print_functions: :boolean,
+    var: :keep,
+    context: :keep,
     yes: :boolean,
     continue: :boolean,
     session: :string,
@@ -100,9 +106,16 @@ defmodule Xeito.Client.OneShot do
     # `--tools` alone allows all of them; `--tools=LIST` takes a value, so it cannot eat a word.
     args = Enum.map(args, &if(&1 == "--tools", do: "--tools=all", else: &1))
 
-    case OptionParser.parse(args, strict: @switches, aliases: [s: :stream, o: :out, t: :temperature, l: :list]) do
-      {parsed, words, []} -> with :ok <- exclusive(parsed), do: options(parsed, words)
-      {_parsed, _words, [{option, _} | _]} -> {:error, "unknown option #{option}"}
+    aliases = [s: :stream, o: :out, t: :temperature, l: :list, v: :var, C: :context]
+
+    case OptionParser.parse(args, strict: @switches, aliases: aliases) do
+      {parsed, words, []} ->
+        with :ok <- exclusive(parsed),
+             {:ok, vars} <- vars(Keyword.get_values(parsed, :var)),
+             do: options(parsed, words, vars)
+
+      {_parsed, _words, [{option, _} | _]} ->
+        {:error, "unknown option #{option}"}
     end
   end
 
@@ -115,7 +128,7 @@ defmodule Xeito.Client.OneShot do
 
   defp flag(name), do: "--" <> String.replace(to_string(name), "_", "-")
 
-  defp options(parsed, words) do
+  defp options(parsed, words, vars) do
     {:ok,
      %{
        skill: parsed[:skill],
@@ -133,6 +146,9 @@ defmodule Xeito.Client.OneShot do
        dry_run: Keyword.get(parsed, :dry_run, false) or Keyword.get(parsed, :print_prompt, false),
        list: Keyword.get(parsed, :list, false),
        print_skill: parsed[:print_skill],
+       print_functions: Keyword.get(parsed, :print_functions, false),
+       vars: vars,
+       contexts: Keyword.get_values(parsed, :context),
        yes: Keyword.get(parsed, :yes, false),
        continue: Keyword.get(parsed, :continue, false),
        session: parsed[:session],
@@ -140,6 +156,19 @@ defmodule Xeito.Client.OneShot do
        socket: parsed[:socket],
        words: words
      }}
+  end
+
+  # `-v NAME=VALUE`, repeatable.
+  defp vars(pairs) do
+    case Enum.find(pairs, &(not String.contains?(&1, "="))) do
+      nil -> {:ok, Map.new(pairs, &pair/1)}
+      pair -> {:error, "--var takes NAME=VALUE, not #{inspect(pair)}"}
+    end
+  end
+
+  defp pair(text) do
+    [name, value] = String.split(text, "=", parts: 2)
+    {name, value}
   end
 
   defp tools(nil), do: false
@@ -189,9 +218,21 @@ defmodule Xeito.Client.OneShot do
           do: {to_string(key), opts[key]}
 
     request =
-      Map.merge(%{"cmd" => "prompt", "session" => session, "text" => text, "tools" => opts.tools}, Map.new(fields))
+      %{"cmd" => "prompt", "session" => session, "text" => text, "tools" => opts.tools}
+      |> Map.merge(Map.new(fields))
+      |> put_if("vars", opts[:vars], opts[:vars] not in [nil, %{}])
+      |> put_if("contexts", opts[:contexts], opts[:contexts] not in [nil, []])
 
     if opts.dry_run, do: Map.put(request, "dry_run", true), else: request
+  end
+
+  defp put_if(map, key, value, true), do: Map.put(map, key, value)
+  defp put_if(map, _key, _value, false), do: map
+
+  @doc "One shell function per skill (`--print-functions`): `summarize() { mix xeito.run --skill summarize \"$@\"; }`."
+  @spec functions([map()]) :: String.t()
+  def functions(skills) do
+    Enum.map_join(skills, &"#{&1.name}() { mix xeito.run --skill #{&1.name} \"$@\"; }\n")
   end
 
   @doc "A JSON Schema file's text (`--as FILE`), decoded, or why it is not one."
@@ -221,21 +262,24 @@ defmodule Xeito.Client.OneShot do
   defp format_note(nil), do: ""
   defp format_note(schema), do: " · answer format: " <> JSON.encode!(schema)
 
-  @doc "The skills seen from `cwd`, one line each: name, layer (`project` or `user`) and description."
+  @doc """
+  The skills seen from `cwd` (`Xeito.Skills.all/2`), one line each: name, layer (`project`,
+  `user` or `sample`, and `shadowed` when an earlier layer has the name) and description.
+  """
   @spec skill_list([map()], Path.t()) :: String.t()
-  def skill_list([], cwd), do: "no skills in #{Path.join(cwd, ".agents/skills")} or ~/.agents/skills\n"
+  def skill_list([], cwd), do: "no skills in #{Path.join(cwd, ".agents/skills")}, ~/.agents/skills or Xeito's samples\n"
 
-  def skill_list(skills, cwd) do
-    project = Path.join(cwd, ".agents/skills") <> "/"
-    rows = for skill <- skills, do: [skill.name, layer(skill.dir, project), skill.description]
-    width = rows |> Enum.map(&String.length(hd(&1))) |> Enum.max()
+  def skill_list(skills, _cwd) do
+    rows = for skill <- skills, do: [skill.name, layer(skill), skill.description]
+    [names, layers] = for i <- 0..1, do: rows |> Enum.map(&String.length(Enum.at(&1, i))) |> Enum.max()
 
     Enum.map_join(rows, fn [name, layer, description] ->
-      "#{String.pad_trailing(name, width)}  #{String.pad_trailing(layer, 7)}  #{description}\n"
+      "#{String.pad_trailing(name, names)}  #{String.pad_trailing(layer, layers)}  #{description}\n"
     end)
   end
 
-  defp layer(dir, project), do: if(String.starts_with?(dir, project), do: "project", else: "user")
+  defp layer(%{shadowed: true, layer: layer}), do: "#{layer}, shadowed"
+  defp layer(skill), do: Atom.to_string(Map.get(skill, :layer, :user))
 
   @doc "Whether to stream: as asked, else when stdout is a terminal; never for extracts, JSON or an answer format."
   @spec stream?(opts(), boolean()) :: boolean()

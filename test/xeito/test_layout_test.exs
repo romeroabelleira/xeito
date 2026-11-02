@@ -15,6 +15,7 @@ defmodule Xeito.TestLayoutTest do
     "test/xeito/run_property_test.exs" => "the log alone reproduces a run, for random event sequences",
     "test/xeito/session_commands_test.exs" => "a session's slash commands",
     "test/xeito/session_queue_test.exs" => "lines typed while a turn runs",
+    "test/xeito/session/one_shot_policy_test.exs" => "a skill's tier under the policy and the tiers configured",
     "test/xeito/skill_keywords_test.exs" => "skill keywords from frontmatter and the overlay, in the index",
     "test/xeito/skills_per_turn_test.exs" => "a turn's skill shortlist, decision and suggestion",
     "test/xeito/step_test.exs" => "step mode and breakpoints across runs",

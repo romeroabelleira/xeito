@@ -8,7 +8,6 @@ defmodule Xeito.Session.Commands do
   missing its argument, emits an error pointing to `/help`.
   """
 
-  alias Xeito.Machines.Chat
   alias Xeito.Machines.Shell
   alias Xeito.Run
   alias Xeito.Session
@@ -16,12 +15,12 @@ defmodule Xeito.Session.Commands do
   alias Xeito.Session.Info
   alias Xeito.Session.Input
   alias Xeito.Session.Notify
+  alias Xeito.Session.OneShot
   alias Xeito.Session.Queue
   alias Xeito.Session.Review
   alias Xeito.Session.Router
   alias Xeito.Session.StepMode
   alias Xeito.Session.UndoCommand
-  alias Xeito.Skills
 
   # By group (run/2); `skill:` is a prefix.
   @start_commands ~w(machine run skill: steer)
@@ -114,15 +113,30 @@ defmodule Xeito.Session.Commands do
   end
 
   # `/skill:name args`: the skill's instructions become the prompt of a chat turn.
+  # `/skill:name key=value … request`: the leading `key=value` words fill the skill's variables.
+  # The skill's own tier, output and contexts apply as in a one-shot turn (`Xeito.Session.OneShot`).
   defp skill_command(name, request, s) do
-    case Enum.find(Skills.discover(s.cwd), &(&1.name == name)) do
-      nil ->
-        Notify.error(s, "no skill named #{inspect(name)}")
+    {vars, request} = skill_vars(request)
 
-      skill ->
-        input = Map.put(Input.for_machine(Chat, Skills.invocation(skill, request), s), :skill_candidates, [])
-        Session.start_machine(Chat, input, "/skill:#{name}", s)
+    case OneShot.prepare(request, [skill: name, tools: true, vars: vars, reason: "/skill:#{name}"], s) do
+      {:ok, turn} ->
+        s = Enum.reduce(turn.notices, s, &Notify.notice(&2, &1))
+        started = Session.start_machine(turn.machine, turn.input, turn.reason, %{s | chat: turn.chat})
+        %{started | chat: s.chat}
+
+      {:error, message} ->
+        Notify.error(s, message)
     end
+  end
+
+  defp skill_vars(request) do
+    {pairs, rest} = request |> String.split(" ", trim: true) |> Enum.split_while(&Regex.match?(~r/^[A-Za-z_][\w-]*=/, &1))
+    {Map.new(pairs, &skill_var/1), Enum.join(rest, " ")}
+  end
+
+  defp skill_var(pair) do
+    [name, value] = String.split(pair, "=", parts: 2)
+    {name, value}
   end
 
   # Idle, a steer is a prompt; during a machine other than chat, it is queued.

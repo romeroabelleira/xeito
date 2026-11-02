@@ -19,6 +19,12 @@ defmodule Xeito.Session.OneShotTest do
     File.write!(Path.join(path, "SKILL.md"), "---\nname: greet\ndescription: Greet.\n---\nSay hello.\n")
   end
 
+  defp write_skill(dir, name, front, body) do
+    path = Path.join([dir, ".agents/skills", name])
+    File.mkdir_p!(path)
+    File.write!(Path.join(path, "SKILL.md"), "---\nname: #{name}\ndescription: D.\n#{front}---\n#{body}\n")
+  end
+
   defp prepare!(text, opts, s) do
     {:ok, turn} = OneShot.prepare(text, opts, s)
     turn
@@ -50,6 +56,66 @@ defmodule Xeito.Session.OneShotTest do
       assert %{tools: false, skill_candidates: []} = input
 
       assert {:error, "no skill named \"nope\""} = OneShot.prepare("x", [skill: "nope"], state(dir))
+    end
+
+    test "a skill's variables are filled from vars:, and a missing one stops the turn before any call", %{tmp_dir: dir} do
+      write_skill(dir, "greet", "metadata:\n  vars: lang=English, name\n", "Greet {{name}} in {{lang}}.")
+
+      assert %{input: input, notices: []} = prepare!("hi", [skill: "greet", vars: %{"name" => "Ana"}], state(dir))
+      assert input.prompt =~ "Greet Ana in English."
+
+      assert {:error, "the skill greet needs a value for {{name}} (name=VALUE)"} =
+               OneShot.prepare("hi", [skill: "greet"], state(dir))
+    end
+
+    test "a skill's off-box tier is refused by the default policy, with a notice; the call's own tier wins", %{
+      tmp_dir: dir
+    } do
+      write_skill(dir, "far", "metadata:\n  tier: remote_frontier\n", "Far.")
+
+      assert %{chat: chat, notices: [notice]} = prepare!("hi", [skill: "far"], state(dir))
+      refute Keyword.has_key?(chat, :tier)
+      assert notice =~ "the skill far asks for the remote_frontier tier, but the policy keeps local-only input"
+      assert notice =~ "runs on local"
+
+      # The call named a tier, so the skill's is not asked for: the error is about the call's.
+      assert {:error, "nope is not a chat tier" <> _} = OneShot.prepare("hi", [skill: "far", tier: "nope"], state(dir))
+    end
+
+    test "a skill's output json:<type> is the answer format of a turn without tools; with tools, or an --as, it is not",
+         %{tmp_dir: dir} do
+      write_skill(dir, "judge", "metadata:\n  output: json:triage\n", "Judge.")
+      schema = Prompt.json_schema(Decision.type!(Triage))
+
+      assert %{input: %{format: ^schema}} = prepare!("x", [skill: "judge"], state(dir))
+      assert %{input: input} = prepare!("x", [skill: "judge", tools: true], state(dir))
+      refute Map.has_key?(input, :format)
+
+      assert %{input: %{format: %{"type" => "object"}}} =
+               prepare!("x", [skill: "judge", as: %{"type" => "object"}], state(dir))
+    end
+
+    test "named contexts follow the text: the call's, else the skill's; an unknown one is an error", %{tmp_dir: dir} do
+      File.mkdir_p!(Path.join(dir, ".agents/contexts"))
+      File.write!(Path.join(dir, ".agents/contexts/house.md"), "Short sentences.\n")
+      File.write!(Path.join(dir, ".agents/contexts/review.md"), "Check the tests.\n")
+      write_skill(dir, "styled", "metadata:\n  contexts: house\n", "Write.")
+
+      assert %{input: input} = prepare!("hi", [contexts: ["house", "review"]], state(dir))
+      assert input.prompt == ~s(hi\n\nContext "house":\nShort sentences.\n\nContext "review":\nCheck the tests.)
+
+      assert %{input: input} = prepare!("hi", [skill: "styled"], state(dir))
+      assert input.prompt =~ "Request: hi\n\nContext \"house\":\nShort sentences."
+
+      assert %{input: input} = prepare!("hi", [skill: "styled", contexts: ["review"]], state(dir))
+      refute input.prompt =~ "Short sentences"
+
+      assert {:error, "no context named \"nope\" in " <> _} = OneShot.prepare("hi", [contexts: ["nope"]], state(dir))
+    end
+
+    test "reason: names the run, as /skill: does", %{tmp_dir: dir} do
+      skill(dir)
+      assert %{reason: "/skill:greet"} = prepare!("hi", [skill: "greet", reason: "/skill:greet"], state(dir))
     end
 
     test "a machine by name, with the input it needs; chat as a machine takes the tools", %{tmp_dir: dir} do

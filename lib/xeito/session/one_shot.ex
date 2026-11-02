@@ -8,6 +8,12 @@ defmodule Xeito.Session.OneShot do
   each other. `request/3` is the first model request the turn would send, for a dry run.
 
   - `skill: name`: a chat turn running the skill (as `/skill:name`), with the text as its request.
+    The skill's own choices fill in what the call leaves open: its `tier` (unless the policy
+    keeps local-only input on the machine and the tier is off-box: then a notice says so), its
+    `output` as the answer format when the turn has no tools, and its `contexts`. `vars:` fills
+    its `{{name}}` variables (`Xeito.Skills.fill/2`); `reason:` names the run (default
+    `one-shot skill:NAME`).
+  - `contexts: [name]`: named contexts (`Xeito.Skills.context/3`) added after the text.
   - `machine: name`: that registered machine (`Xeito.Session.Router.machines/0`) with the input it needs.
   - neither: a chat turn of the text.
   - `tools:` `false` (the default), `true` (all) or a list of names: the chat turn's tools. Without
@@ -22,6 +28,7 @@ defmodule Xeito.Session.OneShot do
   alias Xeito.Decision.Prompt
   alias Xeito.Decisions
   alias Xeito.Machines.Chat
+  alias Xeito.Policy
   alias Xeito.Session
   alias Xeito.Session.ChatModel
   alias Xeito.Session.Input
@@ -32,7 +39,7 @@ defmodule Xeito.Session.OneShot do
 
   @tools Tools.names() ++ ["skill"]
 
-  @type turn :: %{machine: module(), input: map(), reason: String.t(), chat: keyword()}
+  @type turn :: %{machine: module(), input: map(), reason: String.t(), chat: keyword(), notices: [String.t()]}
 
   @doc "The machine, its input, the run's reason and the chat options for a one-shot turn of `text`."
   @spec prepare(String.t(), keyword(), Session.state()) :: {:ok, turn()} | {:error, String.t()}
@@ -40,10 +47,11 @@ defmodule Xeito.Session.OneShot do
     tools = Keyword.get(opts, :tools, false)
 
     with :ok <- check_tools(tools),
-         {:ok, chat} <- chat(opts, s.chat),
-         {:ok, format} <- format(opts[:as], tools),
-         {:ok, machine, input, reason} <- start(opts[:skill], opts[:machine], text, tools, %{s | chat: chat}) do
-      with_format(%{machine: machine, input: input, reason: reason, chat: chat}, format)
+         {:ok, skill, opts, notices} <- skill_defaults(opts, tools, s),
+         {:ok, chat, format} <- chat_and_format(opts, tools, s),
+         {:ok, text} <- with_contexts(text, Keyword.get(opts, :contexts, []), s),
+         {:ok, machine, input, reason} <- start(skill, opts, text, tools, %{s | chat: chat}) do
+      with_format(%{machine: machine, input: input, reason: reason, chat: chat, notices: notices}, format)
     end
   end
 
@@ -89,6 +97,12 @@ defmodule Xeito.Session.OneShot do
     end
   end
 
+  defp chat_and_format(opts, tools, s) do
+    with {:ok, chat} <- chat(opts, s.chat),
+         {:ok, format} <- format(opts[:as], tools),
+         do: {:ok, chat, format}
+  end
+
   defp chat(opts, session_chat) do
     with {:ok, tier} <- tier(opts[:tier]) do
       model = if opts[:model], do: [chat_model: opts[:model], model: opts[:model]], else: []
@@ -126,19 +140,82 @@ defmodule Xeito.Session.OneShot do
 
   defp with_format(_turn, _format), do: {:error, "only a chat turn has an answer format"}
 
-  defp start(nil, nil, text, tools, s), do: {:ok, Chat, chat_input(text, tools, s), "one-shot"}
-  defp start(skill, nil, text, tools, s), do: skill(skill, text, tools, s)
-  defp start(nil, machine, text, tools, s), do: machine(machine, text, tools, s)
-  defp start(_skill, _machine, _text, _tools, _s), do: {:error, "a skill or a machine, not both"}
+  # The named skill, if any, and its choices where the call made none: its tier (policy first),
+  # output and contexts, plus the notices that explain a refused choice.
+  defp skill_defaults(opts, tools, s) do
+    case {opts[:skill], opts[:skill] && Enum.find(Skills.discover(s.cwd), &(&1.name == opts[:skill]))} do
+      {nil, _} -> {:ok, nil, opts, []}
+      {name, nil} -> {:error, "no skill named #{inspect(name)}"}
+      {_name, skill} -> defaults(skill, opts, tools, s)
+    end
+  end
 
-  defp skill(name, text, tools, s) do
-    case Enum.find(Skills.discover(s.cwd), &(&1.name == name)) do
+  defp defaults(skill, opts, tools, s) do
+    {opts, notices} = skill_tier(skill, opts, s)
+
+    opts =
+      opts
+      |> put_default(:as, skill_output(skill, tools))
+      |> put_default(:contexts, Map.get(skill, :contexts, []))
+
+    {:ok, skill, opts, notices}
+  end
+
+  defp put_default(opts, key, value), do: if(opts[key] in [nil, []], do: Keyword.put(opts, key, value), else: opts)
+
+  defp skill_output(skill, false) do
+    case Map.get(skill, :output, :text) do
+      {:json, type} -> type
+      :text -> nil
+    end
+  end
+
+  defp skill_output(_skill, _tools), do: nil
+
+  defp skill_tier(skill, opts, s) do
+    tier = Map.get(skill, :tier)
+
+    cond do
+      tier in [nil, ""] or opts[:tier] != nil -> {opts, []}
+      off_box?(tier) and Policy.effective().locality != :public -> {opts, [stays_local(skill, tier, s)]}
+      true -> {Keyword.put(opts, :tier, tier), []}
+    end
+  end
+
+  defp off_box?(name), do: Enum.any?(Tiers.off_box(), &(Atom.to_string(&1) == name))
+
+  defp stays_local(skill, tier, s) do
+    "the skill #{skill.name} asks for the #{tier} tier, but the policy keeps local-only input on this " <>
+      "machine (locality: local_only), so the turn runs on #{ChatModel.current(s.chat)}"
+  end
+
+  defp with_contexts(text, [], _s), do: {:ok, text}
+
+  defp with_contexts(text, names, s) do
+    case Enum.find(names, &(Skills.context(s.cwd, &1) == :error)) do
       nil ->
-        {:error, "no skill named #{inspect(name)}"}
+        {:ok, Enum.reduce(names, text, &(&2 <> "\n\nContext \"#{&1}\":\n" <> elem(Skills.context(s.cwd, &1), 1)))}
 
-      skill ->
-        input = Map.put(chat_input(Skills.invocation(skill, text), tools, s), :skill_candidates, [])
-        {:ok, Chat, input, "one-shot skill:#{name}"}
+      name ->
+        {:error, "no context named #{inspect(name)} in #{Path.join(s.cwd, ".agents/contexts")} or ~/.agents/contexts"}
+    end
+  end
+
+  defp start(nil, opts, text, tools, s) do
+    case opts[:machine] do
+      nil -> {:ok, Chat, chat_input(text, tools, s), "one-shot"}
+      machine -> machine(machine, text, tools, s)
+    end
+  end
+
+  defp start(skill, opts, text, tools, s) do
+    if opts[:machine] do
+      {:error, "a skill or a machine, not both"}
+    else
+      with {:ok, prompt} <- Skills.invocation(skill, text, Keyword.get(opts, :vars, %{})) do
+        input = Map.put(chat_input(prompt, tools, s), :skill_candidates, [])
+        {:ok, Chat, input, Keyword.get(opts, :reason, "one-shot skill:#{skill.name}")}
+      end
     end
   end
 

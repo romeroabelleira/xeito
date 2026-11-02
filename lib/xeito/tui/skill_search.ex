@@ -29,7 +29,18 @@ defmodule Xeito.Tui.SkillSearch do
     end
   end
 
-  defp rows(skills), do: Enum.map(skills, &"  /skill:#{&1.name} · #{cut(&1.description)}")
+  defp rows(skills), do: Enum.map(skills, &row/1)
+
+  @doc "A skill's line in the listing: how to run it, its description, and the tier and output it chose, if any."
+  @spec row(Skills.t()) :: String.t()
+  def row(skill) do
+    "  /skill:#{skill.name} · #{cut(skill.description)}" <>
+      if(skill[:tier], do: " · tier #{skill.tier}", else: "") <>
+      case Map.get(skill, :output, :text) do
+        {:json, type} -> " · json:#{type}"
+        :text -> ""
+      end
+  end
 
   defp cut(text) do
     if String.length(text) <= @description, do: text, else: String.slice(text, 0, @description - 1) <> "…"

@@ -437,6 +437,23 @@ defmodule Xeito.SessionCommandsTest do
                    2_000
   end
 
+  test "/skill:<name> key=value fills the skill's variables; a variable left without a value is an error", %{
+    id: id,
+    ws: ws
+  } do
+    File.mkdir_p!(Path.join(ws, ".agents/skills/needy"))
+
+    File.write!(
+      Path.join(ws, ".agents/skills/needy/SKILL.md"),
+      "---\nname: needy\ndescription: Needs a language.\nmetadata:\n  vars: lang\n---\nAnswer in {{lang}}.\n"
+    )
+
+    assert {:error, "the skill needy needs a value for {{lang}} (lang=VALUE)"} = reply(id, "/skill:needy hi")
+
+    :ok = Session.prompt(id, "/skill:needy lang=Galician hi")
+    assert_receive {:xeito, _, %{type: "run_selected", attrs: %{"reason" => "/skill:needy"}}}, 2_000
+  end
+
   test "a paused run stays paused when output of its command arrives late", %{id: id} do
     assert {:notice, "step mode on"} = reply(id, "/step")
     :ok = Session.prompt(id, "/run true")

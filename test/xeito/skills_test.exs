@@ -21,10 +21,103 @@ defmodule Xeito.SkillsTest do
     File.write!(Path.join(path, "SKILL.md"), "---\nname: greet\ndescription: Greet.\n---\nSay hello.\n")
     [skill] = Skills.discover(dir, home: dir, keywords: nil)
 
-    prompt = Skills.invocation(skill, "to Ana")
+    {:ok, prompt} = Skills.invocation(skill, "to Ana")
     assert prompt =~ ~s(Use the skill "greet". Its directory is #{path};)
     assert prompt =~ "Instructions:\n\nSay hello.\n\nRequest: to Ana\n"
-    assert Skills.invocation(skill, "") =~ "Request: (none; follow the instructions)\n"
+    assert {:ok, prompt} = Skills.invocation(skill, "")
+    assert prompt =~ "Request: (none; follow the instructions)\n"
+  end
+
+  describe "a skill's own choices under metadata (P4g)" do
+    defp write(dir, name, front, body \\ "Body.") do
+      path = Path.join(dir, name)
+      File.mkdir_p!(path)
+      File.write!(Path.join(path, "SKILL.md"), "---\nname: #{name}\ndescription: D.\n#{front}---\n#{body}\n")
+      path
+    end
+
+    test "tier, output, declared variables and contexts are read; none means prose, no tier, nothing declared", %{
+      tmp_dir: dir
+    } do
+      write(
+        dir,
+        "a",
+        "metadata:\n  tier: remote_frontier\n  output: json:triage\n  vars: lang=English, name\n  contexts: house, review\n"
+      )
+
+      write(dir, "b", "")
+
+      assert [a, b] = Skills.from_dirs([dir])
+      assert %{tier: "remote_frontier", output: {:json, "triage"}, contexts: ["house", "review"]} = a
+      assert a.vars == %{"lang" => "English", "name" => nil}
+      assert %{tier: nil, output: :text, vars: %{}, contexts: []} = b
+    end
+
+    test "fill/2: given values first, else defaults; a declared variable with neither is an error; an undeclared one is left",
+         %{tmp_dir: dir} do
+      write(dir, "a", "metadata:\n  vars: lang=English, name\n", "Greet {{name}} in {{lang}}; {{mood}} stays.")
+      [a] = Skills.from_dirs([dir])
+
+      assert Skills.fill(a, %{"name" => "Ana"}) == {:ok, "Greet Ana in English; {{mood}} stays."}
+      assert Skills.fill(a, %{"name" => "Ana", "lang" => "Galician"}) == {:ok, "Greet Ana in Galician; {{mood}} stays."}
+      assert Skills.fill(a, %{}) == {:error, "the skill a needs a value for {{name}} (name=VALUE)"}
+      assert {:error, _} = Skills.invocation(a, "hi")
+    end
+
+    test "an overlay sets the tier and output of a skill you can't edit, and the rest are keywords", %{tmp_dir: dir} do
+      write(dir, "a", "")
+      overlay = Path.join(dir, "overlay.txt")
+      File.write!(overlay, "a: terse, tier=remote, output=json:triage, odd=thing\n")
+
+      assert [%{keywords: ["terse"], tier: "remote", output: {:json, "triage"}}] =
+               Skills.discover(Path.join(dir, "ws"), home: dir, sample: dir, keywords: overlay)
+    end
+
+    test "all/2: the project's, the user's and the sample skills in that order, later holders of a name shadowed", %{
+      tmp_dir: dir
+    } do
+      write(Path.join(dir, "ws/.agents/skills"), "greet", "")
+      write(Path.join(dir, "home/.agents/skills"), "greet", "")
+      write(Path.join(dir, "home/.agents/skills"), "mine", "")
+      write(Path.join(dir, "samples"), "greet", "")
+      write(Path.join(dir, "samples"), "sample", "")
+
+      all = Skills.all(Path.join(dir, "ws"), home: Path.join(dir, "home"), sample: Path.join(dir, "samples"))
+
+      assert Enum.map(all, &{&1.name, &1.layer, &1.shadowed}) == [
+               {"greet", :project, false},
+               {"greet", :user, true},
+               {"mine", :user, false},
+               {"greet", :sample, true},
+               {"sample", :sample, false}
+             ]
+
+      discovered =
+        Skills.discover(Path.join(dir, "ws"),
+          home: Path.join(dir, "home"),
+          sample: Path.join(dir, "samples"),
+          keywords: nil
+        )
+
+      assert Enum.map(discovered, &{&1.name, &1.layer}) == [{"greet", :project}, {"mine", :user}, {"sample", :sample}]
+    end
+
+    test "context/3: the workspace's file first, then the home's, trimmed; none, or an odd name, is an error", %{
+      tmp_dir: dir
+    } do
+      ws = Path.join(dir, "ws")
+      home = Path.join(dir, "home")
+      File.mkdir_p!(Path.join(ws, ".agents/contexts"))
+      File.mkdir_p!(Path.join(home, ".agents/contexts"))
+      File.write!(Path.join(ws, ".agents/contexts/house.md"), "Project style.\n")
+      File.write!(Path.join(home, ".agents/contexts/house.md"), "My style.\n")
+      File.write!(Path.join(home, ".agents/contexts/review.md"), "My checklist.\n")
+
+      assert Skills.context(ws, "house", home: home) == {:ok, "Project style."}
+      assert Skills.context(ws, "review", home: home) == {:ok, "My checklist."}
+      assert Skills.context(ws, "missing", home: home) == :error
+      assert Skills.context(ws, "../house", home: home) == :error
+    end
   end
 
   test "shortlist/2: ranks the skills the model may invoke, and leaves out the others" do

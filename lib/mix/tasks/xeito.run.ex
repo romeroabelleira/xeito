@@ -25,14 +25,26 @@ defmodule Mix.Tasks.Xeito.Run do
                                      this call; spend limits still apply
       -t, --temperature N            sampling temperature
       --think / --no-think           the model's thinking on or off
+      -v, --var NAME=VALUE           fill {{NAME}} in the skill (repeatable); a skill declares its
+                                     variables and defaults under metadata: vars:
+      -C, --context NAME             add the named context, .agents/contexts/NAME.md in the
+                                     workspace or your home, after the text (repeatable)
       --dry-run, --print-prompt      print the request a real call would send, calling no model
-      -l, --list                     list the skills seen from the workspace, with their layer
+      -l, --list                     list the skills seen from the workspace with their layer:
+                                     project, user, or the samples shipped with Xeito; a skill
+                                     an earlier layer's hides is marked shadowed
       --print-skill NAME             print a skill's SKILL.md
+      --print-functions              print one shell function per skill, to source
       --continue, --session ID       go on in the directory's last session, or in that one
       --cwd DIR                      the workspace (default: the current directory)
       --socket PATH                  the daemon's socket
 
-  Needs a running daemon (`mix xeito.daemon`), except for `--list` and `--print-skill`. The turn
+  A skill may choose its chat tier and output under `metadata:` (`tier: remote_frontier`,
+  `output: json:triage`); the call's own flags win, and a remote tier is honoured only where the
+  policy lets input leave the machine (the notice says so otherwise).
+
+  Needs a running daemon (`mix xeito.daemon`), except for `--list`, `--print-skill` and
+  `--print-functions`. The turn
   is a run in the workspace log like any other. A fresh session is closed once the answer is in.
   The exit status is 0 when the turn ended `done`, 1 otherwise, or when `--as` got no JSON.
   """
@@ -53,8 +65,9 @@ defmodule Mix.Tasks.Xeito.Run do
     cwd = Path.expand(opts.cwd || ".")
 
     cond do
-      opts.list -> IO.write(OneShot.skill_list(Skills.discover(cwd), cwd))
+      opts.list -> IO.write(OneShot.skill_list(Skills.all(cwd), cwd))
       opts.print_skill -> IO.write(skill_file(opts.print_skill, cwd))
+      opts.print_functions -> IO.write(OneShot.functions(Skills.discover(cwd)))
       true -> call(%{opts | as: as(opts.as)})
     end
   end

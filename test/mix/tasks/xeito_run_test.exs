@@ -134,9 +134,12 @@ defmodule Mix.Tasks.Xeito.RunTest do
       refute_received {:chat_request, _}
     end
 
-    test "--list and --print-skill read the workspace's skills, without a daemon", ctx do
+    test "--list, --print-skill and --print-functions read the workspace's skills, without a daemon", ctx do
       {out, ""} = run(%{ctx | socket: "/nonexistent/x.sock"}, ["--list"])
       assert out =~ ~r/^greet\s+project\s+Greet\.$/m
+
+      {out, ""} = run(%{ctx | socket: "/nonexistent/x.sock"}, ["--print-functions"])
+      assert out == "greet() { mix xeito.run --skill greet \"$@\"; }\n"
 
       {out, ""} = run(%{ctx | socket: "/nonexistent/x.sock"}, ["--print-skill", "greet"])
       assert out == "---\nname: greet\ndescription: Greet.\n---\nSay hello.\n"

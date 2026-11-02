@@ -33,7 +33,7 @@ defmodule Mix.Tasks.Xeito.Skills.Bench do
 
     dirs = with [] <- Keyword.get_values(opts, :skills), do: default_dirs
     overlay = Skills.overlay(opts[:keywords] || System.get_env("XEITO_SKILL_KEYWORDS"))
-    skills = dirs |> Skills.from_dirs() |> Skills.add_keywords(overlay) |> Examples.attach()
+    skills = dirs |> Skills.from_dirs() |> Skills.apply_overlay(overlay) |> Examples.attach()
     report = Bench.run(skills, Bench.read_set(set))
     Mix.shell().info(String.trim_trailing(Bench.format(report)))
   end

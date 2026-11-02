@@ -202,7 +202,7 @@ defmodule Xeito.Api.Connection do
 
   defp close(id), do: if(exists?(id), do: result(Session.close(id)), else: %{ok: false, error: "no such session"})
 
-  @one_shot ~w(skill machine tools as tier model temperature think)
+  @one_shot ~w(skill machine tools as tier model temperature think vars contexts)
 
   defp one_shot?(req), do: Enum.any?(@one_shot, &Map.has_key?(req, &1))
 

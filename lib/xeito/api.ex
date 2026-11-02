@@ -11,7 +11,8 @@ defmodule Xeito.Api do
                                     (optional "request_id": a repeat of an admitted one, as a client
                                      retrying after a daemon restart, is answered and ignored;
                                      "skill", "machine", "tools": false | true | ["read", …], "as",
-                                     "tier", "model", "temperature" or "think" start a one-shot
+                                     "tier", "model", "temperature", "think", "vars" (a map) or
+                                     "contexts" (names) start a one-shot
                                      turn, `Xeito.Session.one_shot/3`; "dry_run": true replies
                                      with its first model request instead, "request")
       {"id": 3, "cmd": "approve", "session": "ses-…"}       (also "deny"; "allow": "session" or "always"

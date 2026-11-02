@@ -36,6 +36,16 @@ defmodule Xeito.Client.OneShotTest do
       assert %{print_skill: "greet"} = parse!(~w(--print-skill greet))
     end
 
+    test "variables and named contexts, repeatable; the shell functions listing" do
+      opts = parse!(~w(-v lang=Galician --var name=Ana -C house --context review --print-functions))
+
+      assert %{vars: %{"lang" => "Galician", "name" => "Ana"}, contexts: ["house", "review"], print_functions: true} =
+               opts
+
+      assert %{vars: %{}, contexts: [], print_functions: false} = parse!([])
+      assert {:error, "--var takes NAME=VALUE, not \"lang\""} = OneShot.parse(~w(-v lang))
+    end
+
     test "--tools alone allows all of them, --tools=LIST those listed" do
       assert %{tools: true, words: ["text"]} = parse!(~w(--tools text))
       assert %{tools: ["read", "bash"]} = parse!(~w(--tools=read,bash))
@@ -108,16 +118,25 @@ defmodule Xeito.Client.OneShotTest do
     assert request |> OneShot.dry_run(parse!(~w(--json))) |> JSON.decode!() == request
   end
 
-  test "skill_list/2: each skill with its layer and description" do
+  test "skill_list/2: each skill with its layer, shadowed where an earlier layer has its name, and description" do
     skills = [
-      %{name: "greet", description: "Greet the user.", dir: "/w/.agents/skills/greet"},
-      %{name: "summarize", description: "Summarize text.", dir: "/home/u/.agents/skills/summarize"}
+      %{name: "greet", description: "Greet the user.", layer: :project, shadowed: false},
+      %{name: "greet", description: "Greet, user copy.", layer: :user, shadowed: true},
+      %{name: "summarize", description: "Summarize text.", layer: :sample, shadowed: false}
     ]
 
     assert OneShot.skill_list(skills, "/w") ==
-             "greet      project  Greet the user.\nsummarize  user     Summarize text.\n"
+             "greet      project         Greet the user.\n" <>
+               "greet      user, shadowed  Greet, user copy.\n" <>
+               "summarize  sample          Summarize text.\n"
 
-    assert OneShot.skill_list([], "/w") == "no skills in /w/.agents/skills or ~/.agents/skills\n"
+    assert OneShot.skill_list([], "/w") == "no skills in /w/.agents/skills, ~/.agents/skills or Xeito's samples\n"
+  end
+
+  test "functions/1: one shell function per skill, calling mix xeito.run with the skill" do
+    assert OneShot.functions([%{name: "summarize"}, %{name: "grill-plan"}]) ==
+             "summarize() { mix xeito.run --skill summarize \"$@\"; }\n" <>
+               "grill-plan() { mix xeito.run --skill grill-plan \"$@\"; }\n"
   end
 
   test "stream?/2: as asked, else when stdout is a terminal; never for extracts or JSON" do

@@ -256,7 +256,7 @@ defmodule Xeito.Session do
     case OneShot.prepare(text, opts, s) do
       {:ok, turn} ->
         log_prompt(String.trim(text), text, nil, s)
-        s = %{s | turn: s.turn + 1, prompt: text}
+        s = Enum.reduce(turn.notices, %{s | turn: s.turn + 1, prompt: text}, &Notify.notice(&2, &1))
         Notify.emit(s, "prompt", nil, %{"text" => text})
         started = start_machine(turn.machine, turn.input, turn.reason, %{s | chat: turn.chat})
         {:reply, :ok, %{started | chat: s.chat}}
