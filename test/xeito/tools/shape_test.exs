@@ -210,4 +210,19 @@ defmodule Xeito.Tools.ShapeTest do
                "full output of ses-x/t1/e3:\nexit status 0\nthe original"
     end
   end
+
+  describe "fetched pages" do
+    test "a long page is cut like a third-party file, a short one and an error left alone" do
+      effect = Effect.fetch("https://docs.a.test/guide")
+      long = Enum.map_join(1..500, "\n", &"line #{&1}")
+
+      assert %{shaped: shaped} = Shape.fetched(effect, %{ok: true, content: long, url: "https://docs.a.test/guide"})
+      assert shaped =~ "line 1\n"
+      refute shaped =~ "line 500"
+
+      short = %{ok: true, content: "a page"}
+      assert Shape.fetched(effect, short) == short
+      assert Shape.fetched(effect, %{ok: false, error: "HTTP 404"}) == %{ok: false, error: "HTTP 404"}
+    end
+  end
 end

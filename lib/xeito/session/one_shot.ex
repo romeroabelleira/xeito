@@ -37,7 +37,7 @@ defmodule Xeito.Session.OneShot do
   alias Xeito.Tiers
   alias Xeito.Tools
 
-  @tools Tools.names() ++ ["skill"]
+  @tools Tools.names() ++ ["skill", "fetch"]
 
   @type turn :: %{machine: module(), input: map(), reason: String.t(), chat: keyword(), notices: [String.t()]}
 

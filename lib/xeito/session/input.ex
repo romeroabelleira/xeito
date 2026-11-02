@@ -12,7 +12,9 @@ defmodule Xeito.Session.Input do
   alias Xeito.Machines.Commit
   alias Xeito.Machines.FixFailingTest
   alias Xeito.Machines.RunTests
+  alias Xeito.Machines.SelfRefine
   alias Xeito.Machines.Shell
+  alias Xeito.Policy
   alias Xeito.Session
   alias Xeito.Session.ChatModel
   alias Xeito.Session.Router
@@ -25,16 +27,18 @@ defmodule Xeito.Session.Input do
   @doc "The input to start `machine` with for `text` (the prompt, or the command for `Shell`)."
   @spec for_machine(module(), String.t(), Session.state()) :: map()
   def for_machine(Chat, text, s), do: chat_input(text, s)
+  def for_machine(machine, text, s), do: structured_input(machine, text, s)
 
-  def for_machine(Commit, text, s), do: %{cwd: s.cwd, request: text}
+  defp structured_input(Commit, text, s), do: %{cwd: s.cwd, request: text}
 
-  def for_machine(Check, _text, s), do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
+  defp structured_input(Check, _text, s), do: %{cwd: s.cwd, check_cmd: Router.check_command(s.cwd), system: s.system}
 
-  def for_machine(FixFailingTest, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
+  defp structured_input(FixFailingTest, _text, s),
+    do: %{cwd: s.cwd, test_cmd: s.test_cmd, delegate: true, system: s.system}
 
-  def for_machine(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
-
-  def for_machine(Shell, cmd, s), do: %{cwd: s.cwd, cmd: cmd}
+  defp structured_input(RunTests, _text, s), do: %{cwd: s.cwd, test_cmd: s.test_cmd}
+  defp structured_input(Shell, cmd, s), do: %{cwd: s.cwd, cmd: cmd}
+  defp structured_input(SelfRefine, text, s), do: %{cwd: s.cwd, system: s.system, request: text}
 
   defp chat_input(text, s) do
     skills = Skills.discover(s.cwd)
@@ -51,6 +55,7 @@ defmodule Xeito.Session.Input do
         system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(listed),
         context: chat_context(s),
         skills: Enum.map(skills, &Map.take(&1, [:name, :dir])),
+        network: Policy.effective().network,
         skill_candidates: Enum.map(candidates, &Map.take(&1, [:name, :description]))
       },
       &if(s.max_steps, do: Map.put(&1, :max_steps, s.max_steps), else: &1)

@@ -261,4 +261,16 @@ defmodule Xeito.Effects.LocalTest do
       end
     end
   end
+
+  test "fetch gets a page as Markdown, shaped and referenced like a read, where the network is allowed" do
+    name = :"local_fetch_#{System.unique_integer([:positive])}"
+
+    Req.Test.stub(name, fn conn ->
+      conn |> Plug.Conn.put_resp_content_type("text/html") |> Plug.Conn.send_resp(200, "<main><h1>Hi</h1></main>")
+    end)
+
+    effect = %{Effect.fetch("https://a.test/p") | id: "e9"}
+    assert %{ok: true, content: "# Hi", ref: "e9"} = Local.run(effect, plug: {Req.Test, name}, network: :allowed)
+    assert %{ok: false, error: "the network is off" <> _} = Local.run(effect, plug: {Req.Test, name}, network: :forbidden)
+  end
 end

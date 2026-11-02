@@ -6,6 +6,7 @@ defmodule Xeito.Effects.Local do
       `Xeito.Events.output/3`, keeping the last `opts[:max_output]` bytes (default 64 KiB). On
       timeout: `exit_status: 124`, `timed_out: true`, output so far; the command and every
       process it started are stopped.
+    * `fetch` gets a URL as Markdown (`Xeito.Effects.Fetch`), where the policy's `network` allows it.
     * `read` / `write` / `edit` refuse paths outside the workspace. `edit` replaces exactly one
       occurrence of the old text, or fails with the file's closest region.
     * `chat` runs one chat-model turn (`Xeito.Chat`), streamed to `Xeito.Events`; `opts[:chat]`
@@ -27,6 +28,7 @@ defmodule Xeito.Effects.Local do
   alias Xeito.Decider
   alias Xeito.Decision
   alias Xeito.Effect
+  alias Xeito.Effects.Fetch
   alias Xeito.Effects.MiseEnv
   alias Xeito.Effects.OsCommand
   alias Xeito.Escalation
@@ -42,6 +44,7 @@ defmodule Xeito.Effects.Local do
 
   @impl true
   def run(%Effect{kind: :read} = effect, opts), do: file_effect(effect, opts)
+  def run(%Effect{kind: :fetch} = effect, opts), do: effect |> Shape.fetched(Fetch.run(effect, opts)) |> with_ref(effect)
   def run(%Effect{kind: kind} = effect, opts) when kind in [:write, :edit, :bash], do: step(effect, opts)
 
   def run(%Effect{kind: kind} = effect, opts) when kind in [:decide, :tier, :probe, :swap],

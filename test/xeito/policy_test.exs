@@ -11,7 +11,7 @@ defmodule Xeito.PolicyTest do
 
   test "defaults keep inputs local and the remote tier off" do
     policy = Policy.for_type(Decision.type!(Triage))
-    assert %{remote: :forbidden, locality: :local_only, human: false} = policy
+    assert %{remote: :forbidden, locality: :local_only, network: :forbidden, human: false} = policy
 
     assert Policy.plan(policy, [:local_decision, :local, :remote], nil, &all_available/1) == [
              :rules,

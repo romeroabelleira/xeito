@@ -21,7 +21,7 @@ pi's stance is honest: the agent runs with your permissions, and you are in cont
 | Level | `bash` / write effects | Network | Intended for |
 |---|---|---|---|
 | `open` | direct, as the user | allowed | interactive pi-style use |
-| `guarded` (default) | `Risk` decision first; `:review` asks the human, `:forbidden` blocks | allowlist | daily use |
+| `guarded` (default) | `Risk` decision first; `:review` asks the human, `:forbidden` blocks | the `fetch` tool only where the policy's `network` allows it: off by default, `:allowed`, or a list of hosts (P4g step 7) | daily use |
 | `contained` | inside a container (Docker/Podman) with the workspace bind-mounted | none, or allowlist proxy | unattended runs, benchmarks |
 | `replay` | no execution; answers come from the log | none | debugging, evaluation |
 

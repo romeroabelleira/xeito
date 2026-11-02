@@ -8,6 +8,7 @@ defmodule Xeito.Effect do
   |-----------|-----------------------|------------------------------------------|
   | `:bash`   | `:ran` (or `:reply`)  | `%{exit_status: integer, output: binary}` |
   | `:read`   | `:read`               | `%{ok: true, content: binary}` or `%{ok: false, error: term}` |
+  | `:fetch`  | `:fetched`            | `%{ok: true, content: markdown, url, status, title}` or `%{ok: false, error: term}` |
   | `:write`  | `:written`            | `%{ok: true}` or `%{ok: false, error: term}` |
   | `:edit`   | `:edited`             | `%{ok: true}` or `%{ok: false, error: term}` (old text must match once) |
   | `:chat`   | `:chatted`            | `%{content, tool_calls, model, tokens_in, tokens_out}` or `%{error: reason}` |
@@ -24,7 +25,7 @@ defmodule Xeito.Effect do
   defstruct [:id, :kind, :args, :reply]
 
   @type kind ::
-          :bash | :read | :write | :edit | :chat | :machine | :decide | :tier | :probe | :swap
+          :bash | :read | :fetch | :write | :edit | :chat | :machine | :decide | :tier | :probe | :swap
   @type t :: %__MODULE__{id: String.t() | nil, kind: kind(), args: map(), reply: term()}
 
   # Result types by kind, as in the table above. Runners may add keys (a shaped output's `ref`,
@@ -87,6 +88,10 @@ defmodule Xeito.Effect do
       reply: Keyword.get(opts, :reply, :read)
     }
   end
+
+  @doc "Fetch a URL (`Xeito.Effects.Fetch`): its body as Markdown. Options: `:reply`."
+  @spec fetch(String.t(), keyword()) :: t()
+  def fetch(url, opts \\ []), do: %__MODULE__{kind: :fetch, args: %{url: url}, reply: Keyword.get(opts, :reply, :fetched)}
 
   @doc "Write a file inside the workspace `:cwd`."
   @spec write(String.t(), iodata(), keyword()) :: t()

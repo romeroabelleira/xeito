@@ -15,6 +15,8 @@ defmodule Xeito.Policy do
     * `:remote` — `:forbidden` (default) or `:allowed`, for every off-box tier
     * `:locality` — `:local_only` (default) or `:public`. `:local_only` inputs never leave the
       machine, whatever `:remote` says
+    * `:network` — whether the `fetch` tool may reach the network: `:forbidden` (default),
+      `:allowed`, or a list of host names (each with its subdomains); `Xeito.Effects.Fetch`
     * `:max_usd_per_run` — off-box spend limit per parent run (default 0.50)
     * `:max_swaps_per_run` — local-model loads per parent run (default 3)
     * `:unloaded_accept` — when the local model is not loaded, accept an earlier tier's answer
@@ -30,6 +32,7 @@ defmodule Xeito.Policy do
   @defaults %{
     remote: :forbidden,
     locality: :local_only,
+    network: :forbidden,
     max_usd_per_run: 0.50,
     max_swaps_per_run: 3,
     unloaded_accept: 0.6,

@@ -6,6 +6,7 @@ defmodule Xeito.Session.OneShotTest do
   alias Xeito.Decisions.Triage
   alias Xeito.Machines.Chat
   alias Xeito.Machines.RunTests
+  alias Xeito.Machines.SelfRefine
   alias Xeito.Session.OneShot
 
   @moduletag :tmp_dir
@@ -42,8 +43,8 @@ defmodule Xeito.Session.OneShotTest do
       assert %{tools: ["read"], skill_candidates: []} = prepare!("hi", [tools: ["read"]], state(dir)).input
       assert %{tools: ["read", "skill"]} = prepare!("hi", [tools: ["read", "skill"]], state(dir)).input
 
-      assert {:error, "unknown tool \"fetch\"; the tools are read, write, edit, bash, skill"} =
-               OneShot.prepare("hi", [tools: ["read", "fetch"]], state(dir))
+      assert {:error, "unknown tool \"fly\"; the tools are read, write, edit, bash, skill, fetch"} =
+               OneShot.prepare("hi", [tools: ["read", "fly"]], state(dir))
     end
 
     test "a skill: its instructions with the text as the request, in a chat turn", %{tmp_dir: dir} do
@@ -111,6 +112,13 @@ defmodule Xeito.Session.OneShotTest do
       refute input.prompt =~ "Short sentences"
 
       assert {:error, "no context named \"nope\" in " <> _} = OneShot.prepare("hi", [contexts: ["nope"]], state(dir))
+    end
+
+    test "the self-refine machine, by name: the text as its request, under the session's system prompt", %{tmp_dir: dir} do
+      assert %{machine: SelfRefine, input: input, reason: "one-shot machine:self_refine"} =
+               prepare!("Condense this.", [machine: "self_refine"], state(dir))
+
+      assert %{request: "Condense this.", system: "sys", cwd: ^dir} = input
     end
 
     test "reason: names the run, as /skill: does", %{tmp_dir: dir} do

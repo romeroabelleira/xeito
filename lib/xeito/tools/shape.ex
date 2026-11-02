@@ -9,6 +9,7 @@ defmodule Xeito.Tools.Shape do
     * **Search results** (`grep`, `rg`): grouped by file, capped per file and in total.
     * **Large file reads**: dependency and generated files (`third_party?/1`) become an outline
       or their first part past 400 lines; the project's own files stay whole up to 2,000 lines.
+    * **Fetched pages**: cut like a third-party file, to their first part past 400 lines.
 
   Shaped shell text ends with how to read the full output back (`read` with `result:`). Output
   that shaping would not shorten by at least 20% is left alone.
@@ -51,6 +52,13 @@ defmodule Xeito.Tools.Shape do
   end
 
   def shape(_effect, result), do: result
+
+  @doc "Shortens a fetched page (`Xeito.Effects.Fetch`) as a third-party file: the host stands for the path."
+  @spec fetched(Effect.t(), map()) :: map()
+  def fetched(%Effect{args: %{url: url}}, %{ok: true, content: content} = result) when is_binary(content),
+    do: read(Path.join("deps", URI.parse(url).host || "page"), content, result)
+
+  def fetched(_effect, result), do: result
 
   # An outline, symbol, line range or stored result is exactly what was asked for.
   defp explicit?(args), do: Enum.any?([:outline, :symbol, :lines, :result], &Map.has_key?(args, &1))

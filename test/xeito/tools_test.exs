@@ -121,6 +121,28 @@ defmodule Xeito.ToolsTest do
     assert Tools.result_text(%{something: 1}) == "%{something: 1}"
   end
 
+  test "names_for/1: fetch only where the run's network setting allows it" do
+    assert Tools.names_for(%{network: :forbidden}) == ~w(read write edit bash)
+    assert Tools.names_for(%{network: :allowed}) == ~w(read write edit bash fetch)
+    assert Tools.names_for(%{network: ["a.test"], skills: [%{name: "a"}]}) == ~w(read write edit bash skill fetch)
+    assert Tools.names_for(%{network: :allowed, tools: ~w(fetch)}) == ~w(fetch)
+    assert Tools.names_for(%{tools: ~w(fetch)}) == []
+  end
+
+  test "the fetch tool: a URL becomes a fetch effect answered as a tool result; without a URL, bad arguments" do
+    ctx = %{cwd: "/w", network: :allowed}
+
+    assert {:ok, %Effect{kind: :fetch, args: %{url: "https://a.test/x"}, reply: :tool_done}} =
+             Tools.to_effect(%{name: "fetch", arguments: %{"url" => "https://a.test/x"}}, ctx)
+
+    assert {:error, "invalid arguments for fetch" <> _} = Tools.to_effect(%{name: "fetch", arguments: %{}}, ctx)
+
+    assert {:error, "unknown tool \"fetch\"" <> _} =
+             Tools.to_effect(%{name: "fetch", arguments: %{"url" => "https://a.test"}}, %{cwd: "/w"})
+
+    assert [%{function: %{name: "fetch"}}] = Tools.specs(["fetch"])
+  end
+
   test "names_for/1: the core tools, skill with skills, none when off, only those listed" do
     assert Tools.names_for(%{}) == ~w(read write edit bash)
     assert Tools.names_for(%{skills: [%{name: "a"}]}) == ~w(read write edit bash skill)
