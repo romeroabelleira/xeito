@@ -48,6 +48,9 @@ defmodule Xeito.MixProject do
       # Runs shell commands so a timeout or a halt stops them with their process group
       # (Xeito.Effects.OsCommand); a C++ port program, built with the dependencies.
       {:erlexec, "~> 2.5"},
+      # Evaluates the model's scripts against an allow-list, with reduction, heap and time limits
+      # (Xeito.Scripts); the scripts run in a separate small VM started through erlexec (P4h).
+      {:dune, "~> 0.3.18"},
       # The TUI client only; not started with the daemon (mix xeito.tui starts it).
       {:term_ui, "~> 1.0", runtime: false},
       {:plug, "~> 1.20", only: :test},

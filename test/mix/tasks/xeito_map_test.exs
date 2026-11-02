@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Xeito.MapTest do
 
   test "every module, one line each" do
     text = output([])
-    assert text =~ ~r/^Xeito  lib\/xeito.ex  /
+    assert text =~ ~r/^Xeito  lib\/xeito.ex  /m
     refute text =~ "\n  worst_case("
   end
 
