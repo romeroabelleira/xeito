@@ -47,6 +47,14 @@ defmodule Xeito.Scripts.VmTest do
     assert message =~ "ArithmeticError"
   end
 
+  test "watch_parent/3 waits while the daemon's OS process lives and acts once it is gone" do
+    assert Vm.parent_alive?(System.pid())
+    refute Vm.parent_alive?("4000000000")
+    test = self()
+    Vm.watch_parent("4000000000", 10, fn -> send(test, :gone) end)
+    assert_received :gone
+  end
+
   test "calling the API outside a running script raises, which is what the Api never does inside one" do
     assert_raise RuntimeError, "no script is running", fn -> Vm.call("read", ["x"]) end
   end

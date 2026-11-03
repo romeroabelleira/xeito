@@ -71,6 +71,7 @@ defmodule Xeito.Client.Render do
   defp requested("bash", %{"cmd" => cmd}, pad), do: "#{pad}  $ #{cmd}\n"
   defp requested(kind, args, pad) when kind in ~w(read write edit), do: file_requested(kind, args, pad)
   defp requested("machine", %{"machine" => m}, pad), do: "#{pad}  ↳ delegating to #{short(m)}\n"
+  defp requested("mcp", %{"server" => server, "tool" => tool}, pad), do: "#{pad}  ⇄ #{server}.#{tool}\n"
   defp requested("chat", _args, pad), do: pad
   defp requested(_kind, _args, _pad), do: ""
 

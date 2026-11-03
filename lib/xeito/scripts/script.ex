@@ -14,6 +14,8 @@ defmodule Script do
   defdelegate decide(type, input), to: Api
   defdelegate classify(questions, state), to: Api
   defdelegate remember(id, attrs), to: Api
+  defdelegate mcp(server, tool, args), to: Api
+  defdelegate search_tools(query), to: Api
   defdelegate text(value), to: Api
   defdelegate now(), to: Api
   defdelegate random(), to: Api

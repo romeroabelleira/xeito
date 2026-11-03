@@ -15,6 +15,7 @@ defmodule Xeito.Effect do
   | `:now`    | `:now`                | `%{value: unix_ms}`: the runner's clock, which a script has no other way to read |
   | `:random` | `:random`             | `%{value: float}`: the runner's randomness, in `[0, 1)` |
   | `:remember` | `:remembered`       | `%{ok: true}` or `%{ok: false, error: term}`: an object written to the run's log by a script |
+  | `:mcp`    | `:mcp_done`           | `%{ok: true, content: text}` or `%{ok: false, error: text}`: a tool of an MCP server (`Xeito.Mcp.Servers`) |
   | `:chat`   | `:chatted`            | `%{content, tool_calls, model, tokens_in, tokens_out}` or `%{error: reason}` |
   | `:machine`| `:child_done`         | `%{run_id, status, state, ctx}` of a child run of another machine |
   | `:decide` | `{:decided, value}`   | `%{value: term}`                         |
@@ -43,6 +44,7 @@ defmodule Xeito.Effect do
           | :now
           | :random
           | :remember
+          | :mcp
           | :chat
           | :machine
           | :decide
@@ -73,6 +75,7 @@ defmodule Xeito.Effect do
   """
   @spec replay(t()) :: :safe | :unsafe
   def replay(%__MODULE__{kind: :edit}), do: :unsafe
+  def replay(%__MODULE__{kind: :mcp, args: %{risk: risk}}), do: if(risk == :safe, do: :safe, else: :unsafe)
 
   def replay(%__MODULE__{kind: :bash, args: %{cmd: cmd}}), do: if(Risk.repeatable?(cmd), do: :safe, else: :unsafe)
 
@@ -141,6 +144,21 @@ defmodule Xeito.Effect do
   @spec remember(String.t(), String.t(), map()) :: t()
   def remember(id, type, attrs),
     do: %__MODULE__{kind: :remember, args: %{id: id, type: type, attrs: attrs}, reply: :remembered}
+
+  @doc """
+  Call `tool` on MCP server `server` with `args`, for workspace `:cwd` (`Xeito.Mcp.Servers`).
+  `:risk` is what the tool's annotations let the rules decide (`Xeito.Mcp.Tool.risk/1`,
+  default `:review`), logged with the request and what a replay goes by: a read-only tool may
+  run again. Options: `:reply`.
+  """
+  @spec mcp(String.t(), String.t(), map(), keyword()) :: t()
+  def mcp(server, tool, args, opts \\ []) do
+    %__MODULE__{
+      kind: :mcp,
+      args: %{server: server, tool: tool, args: args, cwd: opts[:cwd], risk: Keyword.get(opts, :risk, :review)},
+      reply: Keyword.get(opts, :reply, :mcp_done)
+    }
+  end
 
   @doc "A reading of the runner's randomness (a float in `[0, 1)`), for a script."
   @spec random() :: t()

@@ -13,7 +13,10 @@ defmodule Xeito.Scripts.Api do
   registered decision type by name (`"triage"`) and `classify/2` one ad-hoc decision per
   question (`Xeito.Decisions.AdHoc`), each answered as `%{"value" => v, "confidence" => c,
   "actor" => a, "model" => m, "probabilities" => %{}}`; `remember/2` writes an object to the
-  run's log (its `"type"` attribute is the object's type). `text/1` adds a line to the script's
+  run's log (its `"type"` attribute is the object's type). `mcp/3` calls a tool of one of the
+  workspace's MCP servers (`Xeito.Mcp`) and gives `%{"ok" => true, "content" => text}` or an
+  error; only a read-only, closed-world tool runs from a script, and `search_tools/1` finds
+  tools by words. `text/1` adds a line to the script's
   output for the model (the last value of the script is output, too) and returns it. `now/0`
   (Unix milliseconds) and `random/0` come from the runner as effects of their own, so a replay
   sees what the first run saw. `parallel/3` maps `fun` over `items`, at most `max:` (4) at a
@@ -42,6 +45,12 @@ defmodule Xeito.Scripts.Api do
 
   @spec remember(String.t(), map()) :: map()
   def remember(id, attrs), do: Vm.call("remember", [id, attrs])
+
+  @spec mcp(String.t(), String.t(), map()) :: map()
+  def mcp(server, tool, args), do: Vm.call("mcp", [server, tool, args])
+
+  @spec search_tools(String.t()) :: [map()]
+  def search_tools(query), do: Vm.call("search_tools", [query])
 
   @spec text(term()) :: term()
   def text(value), do: Vm.call("text", [value])

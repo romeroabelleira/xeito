@@ -27,6 +27,19 @@ defmodule Xeito.EffectTest do
     assert Effect.replay(Effect.remember("issue:42", "issue", %{})) == :safe
   end
 
+  test "mcp/4: a tool of an MCP server, with what its annotations let the rules decide; only a read-only one may run again" do
+    assert %Effect{
+             kind: :mcp,
+             args: %{server: "fx", tool: "echo", args: %{"text" => "x"}, cwd: "/w", risk: :review},
+             reply: :mcp_done
+           } =
+             Effect.mcp("fx", "echo", %{"text" => "x"}, cwd: "/w")
+
+    assert Effect.replay(Effect.mcp("fx", "echo", %{}, risk: :safe)) == :safe
+    assert Effect.replay(Effect.mcp("fx", "wipe", %{}, risk: :review)) == :unsafe
+    assert Effect.replay(Effect.mcp("fx", "wipe", %{})) == :unsafe
+  end
+
   test "now/0 and random/0: a reading of the runner's clock or randomness, logged so a replay sees it" do
     assert %Effect{kind: :now, args: %{}, reply: :now} = Effect.now()
     assert %Effect{kind: :random, args: %{}, reply: :random} = Effect.random()

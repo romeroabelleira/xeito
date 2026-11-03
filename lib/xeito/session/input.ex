@@ -14,6 +14,7 @@ defmodule Xeito.Session.Input do
   alias Xeito.Machines.RunTests
   alias Xeito.Machines.SelfRefine
   alias Xeito.Machines.Shell
+  alias Xeito.Mcp
   alias Xeito.Policy
   alias Xeito.Session
   alias Xeito.Session.ChatModel
@@ -45,6 +46,7 @@ defmodule Xeito.Session.Input do
     # Outside the daemon there is no worker and the cast goes nowhere.
     Worker.wanted(skills)
     %{listed: listed, candidates: candidates} = Skills.for_turn(skills, s.cwd, text)
+    {mcp, mcp_error} = Mcp.tools(s.cwd)
 
     then(
       %{
@@ -52,9 +54,10 @@ defmodule Xeito.Session.Input do
         prompt: text,
         messages: s.history,
         verify: Router.quick_check_command(s.cwd),
-        system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(listed),
+        system: s.system <> repo_map(s.cwd) <> Skills.prompt_section(listed) <> Mcp.prompt_section(mcp, mcp_error),
         context: chat_context(s),
         skills: Enum.map(skills, &Map.take(&1, [:name, :dir])),
+        mcp: Mcp.direct(mcp),
         network: Policy.effective().network,
         skill_candidates: Enum.map(candidates, &Map.take(&1, [:name, :description]))
       },

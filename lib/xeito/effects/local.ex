@@ -7,6 +7,8 @@ defmodule Xeito.Effects.Local do
       timeout: `exit_status: 124`, `timed_out: true`, output so far; the command and every
       process it started are stopped.
     * `fetch` gets a URL as Markdown (`Xeito.Effects.Fetch`), where the policy's `network` allows it.
+    * `mcp` calls a tool of one of the workspace's MCP servers (`Xeito.Mcp.Servers`): the
+      result's text, or the tool's own error.
     * `script` runs a program in the session's sandbox (`Xeito.Effects.Script`), its calls as
       child effects of the run, and its changes as one undo step (the children record none:
       `undo: false`); `now` and `random` read the clock and randomness for it, and `remember`
@@ -38,6 +40,8 @@ defmodule Xeito.Effects.Local do
   alias Xeito.Effects.Script
   alias Xeito.Escalation
   alias Xeito.Log
+  alias Xeito.Mcp.Servers
+  alias Xeito.Mcp.Tool
   alias Xeito.Policy
   alias Xeito.Run
   alias Xeito.RunSupervisor
@@ -49,7 +53,10 @@ defmodule Xeito.Effects.Local do
 
   @impl true
   def run(%Effect{kind: :read} = effect, opts), do: file_effect(effect, opts)
-  def run(%Effect{kind: kind} = effect, opts) when kind in [:fetch, :now, :random, :remember], do: delegated(effect, opts)
+
+  def run(%Effect{kind: kind} = effect, opts) when kind in [:fetch, :now, :random, :remember, :mcp],
+    do: delegated(effect, opts)
+
   def run(%Effect{kind: kind} = effect, opts) when kind in [:write, :edit, :bash, :script], do: step(effect, opts)
 
   def run(%Effect{kind: kind} = effect, opts) when kind in [:decide, :tier, :probe, :swap],
@@ -64,6 +71,17 @@ defmodule Xeito.Effects.Local do
   defp delegated(%Effect{kind: :now}, _opts), do: %{value: System.system_time(:millisecond)}
   defp delegated(%Effect{kind: :remember} = effect, opts), do: remember(effect, opts)
   defp delegated(%Effect{kind: :random}, _opts), do: %{value: :rand.uniform()}
+  defp delegated(%Effect{kind: :mcp} = effect, _opts), do: effect |> Shape.shape(mcp(effect)) |> with_ref(effect)
+
+  # A tool's own error (`isError`) is the result's text; a protocol failure is its reason.
+  defp mcp(%Effect{args: %{server: server, tool: tool, args: args} = a}) do
+    case Servers.call(workspace!(a), server, tool, args) do
+      {:ok, %{"isError" => true} = result} -> %{ok: false, error: Tool.text(result)}
+      {:ok, result} -> %{ok: true, content: Tool.text(result)}
+      {:error, reason} when is_binary(reason) -> %{ok: false, error: reason}
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+    end
+  end
 
   # A change requested by a run is recorded as an undo step (`Xeito.Undo`) unless `undo: false`.
   defp step(%Effect{id: id, args: args} = effect, opts) do
@@ -84,7 +102,8 @@ defmodule Xeito.Effects.Local do
       log ->
         Log.put_object(log, args.id, "note", %{kind: args.type, attrs: args.attrs})
         if opts[:run_id], do: Log.relate(log, args.id, opts[:run_id], "part_of")
-        if parent = id && Effect.parent(id), do: Log.relate(log, args.id, parent, "from")
+        parent = id && Effect.parent(id)
+        if parent, do: Log.relate(log, args.id, parent, "from")
         %{ok: true}
     end
   end

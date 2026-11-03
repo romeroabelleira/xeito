@@ -50,6 +50,7 @@ defmodule Xeito.Client.RenderTest do
   describe "requested effects" do
     test "bash, write, delegation, and a chat call that only indents its streamed text" do
       assert requested("bash", %{"cmd" => "mix test"}) == "  $ mix test\n"
+      assert requested("mcp", %{"server" => "fx", "tool" => "echo", "args" => %{}}) == "  ⇄ fx.echo\n"
       assert requested("write", %{"path" => "a.ex", "content" => "x\ny"}) == "  write a.ex (2 lines)\n"
       assert requested("write", %{"path" => "a.ex"}) == "  write a.ex (0 lines)\n"
       assert requested("machine", %{"machine" => "Elixir.Xeito.Machines.Fix"}) == "  ↳ delegating to Fix\n"

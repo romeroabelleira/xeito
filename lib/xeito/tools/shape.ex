@@ -10,7 +10,7 @@ defmodule Xeito.Tools.Shape do
     * **Large file reads**: dependency and generated files (`third_party?/1`) become an outline
       or their first part past 400 lines; the project's own files stay whole up to 2,000 lines.
     * **Fetched pages**: cut like a third-party file, to their first part past 400 lines.
-    * **Script output** (`Xeito.Effects.Script`): as shell output.
+    * **Script and MCP tool output** (`Xeito.Effects.Script`, `Xeito.Mcp`): as shell output.
 
   Shaped shell text ends with how to read the full output back (`read` with `result:`). Output
   that shaping would not shorten by at least 20% is left alone.
@@ -34,28 +34,26 @@ defmodule Xeito.Tools.Shape do
 
   @doc "The result, with `:shaped` text added when shaping shortens it enough to matter."
   @spec shape(Effect.t(), map()) :: map()
-  def shape(%Effect{kind: :bash, args: args} = effect, %{output: output} = result) when is_binary(output) do
-    {text, before, now} = bash(args.cmd, output)
-
-    if shorter?(output, text),
-      do:
-        Map.put(
-          result,
-          :shaped,
-          "exit status #{result.exit_status}\n" <> text <> footer(effect, before, now)
-        ),
-      else: result
-  end
-
-  def shape(%Effect{kind: :script} = effect, %{ok: true, content: content} = result) when is_binary(content),
-    do: script(effect, content, result)
+  def shape(%Effect{kind: :bash} = effect, %{output: output} = result) when is_binary(output),
+    do: shell(effect, output, result)
 
   # --- shell output --------------------------------------------------------------------------
   def shape(%Effect{kind: :read, args: args}, %{ok: true, content: content} = result) when is_binary(content) do
     if explicit?(args), do: result, else: read(args.path, content, result)
   end
 
+  def shape(%Effect{kind: kind} = effect, %{ok: true, content: content} = result)
+      when kind in [:script, :mcp] and is_binary(content), do: script(effect, content, result)
+
   def shape(_effect, result), do: result
+
+  defp shell(%Effect{args: args} = effect, output, result) do
+    {text, before, now} = bash(args.cmd, output)
+
+    if shorter?(output, text),
+      do: Map.put(result, :shaped, "exit status #{result.exit_status}\n" <> text <> footer(effect, before, now)),
+      else: result
+  end
 
   @doc "Shortens a fetched page (`Xeito.Effects.Fetch`) as a third-party file: the host stands for the path."
   @spec fetched(Effect.t(), map()) :: map()

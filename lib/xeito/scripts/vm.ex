@@ -7,7 +7,9 @@ defmodule Xeito.Scripts.Vm do
       and serves every `Xeito.Scripts.Api` call the script makes with `on_call.(name, args)`,
       in order, while the evaluation runs. It returns the script's last value, or why it failed.
     * `main/0` is the entry point of the separate VM `Xeito.Scripts.Sandbox` starts: it speaks
-      `Xeito.Scripts.Protocol` on stdin and stdout and serves calls by asking the daemon.
+      `Xeito.Scripts.Protocol` on stdin and stdout and serves calls by asking the daemon, and
+      halts when the stream ends or the daemon's OS pid (`-xeito_parent`) is gone
+      (`watch_parent/3`), so a daemon killed outright leaves no VM behind.
 
   A script that fails any way (a restricted call, the reductions, memory or time limits, an
   exception, a syntax error, or a call the runner refused) is reported, never raised.
@@ -95,14 +97,41 @@ defmodule Xeito.Scripts.Vm do
   The separate VM's entry point: `ready`, then one `run` message at a time from `device` (stdin),
   calls and the outcome back on it; ends when the daemon closes the stream.
   """
+  @watch_ms 2_000
+
   @spec main() :: no_return()
-  def main, do: main(:stdio)
+  def main do
+    watch(:init.get_argument(:xeito_parent))
+    main(:stdio)
+  end
+
+  # Halts this VM once the daemon that started it (`-xeito_parent <os pid>`) is gone.
+  defp watch({:ok, [[parent]]}), do: spawn(fn -> watch_parent(to_string(parent), @watch_ms, &halt/0) end)
+  defp watch(_none), do: :ok
 
   @spec main(IO.device()) :: no_return()
   def main(device) do
     serve_stream(device)
-    System.halt(0)
+    halt()
   end
+
+  @spec halt() :: no_return()
+  defp halt, do: System.halt(0)
+
+  @doc "Calls `on_gone` once OS process `os_pid` no longer exists, checking every `interval` ms."
+  @spec watch_parent(String.t(), pos_integer(), (-> term())) :: term()
+  def watch_parent(os_pid, interval, on_gone) do
+    if parent_alive?(os_pid) do
+      Process.sleep(interval)
+      watch_parent(os_pid, interval, on_gone)
+    else
+      on_gone.()
+    end
+  end
+
+  @doc "Whether OS process `os_pid` exists (`kill -0`)."
+  @spec parent_alive?(String.t()) :: boolean()
+  def parent_alive?(os_pid), do: match?({_, 0}, System.cmd("kill", ["-0", os_pid], stderr_to_stdout: true))
 
   @doc "Serves `run` messages from `device` until it ends: what `main/1` does, without halting."
   @spec serve_stream(IO.device()) :: :eof

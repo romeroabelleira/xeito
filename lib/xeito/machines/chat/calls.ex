@@ -55,10 +55,10 @@ defmodule Xeito.Machines.Chat.Calls do
   @spec valid(map(), map()) :: [map()]
   def valid(message, ctx), do: message |> sort(ctx) |> elem(0)
 
-  @doc "Whether there is a next call and its risk (`Xeito.Tools.risky?/1`) is `risky`."
-  @spec next_is?([map()], boolean()) :: boolean()
-  def next_is?([call | _], risky), do: Tools.risky?(call) == risky
-  def next_is?([], _risky), do: false
+  @doc "Whether there is a next call and what stands before it (`Xeito.Tools.gate/2`) is `gate`."
+  @spec next_is?([map()], :risk | :human | :run, map()) :: boolean()
+  def next_is?([call | _], gate, ctx), do: Tools.gate(call, ctx) == gate
+  def next_is?([], _gate, _ctx), do: false
 
   @doc "Records a reply whose valid calls are `valid`: the calls seen, the invalid streak, its opening."
   @spec remember(map(), map(), [map()]) :: map()

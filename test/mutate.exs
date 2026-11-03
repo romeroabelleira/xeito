@@ -38,6 +38,10 @@
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
   # Which commands a script may run, and when a script is stopped.
   "lib/xeito/effects/script.ex" => ["test/xeito/effects/script_test.exs"],
+  # Which MCP tools the model and the scripts may reach, and what the annotations let the rules decide.
+  "lib/xeito/mcp.ex" => ["test/xeito/mcp_test.exs"],
+  "lib/xeito/mcp/config.ex" => ["test/xeito/mcp/config_test.exs"],
+  "lib/xeito/mcp/tool.ex" => ["test/xeito/mcp/tool_test.exs"],
   # What a script's question may become: bounded options, so a script cannot make atoms at will.
   "lib/xeito/decisions/ad_hoc.ex" => ["test/xeito/decisions/ad_hoc_test.exs"],
   # What a script run again is fed, and when a call counts as the same one.

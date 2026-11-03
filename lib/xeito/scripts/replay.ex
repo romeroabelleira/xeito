@@ -94,11 +94,11 @@ defmodule Xeito.Scripts.Replay do
 
   @doc "A call in a few words, for a desync message."
   @spec describe(Effect.t()) :: String.t()
-  def describe(%Effect{kind: :read, args: %{path: path}}), do: ~s(read "#{path}")
+  def describe(%Effect{kind: kind, args: %{path: path}}) when kind in [:read, :write, :edit], do: ~s(#{kind} "#{path}")
   def describe(%Effect{kind: :bash, args: %{cmd: cmd}}), do: ~s(bash "#{cmd}")
-  def describe(%Effect{kind: kind, args: %{path: path}}) when kind in [:write, :edit], do: ~s(#{kind} "#{path}")
   def describe(%Effect{kind: :decide, args: %{decision: type}}), do: "decide " <> Xeito.Decision.describe(type)
   def describe(%Effect{kind: :remember, args: %{id: id}}), do: ~s(remember "#{id}")
+  def describe(%Effect{kind: :mcp, args: %{server: server, tool: tool}}), do: "mcp #{server}.#{tool}"
   def describe(%Effect{kind: kind}), do: Atom.to_string(kind)
 
   @doc "The finished scripts of a run, each with its logged result."

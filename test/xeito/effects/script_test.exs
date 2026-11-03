@@ -22,8 +22,23 @@ defmodule Xeito.Effects.ScriptTest do
           Local.run(effect, [])
         end
 
-    Script.start(%{Effect.script("1", cwd: ws, timeout: 10_000) | id: "r/e1"}, child: child, run_id: "r")
+    Script.start(%{Effect.script("1", cwd: ws, timeout: 10_000) | id: "r/e1"},
+      child: child,
+      run_id: "r",
+      tools: [],
+      network: :forbidden
+    )
   end
+
+  defp mcp_tool(name, annotations, exposure \\ :script),
+    do: %{
+      server: "fx",
+      name: name,
+      description: "does #{name}",
+      schema: %{},
+      annotations: annotations,
+      exposure: exposure
+    }
 
   describe "handle/3: one call from the script" do
     test "read and bash become child effects of the script's, and the script sees their results as JSON would",
@@ -220,6 +235,60 @@ defmodule Xeito.Effects.ScriptTest do
         assert {%{"ok" => false, "error" => "remember takes an id and a map of attributes"}, _} =
                  Script.handle("remember", args, acc(ws))
       end
+    end
+  end
+
+  describe "handle/3: MCP tools" do
+    @echo %{"readOnlyHint" => true, "openWorldHint" => false}
+    @lookup %{"readOnlyHint" => true, "openWorldHint" => true}
+    @wipe %{"destructiveHint" => true, "openWorldHint" => false}
+
+    test "a read-only, closed-world tool runs as a child mcp effect, safe by rule", %{tmp_dir: ws} do
+      child = fn "r/e1", %Effect{kind: :mcp} = effect ->
+        send(self(), {:called, effect})
+        %{ok: true, content: "hi", ref: "r/e1/c1"}
+      end
+
+      acc = %{acc(ws, child) | tools: [mcp_tool("echo", @echo)]}
+      assert {%{"ok" => true, "content" => "hi"}, _} = Script.handle("mcp", ["fx", "echo", %{"text" => "hi"}], acc)
+
+      assert_received {:called,
+                       %Effect{args: %{server: "fx", tool: "echo", args: %{"text" => "hi"}, cwd: ^ws, risk: :safe}}}
+    end
+
+    test "a tool that would need a review, an open-world one under a forbidding policy, or an unknown one fails the call",
+         %{tmp_dir: ws} do
+      acc = %{acc(ws) | tools: [mcp_tool("wipe", @wipe), mcp_tool("lookup", @lookup)]}
+
+      assert {%{"ok" => false, "error" => "not run: fx.wipe would need a review" <> _}, _} =
+               Script.handle("mcp", ["fx", "wipe", %{}], acc)
+
+      assert {%{"ok" => false, "error" => "refused: fx__lookup reaches outside" <> _}, _} =
+               Script.handle("mcp", ["fx", "lookup", %{}], acc)
+
+      # With the network allowed, an open-world read-only tool is still not safe by rule: it goes to review.
+      assert {%{"ok" => false, "error" => "not run: fx.lookup would need a review" <> _}, _} =
+               Script.handle("mcp", ["fx", "lookup", %{}], %{acc | network: :allowed})
+
+      assert {%{"ok" => false, "error" => "no MCP tool fx.nope; find tools" <> _}, _} =
+               Script.handle("mcp", ["fx", "nope", %{}], acc)
+
+      for args <- [["fx"], [1, "t", %{}], ["fx", 1, %{}], ["fx", "t", 1]] do
+        assert {%{"ok" => false, "error" => "mcp takes a server name, a tool name and an arguments map"}, _} =
+                 Script.handle("mcp", args, acc)
+      end
+
+      refute_received {:child, _, _}
+    end
+
+    test "search_tools finds tools by words, as the script can use them", %{tmp_dir: ws} do
+      acc = %{acc(ws) | tools: [mcp_tool("echo", @echo), mcp_tool("lookup", @lookup)]}
+
+      assert {[%{"server" => "fx", "name" => "lookup", "description" => "does lookup", "schema" => %{}}], _} =
+               Script.handle("search_tools", ["lookup"], acc)
+
+      assert {[], _} = Script.handle("search_tools", ["nothing"], acc)
+      assert {%{"ok" => false, "error" => "search_tools takes a query"}, _} = Script.handle("search_tools", [1], acc)
     end
   end
 

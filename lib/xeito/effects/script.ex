@@ -16,6 +16,10 @@ defmodule Xeito.Effects.Script do
       type per question, each a child `decide` effect through the escalation ladder; the script
       gets the value, the confidence, the actor and the model. `remember` writes an object to
       the run's log through a child effect.
+    * `mcp` calls a tool of the workspace's MCP servers (`Xeito.Mcp`) as a child effect, when
+      the rules call it safe (read-only, closed world; `Xeito.Mcp.Tool.risk/1`) and the policy
+      allows it (an open-world tool needs the `network` setting); `search_tools` finds tools by
+      words. The tools come from `opts[:tools]`, else the workspace's servers.
     * `text` adds a line to the output and streams it to clients as a command's output;
       `now` and `random` are child effects too (`Xeito.Effect.now/0`, `random/0`), so the log
       has what the script saw.
@@ -36,6 +40,9 @@ defmodule Xeito.Effects.Script do
   alias Xeito.Decisions.Risk
   alias Xeito.Effect
   alias Xeito.Log
+  alias Xeito.Mcp
+  alias Xeito.Mcp.Tool
+  alias Xeito.Policy
   alias Xeito.Run
   alias Xeito.Scripts.Allowlist
   alias Xeito.Scripts.Host
@@ -54,7 +61,9 @@ defmodule Xeito.Effects.Script do
           stopped: String.t() | nil,
           desync: String.t() | nil,
           replay: [{Effect.t(), map() | :interrupted}],
-          incomplete: Effect.t() | nil
+          incomplete: Effect.t() | nil,
+          tools: [Mcp.tool()],
+          network: term()
         }
 
   @type child :: (String.t(), Effect.t() -> map() | {:desync, String.t(), String.t()})
@@ -89,10 +98,11 @@ defmodule Xeito.Effects.Script do
   def start(%Effect{args: args} = effect, opts) do
     run_id = opts[:run_id]
     logged = logged(effect, opts)
+    cwd = args.cwd
 
     %{
       effect: effect,
-      cwd: Path.expand(args.cwd),
+      cwd: Path.expand(cwd),
       run_id: run_id,
       child: Keyword.get(opts, :child, &Run.child(run_id, &1, &2)),
       deadline: System.monotonic_time(:millisecond) + args.timeout,
@@ -100,7 +110,9 @@ defmodule Xeito.Effects.Script do
       stopped: sandbox_changed(effect),
       desync: nil,
       replay: logged.replay,
-      incomplete: logged.incomplete
+      incomplete: logged.incomplete,
+      tools: Keyword.get_lazy(opts, :tools, fn -> cwd |> Path.expand() |> Mcp.tools() |> elem(0) end),
+      network: Keyword.get_lazy(opts, :network, fn -> Policy.effective().network end)
     }
   end
 
@@ -136,11 +148,52 @@ defmodule Xeito.Effects.Script do
   defp extended("write", args, acc), do: write(args, acc)
   defp extended("edit", args, acc), do: edit(args, acc)
   defp extended("decide", args, acc), do: decide(args, acc)
+  # --- writes --------------------------------------------------------------------------------
   defp extended("classify", args, acc), do: classify(args, acc)
   defp extended("remember", args, acc), do: remember(args, acc)
-  defp extended(name, args, acc), do: runner(name, args, acc)
+  defp extended(name, args, acc), do: outside(name, args, acc)
 
-  # --- writes --------------------------------------------------------------------------------
+  defp outside("mcp", args, acc), do: mcp(args, acc)
+  defp outside("search_tools", args, acc), do: search_tools(args, acc)
+  defp outside(name, args, acc), do: runner(name, args, acc)
+
+  # --- MCP tools -----------------------------------------------------------------------------
+
+  # Only a tool the rules call safe (read-only, closed world) runs from a script; the policy's
+  # network setting decides about an open-world one, as for `fetch`.
+  defp mcp([server, name, args], acc) when is_binary(server) and is_binary(name) and is_map(args) do
+    case Enum.find(acc.tools, &(&1.server == server and &1.name == name)) do
+      nil -> {error("no MCP tool #{server}.#{name}; find tools with Script.search_tools(words)"), acc}
+      tool -> mcp_tool(tool, args, acc)
+    end
+  end
+
+  # --- decisions and objects -----------------------------------------------------------------
+
+  defp mcp(_args, acc), do: {error("mcp takes a server name, a tool name and an arguments map"), acc}
+
+  defp mcp_tool(tool, args, acc) do
+    cond do
+      refusal = Mcp.refusal(tool, acc.network) ->
+        {error(refusal), acc}
+
+      Tool.risk(tool) == :review ->
+        {error(
+           "not run: #{tool.server}.#{tool.name} would need a review (it is not a read-only, " <>
+             "closed-world tool), and a script may run only tools that are safe by rule"
+         ), acc}
+
+      true ->
+        child(acc, Effect.mcp(tool.server, tool.name, args, cwd: acc.cwd, risk: :safe))
+    end
+  end
+
+  defp search_tools([query], acc) when is_binary(query) do
+    found = for tool <- Tool.search(acc.tools, query), do: Map.take(tool, [:server, :name, :description, :schema])
+    {Protocol.jsonable(found), acc}
+  end
+
+  defp search_tools(_args, acc), do: {error("search_tools takes a query"), acc}
 
   defp write([path, content], acc) when is_binary(path) and is_binary(content),
     do: changed(acc, path, Effect.write(path, content, cwd: acc.cwd))
@@ -158,8 +211,6 @@ defmodule Xeito.Effects.Script do
       reason -> {error(reason), acc}
     end
   end
-
-  # --- decisions and objects -----------------------------------------------------------------
 
   defp decide([name, input], acc) when is_binary(name) and is_map(input) do
     case Enum.find(Decisions.all(), &(Decision.type!(&1).name == name)) do

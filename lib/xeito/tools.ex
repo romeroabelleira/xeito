@@ -14,10 +14,15 @@ defmodule Xeito.Tools do
   * `skill` is offered only when the run has skills and reads only inside the skill's directory.
   * `fetch` (a URL as Markdown, `Xeito.Effects.Fetch`) is offered only when the run's `network`
     (the policy's setting) is not `:forbidden`; what it returns is public input.
+  * An MCP tool with `direct` exposure (`ctx.mcp`, `Xeito.Mcp`) is offered as `server__tool`
+    and becomes an `mcp` effect; `gate/2` says whether a call runs as is, needs the Risk
+    decision (`bash`) or a human (an MCP tool the annotations do not call safe).
   * An unknown tool or bad arguments give `{:error, reason}` for the model, not a crash.
   """
 
   alias Xeito.Effect
+  alias Xeito.Mcp
+  alias Xeito.Mcp.Tool
 
   @names ~w(read write edit bash script)
 
@@ -69,7 +74,19 @@ defmodule Xeito.Tools do
   def names_for(%{tools: names} = ctx) when is_list(names),
     do: Enum.filter(names_for(Map.delete(ctx, :tools)), &(&1 in names))
 
-  def names_for(ctx), do: @names ++ optional("skill", skills?(ctx)) ++ optional("fetch", network?(ctx))
+  def names_for(ctx),
+    do:
+      @names ++
+        optional("skill", skills?(ctx)) ++ optional("fetch", network?(ctx)) ++ Enum.map(mcp(ctx), &Tool.model_name/1)
+
+  defp mcp(ctx), do: Map.get(ctx, :mcp, [])
+
+  @doc "What a model request offers: the names of the tools of `ctx`, and the specs of its direct MCP tools (`specs/1` takes both)."
+  @spec offered(map()) :: [String.t() | map()]
+  def offered(ctx) do
+    names = names_for(ctx)
+    names ++ for tool <- mcp(ctx), Tool.model_name(tool) in names, do: Tool.spec(tool)
+  end
 
   defp optional(name, true), do: [name]
   defp optional(_name, false), do: []
@@ -77,9 +94,9 @@ defmodule Xeito.Tools do
   defp skills?(ctx), do: match?(%{skills: [_ | _]}, ctx)
   defp network?(ctx), do: Map.get(ctx, :network, :forbidden) != :forbidden
 
-  @doc "OpenAI-style function specs for `names`, as accepted by Ollama's `tools` field."
-  @spec specs([String.t()]) :: [map()]
-  def specs(names \\ @names), do: Enum.filter(all_specs(), &(&1.function.name in names))
+  @doc "OpenAI-style function specs for `names`, as accepted by Ollama's `tools` field; a spec given as a map stands as it is."
+  @spec specs([String.t() | map()]) :: [map()]
+  def specs(names \\ @names), do: Enum.filter(all_specs(), &(&1.function.name in names)) ++ Enum.filter(names, &is_map/1)
 
   defp all_specs do
     [
@@ -216,7 +233,24 @@ defmodule Xeito.Tools do
   defp effect("skill", args, ctx), do: skill_effect(args, ctx)
   defp effect("fetch", %{"url" => url}, _ctx) when is_binary(url) and url != "", do: Effect.fetch(url, reply: :tool_done)
   defp effect("fetch", _args, _ctx), do: nil
-  defp effect(name, args, ctx), do: tool_effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
+
+  defp effect(name, args, ctx) do
+    case mcp_tool(name, ctx) do
+      nil -> tool_effect(name, args, cwd: Map.get(ctx, :cwd), reply: :tool_done)
+      tool -> mcp_effect(tool, args, ctx)
+    end
+  end
+
+  defp mcp_tool(name, ctx), do: Enum.find(mcp(ctx), &(Tool.model_name(&1) == name))
+
+  defp mcp_effect(tool, args, ctx) when is_map(args) do
+    case Mcp.refusal(tool, Map.get(ctx, :network, :forbidden)) do
+      nil -> Effect.mcp(tool.server, tool.name, args, cwd: Map.get(ctx, :cwd), risk: Tool.risk(tool), reply: :tool_done)
+      refusal -> {:error, refusal}
+    end
+  end
+
+  defp mcp_effect(_tool, _args, _ctx), do: nil
 
   defp skill_effect(%{"name" => skill} = args, ctx) when is_binary(skill) do
     case Enum.find(Map.get(ctx, :skills, []), &(&1.name == skill)) do
@@ -304,6 +338,20 @@ defmodule Xeito.Tools do
   @spec risky?(map()) :: boolean()
   def risky?(%{name: "bash"}), do: true
   def risky?(_call), do: false
+
+  @doc """
+  What stands between a call and its run: `:risk` (the Risk decision, for `bash`), `:human`
+  (an MCP tool whose annotations do not make it safe by rule), or `:run`.
+  """
+  @spec gate(map(), map()) :: :risk | :human | :run
+  def gate(%{name: "bash"}, _ctx), do: :risk
+
+  def gate(%{name: name}, ctx) do
+    case mcp_tool(name, ctx) do
+      nil -> :run
+      tool -> if Tool.risk(tool) == :safe, do: :run, else: :human
+    end
+  end
 
   @doc "The text a tool result is reported to the model as."
   @spec result_text(map()) :: String.t()

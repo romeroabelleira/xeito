@@ -2,7 +2,8 @@ defmodule Xeito.Scripts.Sandbox do
   @moduledoc """
   A script sandbox VM of its own: a small Erlang VM started through erlexec with this release's
   code, running `Xeito.Scripts.Vm.main/0`, that holds no credentials, is not a distributed node
-  and reaches the daemon only through `Xeito.Scripts.Protocol` on its stdin and stdout.
+  and reaches the daemon only through `Xeito.Scripts.Protocol` on its stdin and stdout. It is
+  told the daemon's OS pid and halts on its own once the daemon is gone.
 
     * `start/1` starts the VM and waits for `ready`; `stop/1` ends it with its process group.
     * `eval/5` sends a script with its limits and serves every call the script makes with
@@ -24,7 +25,9 @@ defmodule Xeito.Scripts.Sandbox do
   def start(opts \\ []) do
     erl = Path.join([to_string(:code.root_dir()), "bin", "erl"])
     paths = Enum.flat_map(:code.get_path(), &["-pa", to_string(&1)])
-    args = ["-noshell", "-elixir", "ansi_enabled", "false"] ++ paths ++ ["-eval", eval_main()]
+    # The VM is told the daemon's OS pid, so it halts when the daemon is gone (`Xeito.Scripts.Vm.watch_parent/3`).
+    args =
+      ["-noshell", "-elixir", "ansi_enabled", "false", "-xeito_parent", System.pid()] ++ paths ++ ["-eval", eval_main()]
 
     case :exec.run_link(Enum.map([erl | args], &to_charlist/1), [:stdin, :stdout, :stderr, {:group, 0}, :kill_group]) do
       {:ok, pid, os_pid} ->

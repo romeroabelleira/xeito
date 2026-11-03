@@ -5,6 +5,7 @@ defmodule Xeito.Machines.Chat do
       choosing_skill ──decided──┬─ earlier turns too long → summarising ──summarised──→ thinking
                                 └─ otherwise ───────────────────────────────────────→ thinking
       thinking ──chatted──┬─ tool calls, next is bash ─→ risk_check ─┬─ safe ──────→ executing
+                          ├─ tool calls, next needs a human (an MCP tool not safe by rule) → ask_human
                           ├─ tool calls, other ───────→ executing   ├─ review/abstain → ask_human
                           ├─ no tool calls, edited ───→ verifying   └─ forbidden ─→ thinking (told)
                           └─ no tool calls ───────────→ answered
@@ -26,6 +27,8 @@ defmodule Xeito.Machines.Chat do
   - `skill_candidates: [%{name, description}]`: `Xeito.Decisions.Skill` picks one (or none) in
     `choosing_skill`; it is suggested in the turn's user message, never in the system prompt.
   - `tools: false`: a plain answer with no tools; `tools: [name]`: only those tools.
+  - `mcp: [tool]`: the MCP tools with `direct` exposure (`Xeito.Mcp`), offered as `server__tool`;
+    one the annotations do not call safe goes to `ask_human` before it runs.
   - `context`: the context window in tokens (default `Chat.Request`'s `@default_context`).
   - `format`: a JSON Schema the answers (`thinking`, `wrapping_up`) must match.
 
@@ -48,7 +51,7 @@ defmodule Xeito.Machines.Chat do
   calls run, repeats), `Chat.Limits` (steps, fixes, stopping), `Chat.Checks` and `Chat.Steering`.
   """
 
-  use Xeito.Machine, version: "0.14.0"
+  use Xeito.Machine, version: "0.15.0"
 
   alias Xeito.Chat.Window
   alias Xeito.Effect
@@ -95,6 +98,7 @@ defmodule Xeito.Machines.Chat do
     on :chatted, to: :verifying, guard: :calls_at_limit_edited?, action: :record_calls_and_stop
     on :chatted, to: :wrapping_up, guard: :calls_at_limit?, action: :record_calls_and_stop
     on :chatted, to: :risk_check, guard: :calls_next_risky?, action: :queue_calls
+    on :chatted, to: :ask_human, guard: :calls_next_human?, action: :queue_calls
     on :chatted, to: :executing, guard: :calls_next_safe?, action: :queue_calls
     on :chatted, to: :verifying, guard: :invalid_again_edited?, action: :queue_calls_and_stop
     on :chatted, to: :thinking, guard: :invalid_again_unchanged?, action: :queue_calls_and_nudge
@@ -118,6 +122,7 @@ defmodule Xeito.Machines.Chat do
 
   state :executing, entry: :run_tool, timeout: 900_000 do
     on :tool_done, to: :risk_check, guard: :next_risky?, action: :record_result
+    on :tool_done, to: :ask_human, guard: :next_human?, action: :record_result
     on :tool_done, to: :executing, guard: :next_safe?, action: :record_result
     on :tool_done, to: :verifying, guard: :step_limit_edited?, action: :record_result_and_stop
     on :tool_done, to: :wrapping_up, guard: :step_limit?, action: :record_result_and_stop
@@ -158,7 +163,7 @@ defmodule Xeito.Machines.Chat do
   defdelegate default_system, to: Request
 
   @doc false
-  def ask_model(ctx), do: [Request.chat(ctx, Request.outgoing(ctx), [tools: Tools.names_for(ctx)] ++ format(ctx))]
+  def ask_model(ctx), do: [Request.chat(ctx, Request.outgoing(ctx), [tools: Tools.offered(ctx)] ++ format(ctx))]
 
   @doc false
   def ask_wrap_up(ctx),
@@ -216,10 +221,13 @@ defmodule Xeito.Machines.Chat do
   def summary_failed?(ctx, message), do: chat_error?(ctx, message) or String.trim(Map.get(message, :content) || "") == ""
 
   @doc false
-  def calls_next_risky?(ctx, message), do: Calls.next_is?(Calls.valid(message, ctx), true)
+  def calls_next_risky?(ctx, message), do: Calls.next_is?(Calls.valid(message, ctx), :risk, ctx)
 
   @doc false
-  def calls_next_safe?(ctx, message), do: Calls.next_is?(Calls.valid(message, ctx), false)
+  def calls_next_human?(ctx, message), do: Calls.next_is?(Calls.valid(message, ctx), :human, ctx)
+
+  @doc false
+  def calls_next_safe?(ctx, message), do: Calls.next_is?(Calls.valid(message, ctx), :run, ctx)
 
   @doc false
   def only_invalid_calls?(ctx, message), do: Map.get(message, :tool_calls, []) != [] and Calls.valid(message, ctx) == []
@@ -244,10 +252,13 @@ defmodule Xeito.Machines.Chat do
   def calls_at_limit?(ctx, message), do: Map.get(message, :tool_calls, []) != [] and Limits.last_step?(ctx)
 
   @doc false
-  def next_risky?(ctx, _result), do: Calls.next_is?(ctx.pending, true)
+  def next_risky?(ctx, _result), do: Calls.next_is?(ctx.pending, :risk, ctx)
 
   @doc false
-  def next_safe?(ctx, _result), do: Calls.next_is?(ctx.pending, false)
+  def next_human?(ctx, _result), do: Calls.next_is?(ctx.pending, :human, ctx)
+
+  @doc false
+  def next_safe?(ctx, _result), do: Calls.next_is?(ctx.pending, :run, ctx)
 
   @doc false
   def step_limit?(ctx, _data), do: Limits.at_limit?(ctx)

@@ -43,6 +43,7 @@ for the details; `mix xeito.map` lists every module with its public functions.
 - **message**: one entry of a conversation (Ollama's form, plus Xeito's bookkeeping keys); a **reply** is one model call's answer. `Xeito.Chat.Message`
 - **context window**: what a request may hold; old tool output is elided, then old turns summarised or dropped. `Xeito.Chat.Window`
 - **tools**: `read`, `write`, `edit`, `bash`, `script` (and `skill`, `fetch`), turned into effects. `Xeito.Tools`
+- **MCP**: the Model Context Protocol; a workspace's servers come from `.xeito/mcp.json`, each tool with an exposure (`script`, `deferred`, `direct`, `hidden`), called through a client library as effects. `Xeito.Mcp`
 - **script**: a program the model hands busywork to, run in a sandbox VM of the session's; each call it makes is a child effect of the script's, logged and gated. `Xeito.Effects.Script`, `Xeito.Scripts.Host`
 - **shaping**: shortening tool output before the model reads it, readable back by its ref. `Xeito.Tools.Shape`
 - **review**: a command Risk did not call safe waits for a human (`/approve`, `/deny`). `Xeito.Session.Allowed`

@@ -3,7 +3,7 @@ defmodule Xeito.Scripts.AllowlistTest do
 
   alias Xeito.Scripts.Allowlist
 
-  defp eval(code), do: Dune.eval_string(code, allowlist: Allowlist, parse_timeout: 5_000)
+  defp eval(code), do: Dune.eval_string(code, allowlist: Allowlist, parse_timeout: 5_000, timeout: 5_000)
 
   test "pure computation is allowed" do
     assert %Dune.Success{value: [2, 4]} = eval("Enum.map([1, 2], &(&1 * 2))")

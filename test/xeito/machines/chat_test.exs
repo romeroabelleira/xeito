@@ -496,6 +496,42 @@ defmodule Xeito.Machines.ChatTest do
     assert state_ms > Xeito.Tools.max_script_timeout_s() * 1_000 + 10_000
   end
 
+  test "a direct MCP tool the rules do not call safe waits for a human before it runs; a safe one runs at once" do
+    machine = Machine.fetch!(Chat)
+
+    wipe = %{
+      server: "fx",
+      name: "wipe",
+      description: "",
+      schema: %{},
+      annotations: %{"openWorldHint" => false},
+      exposure: :direct
+    }
+
+    echo = %{
+      server: "fx",
+      name: "echo",
+      description: "",
+      schema: %{},
+      annotations: %{"readOnlyHint" => true, "openWorldHint" => false},
+      exposure: :direct
+    }
+
+    ctx = ctx(%{mcp: [wipe, echo], network: :forbidden})
+    calls = [%{name: "fx__wipe", arguments: %{"target" => "x"}}, %{name: "fx__echo", arguments: %{"text" => "hi"}}]
+
+    assert {:ok, %{to: :ask_human, ctx: after_reply}} =
+             Engine.handle(machine, :thinking, ctx, :chatted, %{content: "", tool_calls: calls})
+
+    assert %{current: %{name: "fx__wipe"}, pending: [%{name: "fx__echo"}]} = after_reply
+
+    assert {:ok, %{to: :executing, effects: [%Effect{kind: :mcp, args: %{tool: "wipe", risk: :review}}]}} =
+             Engine.handle(machine, :ask_human, after_reply, :approved, %{})
+
+    assert {:ok, %{to: :executing, effects: [%Effect{kind: :mcp, args: %{tool: "echo", risk: :safe}}]}} =
+             Engine.handle(machine, :executing, after_reply, :tool_done, %{ok: true, content: "wiped x"})
+  end
+
   test "a script call runs in executing without a risk check: its commands are gated one by one" do
     call = %{name: "script", arguments: %{"program" => ~s|Script.bash("ls")|}}
     ctx = ctx(%{current: call, pending: []})

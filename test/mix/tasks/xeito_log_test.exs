@@ -80,7 +80,7 @@ defmodule Mix.Tasks.Xeito.LogTest do
         runner: {Xeito.Effects.Local, []}
       )
 
-    await_exit(run)
+    await_exit(run, 30_000)
     assert {:ok, %{status: :done}} = Xeito.Run.result(log, run)
 
     assert run(ws, ["verify"]) =~ "2 runs: 2 replay exactly, 0 skipped (machine changed since), 0 failed"

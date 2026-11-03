@@ -34,11 +34,17 @@ defmodule Xeito.Machines.Chat.CallsTest do
   end
 
   test "the next call's risk" do
-    assert Calls.next_is?([ls()], true)
-    refute Calls.next_is?([ls()], false)
-    assert Calls.next_is?([read("a")], false)
-    refute Calls.next_is?([], true)
-    refute Calls.next_is?([], false)
+    ctx = %{cwd: "/w"}
+    assert Calls.next_is?([ls()], :risk, ctx)
+    refute Calls.next_is?([ls()], :run, ctx)
+    assert Calls.next_is?([read("a")], :run, ctx)
+    refute Calls.next_is?([], :risk, ctx)
+    refute Calls.next_is?([], :run, ctx)
+
+    # An MCP tool the annotations do not call safe needs a human, not the Risk decision.
+    wipe = %{server: "fx", name: "wipe", description: "", schema: %{}, annotations: %{}, exposure: :direct}
+    assert Calls.next_is?([%{name: "fx__wipe", arguments: %{}}], :human, Map.put(ctx, :mcp, [wipe]))
+    refute Calls.next_is?([%{name: "fx__wipe", arguments: %{}}], :risk, Map.put(ctx, :mcp, [wipe]))
   end
 
   describe "remember" do

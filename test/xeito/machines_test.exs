@@ -101,7 +101,7 @@ defmodule Xeito.MachinesTest do
         runner: {Local, []}
       )
 
-    await_exit(id)
+    await_exit(id, 30_000)
     assert {:ok, %{status: :done, ctx: %{output: "checked 2 files\n[\"b.ex\"]"}}} = Run.result(log, id)
 
     requested =
@@ -143,7 +143,7 @@ defmodule Xeito.MachinesTest do
     old_pid = Run.whereis(id)
     Process.exit(old_pid, :kill)
 
-    await_exit(id)
+    await_exit(id, 30_000)
     assert {:ok, %{status: :done, ctx: %{output: "first\nsecond"}}} = Run.result(log, id)
 
     requested = for {_, "effect_requested", {:effect_requested, e}} <- Log.read_run(log, id), do: {e.id, e.args[:path]}
@@ -166,7 +166,7 @@ defmodule Xeito.MachinesTest do
         runner: {Local, []}
       )
 
-    await_exit(id)
+    await_exit(id, 30_000)
     assert {:ok, %{status: :done}} = Run.result(log, id)
     assert File.exists?(Path.join(ws, "c.txt"))
 

@@ -27,4 +27,13 @@ defmodule Xeito.Session.InputTest do
     File.write!(Path.join(dir, "AGENTS.md"), String.duplicate("a", 16_384))
     refute Input.system_prompt(dir) =~ "AGENTS.md continues"
   end
+
+  test "a chat turn's input carries the direct MCP tools and names the deferred ones; without servers, nothing", %{
+    tmp_dir: dir
+  } do
+    ws = Path.join(dir, "ws")
+    File.mkdir_p!(ws)
+    assert Input.system_prompt(ws) == Chat.default_system()
+    refute Chat.default_system() =~ "MCP tools"
+  end
 end

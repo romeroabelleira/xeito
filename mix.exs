@@ -51,9 +51,12 @@ defmodule Xeito.MixProject do
       # Evaluates the model's scripts against an allow-list, with reduction, heap and time limits
       # (Xeito.Scripts); the scripts run in a separate small VM started through erlexec (P4h).
       {:dune, "~> 0.3.18"},
+      # The MCP client (Xeito.Mcp.Anubis), chosen over arbor_mcp, tried side by side; LGPL-3.0.
+      {:anubis_mcp, "~> 2.2"},
       # The TUI client only; not started with the daemon (mix xeito.tui starts it).
       {:term_ui, "~> 1.0", runtime: false},
-      {:plug, "~> 1.20", only: :test},
+      # Also what anubis_mcp needs.
+      {:plug, "~> 1.20"},
       {:stream_data, "~> 1.4", only: [:dev, :test]},
       # Style: Styler rewrites on `mix format`; pinned to a minor version so new rewrites are a
       # deliberate upgrade. Credo keeps the checks Styler cannot fix (.credo.exs).

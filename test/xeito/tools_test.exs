@@ -135,6 +135,69 @@ defmodule Xeito.ToolsTest do
     assert Tools.result_text(%{something: 1}) == "%{something: 1}"
   end
 
+  describe "direct MCP tools (ctx.mcp)" do
+    defp mcp(name, annotations),
+      do: %{
+        server: "fx",
+        name: name,
+        description: "does #{name}",
+        schema: %{"type" => "object"},
+        annotations: annotations,
+        exposure: :direct
+      }
+
+    defp echo, do: mcp("echo", %{"readOnlyHint" => true, "openWorldHint" => false})
+    defp wipe, do: mcp("wipe", %{"destructiveHint" => true, "openWorldHint" => false})
+    defp lookup, do: mcp("lookup", %{"readOnlyHint" => true, "openWorldHint" => true})
+
+    test "are offered as server__tool, with their specs beside the names, and only those listed when tools are" do
+      ctx = %{cwd: "/w", mcp: [echo(), wipe()]}
+      assert Tools.names_for(ctx) == ~w(read write edit bash script fx__echo fx__wipe)
+      assert %{ctx | mcp: [echo()]} |> Map.put(:tools, ~w(read fx__echo)) |> Tools.names_for() == ~w(read fx__echo)
+
+      offered = Tools.offered(ctx)
+      assert ~w(read write edit bash script fx__echo fx__wipe) = Enum.filter(offered, &is_binary/1)
+
+      assert [%{function: %{name: "fx__echo", description: "does echo"}}, %{function: %{name: "fx__wipe"}}] =
+               Enum.filter(offered, &is_map/1)
+
+      assert [%{function: %{name: "read"}}, %{function: %{name: "fx__echo"}}] =
+               Tools.specs(["read", Xeito.Mcp.Tool.spec(echo())])
+    end
+
+    test "a call becomes an mcp effect with what the rules decide; an open-world tool needs the network setting" do
+      ctx = %{cwd: "/w", mcp: [echo(), wipe(), lookup()], network: :forbidden}
+
+      assert {:ok,
+              %Effect{
+                kind: :mcp,
+                args: %{server: "fx", tool: "echo", args: %{"text" => "x"}, cwd: "/w", risk: :safe},
+                reply: :tool_done
+              }} =
+               Tools.to_effect(%{name: "fx__echo", arguments: %{"text" => "x"}}, ctx)
+
+      assert {:ok, %Effect{args: %{risk: :review}}} = Tools.to_effect(%{name: "fx__wipe", arguments: %{}}, ctx)
+
+      assert {:error, "refused: fx__lookup reaches outside" <> _} =
+               Tools.to_effect(%{name: "fx__lookup", arguments: %{}}, ctx)
+
+      assert {:ok, %Effect{kind: :mcp}} =
+               Tools.to_effect(%{name: "fx__lookup", arguments: %{}}, %{ctx | network: :allowed})
+
+      assert {:error, "invalid arguments for fx__echo" <> _} = Tools.to_effect(%{name: "fx__echo", arguments: "x"}, ctx)
+      assert {:error, "unknown tool \"fx__nope\"" <> _} = Tools.to_effect(%{name: "fx__nope", arguments: %{}}, ctx)
+    end
+
+    test "gate/2: bash goes to the Risk decision, a tool safe by rule runs, any other MCP tool goes to a human" do
+      ctx = %{cwd: "/w", mcp: [echo(), wipe()]}
+      assert Tools.gate(%{name: "bash", arguments: %{"command" => "ls"}}, ctx) == :risk
+      assert Tools.gate(%{name: "read", arguments: %{"path" => "a"}}, ctx) == :run
+      assert Tools.gate(%{name: "fx__echo", arguments: %{}}, ctx) == :run
+      assert Tools.gate(%{name: "fx__wipe", arguments: %{}}, ctx) == :human
+      assert Tools.gate(%{name: "fx__wipe", arguments: %{}}, %{cwd: "/w"}) == :run
+    end
+  end
+
   test "refused/2: why a path may not be written, or nil" do
     assert Tools.refused("deps/x/a.ex", "/w") =~ "refused: deps/ holds fetched dependencies"
     assert Tools.refused("/w/.git/config", "/w") =~ "refused: .git/"

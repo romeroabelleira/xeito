@@ -65,8 +65,8 @@ defmodule Xeito.Case do
     {Xeito.Effects.Fake, fun: fun}
   end
 
-  @doc "Waits until the run process is gone."
-  def await_exit(run_id) do
-    eventually(fn -> Xeito.Run.whereis(run_id) == nil end)
+  @doc "Waits until the run process is gone (at most `timeout` ms; a run that starts a VM needs more than the default)."
+  def await_exit(run_id, timeout \\ 2_000) do
+    eventually(fn -> Xeito.Run.whereis(run_id) == nil end, timeout)
   end
 end
