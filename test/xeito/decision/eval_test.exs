@@ -29,6 +29,15 @@ defmodule Xeito.Decision.EvalTest do
     assert Eval.ece([r(:a, :b, 0.95), r(:a, :a, 0.95)]) == 0.45
   end
 
+  test "ECE is nil without confidences, and the metrics of a decider that gives none still compute" do
+    assert Eval.ece([]) == nil
+    assert Eval.ece([r(:a, :a, nil), r(:b, :b, nil)]) == nil
+    assert Eval.ece([r(:a, :a, nil), r(:b, :b, 1.0)]) == 0.0
+
+    m = Eval.metrics([r(:a, :a, nil), r(:b, :a, nil)], [:a, :b])
+    assert %{accuracy: 0.5, coverage: 1.0, ece: nil, ece_calibrated: nil} = m
+  end
+
   test "the gate compares the decision-model candidates with the local tier and the static rule" do
     metrics = %{
       local: %{accuracy: 0.9},

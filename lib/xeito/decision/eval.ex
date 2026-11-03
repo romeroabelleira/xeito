@@ -255,15 +255,17 @@ defmodule Xeito.Decision.Eval do
     |> mean()
   end
 
-  @doc "Expected calibration error over 10 equal-width confidence bins."
+  @doc "Expected calibration error over 10 equal-width confidence bins; `nil` when no result carries a confidence."
   @spec ece([map()]) :: float() | nil
-  def ece([]), do: nil
-
   def ece(results) do
-    n = length(results)
+    case Enum.filter(results, &is_number(&1.confidence)) do
+      [] -> nil
+      confident -> binned_ece(confident, length(results))
+    end
+  end
 
-    results
-    |> Enum.filter(&is_number(&1.confidence))
+  defp binned_ece(confident, n) do
+    confident
     |> Enum.group_by(&min(trunc(&1.confidence * 10), 9))
     |> Enum.map(fn {_bin, rs} ->
       acc = Enum.count(rs, &(&1.predicted == &1.label)) / length(rs)
