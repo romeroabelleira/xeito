@@ -59,7 +59,7 @@ defmodule Xeito.Source.ModuleMapTest do
   end
 
   test "modules/1: the application's modules under a prefix, sorted" do
-    assert [Xeito.Source, ModuleMap, Xeito.Source.ReadCost, Xeito.Source.RepoMap] ==
+    assert [Xeito.Source, ModuleMap, Xeito.Source.PlanCheck, Xeito.Source.ReadCost, Xeito.Source.RepoMap] ==
              ModuleMap.modules("Xeito.Source")
 
     assert Xeito.Allowance in ModuleMap.modules(nil)

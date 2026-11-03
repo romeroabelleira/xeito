@@ -1,6 +1,6 @@
 # Xeito — Implementation plan
 
-Status: living plan, last updated 2026-11-02 (weekly freshness check: [plan-review.md](plan-review.md); P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included, the Claude API direct, the frontier deciders measured; P4g, P4i and P4j done; P4k steps 1–6 done; P4h started; P4l, P5b and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
+Status: living plan, last updated 2026-11-03 (weekly freshness check: [plan-review.md](plan-review.md); P0–P3b done; P4 built, dogfooding; P4b–P4f built, remote chat included, the Claude API direct, the frontier deciders measured; P4g, P4i and P4j done; P4k steps 1–6 done; P4h started; P4l, P5b and PX planned) · Architecture: [architecture/00-overview.md](architecture/00-overview.md) · Design: [design.md](design.md)
 
 ## Guiding rules
 
@@ -84,7 +84,7 @@ gantt
 4. Build **llama.cpp**: a CPU build with AVX-512 (the small tier), plus Vulkan and HIP/ROCm builds for benchmarking against Ollama only.
    Run `llama-server` as a systemd *user* unit on `127.0.0.1:8081` ([09](architecture/09-reference-deployment.md#services)).
 5. Run upstream **`laya-serve`** (laya-multilingual) as a pinned Docker container on `127.0.0.1:8082` with an API key file, and measure its CPU latency.
-6. Download 2–3 small GGUF models, the candidates from [09](architecture/09-reference-deployment.md#tier-small-cpu). Record the SHA256 of each file in `models.lock`.
+6. Download 2–3 small GGUF models, the candidates from [09](architecture/09-reference-deployment.md#grammar-constrained-small-llm-p2-tier-removed-in-p4d). Record the SHA256 of each file in `models.lock`.
 7. Write `LICENSE` (Apache-2.0 recommended), `CONTRIBUTING.md` and a code of conduct.
 
 **Status:** done 2026-09-27 (planned 2026-10-19). CI is green on GitHub; only the optional ROCm benchmark is pending. See [bench 0](../bench/0-baseline.md).
@@ -115,8 +115,8 @@ gantt
 1. Build the `Xeito.Decision` DSL: inputs, closed output type, rules, deciders and thresholds ([03](architecture/03-typed-decisions.md)).
 2. Build the schema compiler: output type → JSON Schema → a backend-specific constraint (llama.cpp `json_schema`/GBNF, Ollama `format`, Anthropic tool schema).
 3. Implement two small-tier clients:
-   - `Xeito.Tiers.SystemOne`, which calls `/v1/systemone` (`laya-serve` now; any Jev-compatible backend later). It always pins `"model": "multilingual"`.
-   - `Xeito.Tiers.Small` (`Req` → llama-server), which returns the value plus **token log-probabilities** for the enum alternatives.
+   - `Xeito.Tiers.SystemOne` (renamed `Xeito.Backends.SystemOne` in P4d), which calls `/v1/systemone` (`laya-serve` now; any Jev-compatible backend later). It always pins `"model": "multilingual"`.
+   - `Xeito.Tiers.Small` (`Req` → llama-server; removed in P4d with the `small` tier), which returns the value plus **token log-probabilities** for the enum alternatives.
    Decision types compile to `Choice`/`Score`/`Noul` requests for the first client ([03](architecture/03-typed-decisions.md#system-one-models-an-external-ecosystem-to-plug-into-sept-2026)).
 4. Compute confidence: logprob-based as the primary source, self-consistency with k=3 as a fallback. Record both.
 5. Make abstention a value, and complete the compile-time check that decision values match transitions.
@@ -168,7 +168,7 @@ Inserted after P3. P2 showed that the small tiers need a stronger, calibrated ti
 
 **Decision:** keep Claude on the direct Anthropic tier, and add OpenRouter as a separate tier for open-weight models with logprobs.
 
-1. `Xeito.Tiers.OpenRouter`: chat completions with the decision's JSON Schema (`strict`), temperature 0, reasoning off, `logprobs`. Every request sets `provider.require_parameters`, `data_collection: "deny"` and `zdr` (default on); providers can be pinned.
+1. `Xeito.Tiers.OpenRouter` (renamed `Xeito.Backends.OpenRouter` in P4d): chat completions with the decision's JSON Schema (`strict`), temperature 0, reasoning off, `logprobs`. Every request sets `provider.require_parameters`, `data_collection: "deny"` and `zdr` (default on); providers can be pinned.
 2. Confidence from `top_logprobs` at the value, shared with the local large tier. Endpoints without logprobs yield a terminal result. Refusals are errors. Cost from `usage.cost`; provenance names the serving provider.
 3. Policy: `openrouter` and `remote` are *off-box tiers* under one gate (`remote:`), one locality rule and one spend budget. `Risk` never reaches either; `mix xeito.eval` skips them for types that forbid them.
 4. An `openrouter` state in the escalation machine (v1.1.0), so the path is logged and mined like any other tier.
@@ -550,7 +550,7 @@ A document nobody opens costs nothing; the steady cost is the prose inside the c
 6. **Tests mirrored to modules, and smaller modules.** `test/xeito/<path>_test.exs` for `lib/xeito/<path>.ex`. `Session`, `Tui` and the chat machine are split by responsibility, to at most about 400 lines a module.
 7. **Measure again, then decide on a documents repository.** If the measurement shows the documents still cost reads, the architecture, concepts, plan and bench reports move to a public `xeito-docs` repository (the content is public, unlike `xeito-local`), with a short `ROADMAP.md` left here, and `sync-repos.sh` and the guard hooks extended to it. The cost is that code and its documents no longer change in one commit; after steps 2–5, the code is the reference and the documents hold the reasons.
 
-**Status** (2026-10-16): steps 1–5 done. `.ignore`, `mix xeito.context` with its baseline (`bench/context/`), `GLOSSARY.md` with a test that every module it names exists and every top-level module is named, `mix xeito.map` (`Xeito.Source.ModuleMap`, from compiled docs and typespecs), `AGENTS.md` pointing to both. Moduledocs and comments across `lib/` rewritten as contracts, with no reference to a plan phase, bench report or document left (checked by comparing every file's syntax tree with the docs removed: no code changed). Types: `Xeito.Chat.Message` (messages and replies), `Xeito.Effect`'s results by kind, `Xeito.Tiers.config/0`; every public function has a spec. Dialyzer found one real mismatch on the way (a message without a role in `Xeito.Chat.Window`). Measured: prose per task down 38%, code and tests read down 6%; the total up 8%, the glossary being read for every task ([bench/context](../bench/context/README.md)).
+**Status:** done 2026-10-17 (steps 1–5 on 2026-10-16; steps 6 and 7 below). `.ignore`, `mix xeito.context` with its baseline (`bench/context/`), `GLOSSARY.md` with a test that every module it names exists and every top-level module is named, `mix xeito.map` (`Xeito.Source.ModuleMap`, from compiled docs and typespecs), `AGENTS.md` pointing to both. Moduledocs and comments across `lib/` rewritten as contracts, with no reference to a plan phase, bench report or document left (checked by comparing every file's syntax tree with the docs removed: no code changed). Types: `Xeito.Chat.Message` (messages and replies), `Xeito.Effect`'s results by kind, `Xeito.Tiers.config/0`; every public function has a spec. Dialyzer found one real mismatch on the way (a message without a role in `Xeito.Chat.Window`). Measured: prose per task down 38%, code and tests read down 6%; the total up 8%, the glossary being read for every task ([bench/context](../bench/context/README.md)).
 
 Step 6 done 2026-10-17. `Xeito.Session` (1,304 lines) is 447, with its commands, info commands, review, step mode, undo, the queue of lines typed while a turn runs, history and a turn's input in nine modules under `session/`; `Xeito.Tui` (990) is 386, with the banner, input editing, transcript, view, status line, status bar preferences and timers under `tui/`; `Xeito.Machines.Chat` (705) is 401, the statechart and its named functions, with requests, elision, transcript, calls, limits, checks and steering under `machines/chat/`. Behaviour unchanged; the chat machine's version and its Mermaid and SCXML exports are byte-identical. Splitting found the chat machine's mutated `guards` section had drifted from the guards (five were outside it); now it holds them all, and the four mutants that exposed are killed. Tests mirror the modules (`test/<path>_test.exs` for `lib/<path>.ex`), enforced by `Xeito.TestLayoutTest`, which lists the tests that span modules with what each covers. Measured: 12% fewer tokens per task than the baseline, 46% less prose, 28% less code and tests ([bench/context](../bench/context/README.md)). The splits were made in parallel git worktrees; committing from a worktree fails the pre-commit hooks (they look for `../xeito-local`, and git's `GIT_INDEX_FILE` reaches the tests that run git), so the work was committed from the main checkout.
 

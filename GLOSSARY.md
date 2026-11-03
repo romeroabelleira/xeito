@@ -72,3 +72,4 @@ for the details; `mix xeito.map` lists every module with its public functions.
 - **false-safe**: a command labelled review or forbidden that a decider calls safe; Risk's gate allows none. `Xeito.Decision.Eval`
 - **command table**: what each shell command Risk knows does (reads, writes these paths, runs a program, unknown), per subcommand and flag. `Xeito.Decisions.Risk.Commands`
 - **read cost**: the tokens an agent reads for a task (`mix xeito.context`). `Xeito.Source.ReadCost`
+- **plan check**: the implementation plan against the repository: names, links, dates, milestones (`mix xeito.plan.check`). `Xeito.Source.PlanCheck`

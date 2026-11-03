@@ -54,3 +54,8 @@ jobs:
         env:
           XEITO_MUTATE: ${{ github.event_name == 'push' && 'off' || github.event_name == 'schedule' && 'all' || '' }}
           XEITO_MUTATE_BASE: ${{ github.event.before || github.event.pull_request.base.sha }}
+      # The plan against the repository (docs/plan-review.md §0): a nightly report that never
+      # fails the job; the step shows as failed when there are findings.
+      - if: github.event_name == 'schedule'
+        continue-on-error: true
+        run: mix xeito.plan.check

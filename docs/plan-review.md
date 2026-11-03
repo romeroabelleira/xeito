@@ -4,6 +4,17 @@ The [plan](implementation-plan.md) cites outside facts with a date: model names 
 
 Each section names the plan lines by phase and item, what the plan claims, and the exact way to check it. "Holds" means the source still says what the plan says.
 
+## 0. The plan against the repository: `mix xeito.plan.check`
+
+Run `mix xeito.plan.check` first; it measures, the rest of this checklist reads. It checks the plan against the repository and prints a finding per plan line, by check:
+
+1. **Modules.** A `Xeito.Some.Module`, `Mix.Tasks.Xeito.X` or `mix xeito.x` the plan names with no `defmodule` under `lib/` or `test/`. A line that says the name is planned, removed, renamed, not adopted, or was, is left alone, so a stale name is fixed by saying what became of it.
+2. **Links.** An anchor that slugs no heading of the plan (GitHub's rules), or a relative link that reaches no file, or no heading of that file.
+3. **Stale.** A `(checked YYYY-MM-DD` note older than 14 days (the last note on a line counts), and a "next", "pending", "planned" or "waits for" item whose nearest date, on its line or else the last one above, is older than 60 days.
+4. **Milestones.** A milestone row that says done for a section whose status line does not say so and whose last step is not marked done; a section whose steps are all marked done, or whose status line says done, for a row that does not.
+
+It exits 1 with any finding, so CI runs it nightly as a step that reports without failing the job (`.github/workflows/ci.yml`); it is not part of `mix ci`. A stale name or a dead link is fixed on the spot. A stale note is what the sections below re-check: dated anew when the facts still hold, otherwise corrected on the plan line. A finding that is a judgement (a step named before it is built, a milestone row the author wants to read differently) stays in the report until the plan says so in words.
+
 ## 1. Claude models and prices
 
 **Plan lines.** P3b research table (direct Anthropic column: schema output, no logprobs, refusal fallback in beta); P4d tier table and step 3 (Sonnet 5.5 and Opus 5.5 as deciders, Sonnet at half the price); P4d step 4 (Sonnet 5.5's endpoints take no `temperature`; cache reads at a tenth of the input price); P4d step 5 (`output_config.format`, `fallbacks: "default"`, the price table "to keep with the models", `claude-opus-5-5` as the reference frontier model); P4j step 3 (Haiku 5.5 costs five times as much past 100k tokens).
