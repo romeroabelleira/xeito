@@ -223,3 +223,61 @@ Does a draft → critique → revise strategy (`Xeito.Machines.SelfRefine`, with
 | shorten-announcement | single | A/B | 3999 | 491 | 11 | 3 |
 
 **Result:** refine 2, single 2, tie 8; wall time 40 s against 75 s. Four of the ties are the judge preferring the same position both times, the position bias the swap is there to cancel. No gain, at twice the time: the strategy does not ship as a `--strategy` flag. The machine stays as an experiment (`mix xeito.run --machine self_refine`), and the script repeats the measurement with another model or set. The `Refine` decision passes its gate on `local` (14 examples, accuracy 1.0; the Laya tier 0.5, as for every type so far).
+
+## 10. P4h: scripts against plain tools (2026-11-03)
+
+Does the `script` tool pay on busywork? Three requests on real material, each one chat turn on the local tier (qwen3.8:27b through Ollama), run two times in three variants: the plain tools (`read`, `bash`, `write`, `edit`), the same with `script` offered beside them, and `script` as the only tool. `bench/scripts/p4h_workspaces.sh DIR` builds the workspaces and `bench/scripts/p4h_scripts.exs DIR/tasks.json OUT.json 2` runs them; a command Risk sends to review is approved at once and counted as decided by a human.
+
+| Task | Material | Request | Success check |
+|---|---|---|---|
+| todos | the req package (`deps/req`, 7 kLOC, 10 TODO comments) | classify every TODO/FIXME under `lib/` by urgency, as a table | every `file:line` in the answer |
+| ci_logs | the failed-step logs of three CI runs of elixir-lang/elixir (`gh run view --log-failed`: 855 KB, 295 KB, 67 KB) | group the failures by cause, with the runs and jobs each hit; a log may show no failure | the three causes named (`Map.update!/3`, `to_existing_atom`, `custom shutdown`) |
+| issues | twelve open issues of elixir-lang/elixir as JSON (11 KB) | rate each issue's clarity 1–3 with a reason, as a table | every number rated in range |
+
+Per run (turns are model calls; calls are tool effects, children of scripts included; rules and human count Risk decisions by rule and reviews; failed counts effects that returned an error; scripts counts `script` effects):
+
+| Task | Variant | Run | Success (coverage) | Turns | Tokens | s | Calls | Rules | Human | Failed | Scripts |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| todos | plain | 1 | ok (1.00) | 5 | 25 226 | 31 | 11 | 1 | 0 | 0 | 0 |
+| todos | plain | 2 | ok (1.00) | 6 | 32 457 | 29 | 12 | 3 | 0 | 0 | 0 |
+| todos | script offered | 1 | ok (1.00) | 5 | 27 456 | 29 | 12 | 1 | 0 | 0 | 0 |
+| todos | script offered | 2 | ok (1.00) | 8 | 52 314 | 33 | 14 | 4 | 0 | 0 | 0 |
+| todos | script only | 1 | ok (1.00) | 8 | 41 955 | 35 | 17 | — | 0 | 1 | 7 |
+| todos | script only | 2 | ok (1.00) | 9 | 46 850 | 48 | 9 | — | 0 | 4 | 5 |
+| ci_logs | plain | 1 | ok (1.00) | 26 | 404 783 | 299 | 58 | 56 | 2 | 2 | 0 |
+| ci_logs | plain | 2 | no (0.67) | 26 | 274 356 | 162 | 32 | 15 | 17 | 1 | 0 |
+| ci_logs | script offered | 1 | no (0.33) | 23 | 270 460 | 129 | 17 | 15 | 2 | 0 | 0 |
+| ci_logs | script offered | 2 | no (0.33) | 23 | 402 658 | 171 | 39 | 39 | 0 | 10 | 0 |
+| ci_logs | script only | 1 | no (0.00) | 9 | 19 709 | 36 | 4 | — | 0 | 5 | 5 |
+| ci_logs | script only | 2 | ok (1.00) | 26 | 387 644 | 130 | 24 | — | 0 | 24 | 24 |
+| issues | plain | 1 | ok (1.00) | 2 | 5 992 | 14 | 1 | 0 | 0 | 0 | 0 |
+| issues | plain | 2 | ok (1.00) | 2 | 6 010 | 13 | 1 | 0 | 0 | 0 | 0 |
+| issues | script offered | 1 | ok (1.00) | 2 | 6 955 | 14 | 1 | 0 | 0 | 0 | 0 |
+| issues | script offered | 2 | ok (1.00) | 2 | 6 967 | 13 | 1 | 0 | 0 | 0 | 0 |
+| issues | script only | 1 | no (0.08) | 8 | 11 804 | 20 | 1 | — | 0 | 3 | 4 |
+| issues | script only | 2 | no (0.33) | 11 | 37 405 | 29 | 4 | — | 0 | 3 | 7 |
+
+Means over the six runs of each variant:
+
+| Variant | Successes | Coverage | Turns | Tokens | s | Calls | By rule | Human | Failed | Scripts |
+|---|---|---|---|---|---|---|---|---|---|---|
+| plain | 5/6 | 0.94 | 11.2 | 124 804 | 91 | 19.2 | 12.5 | 3.2 | 0.5 | 0 |
+| script offered | 4/6 | 0.78 | 10.5 | 127 802 | 65 | 14.0 | 9.8 | 0.3 | 1.7 | 0 |
+| script only | 3/6 | 0.57 | 11.8 | 90 895 | 50 | 9.8 | — | 0 | 6.7 | 8.7 |
+
+A script's commands are not Risk decisions: a command safe by rule runs, any other fails inside the script, so the rules column is empty for script children and every one of their 9.8 calls per run ran by rule. With the plain tools, 65% of the calls were decided by rule and the rest went to review (`grep` and `sed` with flags the rules do not know, mostly), approved here at once.
+
+**Result: the exit criteria are not met, and the local model does not use the tool.**
+
+- **Offered beside the plain tools, `script` is never chosen.** In the six runs here, and in two earlier runs of the same set (twelve more), the model made no script call. The tool's description says what it is for; this model still reaches for `bash` and `read` it knows. The "script offered" variant is the plain variant with a longer tool list: same turns, 7% fewer calls, one more failure (the ci_logs runs hit the 25-turn cap with two of three causes found).
+- **With `script` the only tool, scripts run, and mostly fail.** 6.7 of the 9.8 calls per run returned an error. The causes, from the logs of the workspaces: the model matches a call's result against a shape of its own (`{:ok, out} = Script.bash(...)`, `result.output`) rather than the `%{"exit_status" => n, "output" => text}` map the tool description gives, so 24 of 24 scripts in one ci_logs run raised a `MatchError`; the model still answered that run correctly, because the exception's message carries the unmatched value, which is the command's output. There is no JSON decoder in the sandbox (`Jason` is not there, `JSON` is not on the allow-list, `Code.eval_string` is restricted), so both issues runs rated from fragments of raw text. Reading an 855 KB log into one binary and splitting it hits the heap limit (10 M words) or the reductions limit (5 M). `Access` on a list by index, twice.
+- **Where scripts worked, they did not save turns.** The todos task took 5–6 model turns with the plain tools and 8–9 with scripts only, the extra ones spent on the failed attempts; a successful script did in one call what `grep -n` plus six `read`s did, but the model did not plan it that way. Tokens per run were lower with scripts only (91 k against 125 k) and wall time was shorter (50 s against 91 s), at half the success.
+- **The exit criteria.** "At least five times fewer model turns at equal or better success": turns are equal and success is lower. "Elixir scripts within ten points of JavaScript ones": not measured. Neither pi's Codemode nor a JavaScript sandbox is in reach here (Xeito has no JavaScript runtime and pi is not installed on the reference workstation); the comparison stays open rather than being faked.
+
+**What the benchmark asks for next**, in order of expected effect:
+1. The result shapes. A model trained on Elixir expects `{:ok, value}` and `{:error, reason}` from a call that can fail, and atom keys. The API could return those (the `%{"ok" => …}` maps were chosen for the JSON protocol, not for the model) or the tool description could carry one worked example, which this model did not get from prose.
+2. `JSON` on the allow-list: `JSON.decode/1` and `encode/1` are pure, and half of busywork arrives as JSON.
+3. Limits sized for real files: a log of a megabyte must fit; raise the heap, or give scripts a line-wise `read` so a file never has to be one binary.
+4. Getting the tool used at all: on this model, offering `script` changes nothing. A routing rule (a request that names "every" file, comment or issue of a repository goes to a script-first turn) or a one-line instruction in the system prompt would be the next experiment, after 1–3, since a script that fails is worse than none.
+
+Until those are tried, `script` stays offered (it costs nothing when unused) and the measurement stands as the baseline for the next run of the same script.
