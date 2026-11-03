@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Mutation testing of every source, nightly; pushes to main skip it (see the mix ci step).
+  # Mutation testing of every source, nightly; pushes to main skip it, since the pre-push hook ran
+  # it on the changed sources (see the mix ci step).
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -47,9 +48,10 @@ jobs:
 
       - run: mix deps.get
       # Includes Dialyzer, so a commit gated on `mix ci` locally is checked the same way.
-      # Mutation testing: off for pushes to main (it runs before each commit locally, and nightly
-      # here), every source nightly, and for pull requests the sources that changed since their
-      # base (only_when_changed in test/mutate.exs); unknown means all of them.
+      # Mutation testing: off for pushes to main (the pre-push hook, scripts/check-mutants.sh, ran
+      # it on the sources changed since the pushed base; nightly here over every source), and for
+      # pull requests on the sources that changed since their base (XEITO_MUTATE unset:
+      # only_when_changed in test/mutate.exs); unknown means all of them.
       - run: mix ci
         env:
           XEITO_MUTATE: ${{ github.event_name == 'push' && 'off' || github.event_name == 'schedule' && 'all' || '' }}

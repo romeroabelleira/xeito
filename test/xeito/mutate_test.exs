@@ -8,33 +8,44 @@ defmodule Xeito.MutateTest do
 
   defp code(mutant), do: Macro.to_string(mutant.ast)
 
-  test "mode/1: XEITO_MUTATE turns mutation off, mutates everything, or (unset) what changed" do
-    assert Mutate.mode(nil) == :changed
-    assert Mutate.mode("") == :changed
+  test "mode/1: XEITO_MUTATE turns mutation off, mutates everything, only what changed, or (unset) the default" do
+    assert Mutate.mode(nil) == :default
+    assert Mutate.mode("") == :default
     assert Mutate.mode("off") == :off
     assert Mutate.mode("all") == :all
-    assert_raise ArgumentError, ~r/XEITO_MUTATE must be "off" or "all"/, fn -> Mutate.mode("sometimes") end
+    assert Mutate.mode("changed") == :changed
+    assert_raise ArgumentError, ~r/XEITO_MUTATE must be "off", "all" or "changed"/, fn -> Mutate.mode("sometimes") end
   end
 
-  describe "select/3: sources mutated only when they or their tests changed" do
+  describe "select/4: sources mutated only when they or their tests changed" do
     @config %{
       "a.ex" => ["a_test.exs"],
       "b.ex" => [tests: ["b_test.exs"], only_when_changed: true],
       "c.ex" => [tests: ["c_test.exs"], section: "s", only_when_changed: true]
     }
 
-    test "an only_when_changed source is skipped when neither it nor its tests changed" do
+    test "by default, an only_when_changed source is skipped when neither it nor its tests changed" do
       plan = Mutate.plan([], [], @config)
       assert [{"b.ex", nil, ["b_test.exs"]}, {"c.ex", "s", ["c_test.exs"]}] = Enum.drop(plan, 1)
 
-      assert Mutate.select(plan, @config, ["a.ex", "other.ex"]) == {[{"a.ex", nil, ["a_test.exs"]}], ["b.ex", "c.ex"]}
-      assert {[{"a.ex", _, _}, {"b.ex", _, _}], ["c.ex"]} = Mutate.select(plan, @config, ["b.ex"])
-      assert {[{"a.ex", _, _}, {"c.ex", _, _}], ["b.ex"]} = Mutate.select(plan, @config, ["c_test.exs"])
+      assert Mutate.select(plan, @config, ["a.ex", "other.ex"], :default) ==
+               {[{"a.ex", nil, ["a_test.exs"]}], ["b.ex", "c.ex"]}
+
+      assert {[{"a.ex", _, _}, {"b.ex", _, _}], ["c.ex"]} = Mutate.select(plan, @config, ["b.ex"], :default)
+      assert {[{"a.ex", _, _}, {"c.ex", _, _}], ["b.ex"]} = Mutate.select(plan, @config, ["c_test.exs"], :default)
     end
 
-    test "when what changed is unknown, everything is mutated" do
+    test "in changed mode, every source is skipped unless it or its tests changed" do
       plan = Mutate.plan([], [], @config)
-      assert Mutate.select(plan, @config, :all) == {plan, []}
+      assert Mutate.select(plan, @config, ["other.ex"], :changed) == {[], ["a.ex", "b.ex", "c.ex"]}
+      assert {[{"a.ex", _, _}], ["b.ex", "c.ex"]} = Mutate.select(plan, @config, ["a_test.exs"], :changed)
+      assert {[{"c.ex", _, _}], ["a.ex", "b.ex"]} = Mutate.select(plan, @config, ["c.ex"], :changed)
+    end
+
+    test "when what changed is unknown, everything is mutated, in either mode" do
+      plan = Mutate.plan([], [], @config)
+      assert Mutate.select(plan, @config, :all, :default) == {plan, []}
+      assert Mutate.select(plan, @config, :all, :changed) == {plan, []}
     end
   end
 

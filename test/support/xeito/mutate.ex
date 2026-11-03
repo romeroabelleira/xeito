@@ -123,27 +123,32 @@ defmodule Xeito.Mutate do
   end
 
   @doc """
-  The mode `XEITO_MUTATE` selects: `:off`, `:all` (every configured source), or, unset,
-  `:changed` (an `only_when_changed` source only when it changed; see `select/3`).
+  The mode `XEITO_MUTATE` selects: `:off`, `:all` (every configured source), `:changed` (only
+  the sources that changed, or whose tests did), or, unset, `:default` (every source but an
+  `only_when_changed` one that did not change); see `select/4`.
   """
-  @spec mode(String.t() | nil) :: :off | :all | :changed
-  def mode(value) when value in [nil, ""], do: :changed
+  @spec mode(String.t() | nil) :: :off | :all | :changed | :default
+  def mode(value) when value in [nil, ""], do: :default
   def mode("off"), do: :off
   def mode("all"), do: :all
-  def mode(other), do: raise(ArgumentError, ~s(XEITO_MUTATE must be "off" or "all", or unset; not #{inspect(other)}))
+  def mode("changed"), do: :changed
+
+  def mode(other),
+    do: raise(ArgumentError, ~s(XEITO_MUTATE must be "off", "all" or "changed", or unset; not #{inspect(other)}))
 
   @doc """
-  Splits a plan into what to mutate and the sources skipped: an entry with
-  `only_when_changed: true` is mutated only when it or one of its tests is among `changed`
-  (paths), or when what changed is unknown (`:all`).
+  Splits a plan into what to mutate and the sources skipped. A source is skipped when neither it
+  nor one of its tests is among `changed` (paths), if the mode is `:changed` or the source's
+  entry has `only_when_changed: true`. When what changed is unknown (`:all`), nothing is skipped.
   """
-  @spec select(list(), map(), [Path.t()] | :all) :: {list(), [Path.t()]}
-  def select(plan, _config, :all), do: {plan, []}
+  @spec select(list(), map(), [Path.t()] | :all, :default | :changed) :: {list(), [Path.t()]}
+  def select(plan, _config, :all, _mode), do: {plan, []}
 
-  def select(plan, config, changed) do
+  def select(plan, config, changed, mode) do
     {run, skipped} =
       Enum.split_with(plan, fn {path, _section, tests} ->
-        not Keyword.get(entry(config, path), :only_when_changed, false) or Enum.any?([path | tests], &(&1 in changed))
+        always = mode == :default and not Keyword.get(entry(config, path), :only_when_changed, false)
+        always or Enum.any?([path | tests], &(&1 in changed))
       end)
 
     {run, Enum.map(skipped, &elem(&1, 0))}

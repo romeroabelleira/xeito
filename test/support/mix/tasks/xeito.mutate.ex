@@ -11,12 +11,14 @@ defmodule Mix.Tasks.Xeito.Mutate do
   (`mix ci` runs this), against the tests listed there; an entry may limit a source to one
   section (`section: "guards"`, the lines under a `# --- guards ---` comment), and one marked
   `only_when_changed: true` is mutated only when it or its tests differ from
-  `$XEITO_MUTATE_BASE` (default `HEAD`, so uncommitted changes; CI sets the commit before the
-  push), or when that cannot be told. `XEITO_MUTATE=all` mutates every configured source, and
-  `XEITO_MUTATE=off` none (CI's pushes to `main`, which run it nightly instead). A given path uses `--test`, else its
-  tests from that file, else the files under `test/` that use its modules. The tests must pass on
-  the real code first. `--lines` mutates only those lines (repeatable); `--timeout` is the
-  per-test timeout in ms (default 5000; a mutant that loops is killed by it).
+  `$XEITO_MUTATE_BASE` (default `HEAD`, so uncommitted changes; CI sets the base of the pull
+  request), or when that cannot be told. `XEITO_MUTATE=changed` applies that rule to every
+  source (the pre-push hook, `scripts/check-mutants.sh`, with the pushed base), `XEITO_MUTATE=all`
+  mutates every configured source (nightly CI), and `XEITO_MUTATE=off` none (CI's pushes to
+  `main`, checked at push time already). A given path uses `--test`, else its tests from that
+  file, else the files under `test/` that use its modules. The tests must pass on the real code
+  first. `--lines` mutates only those lines (repeatable); `--timeout` is the per-test timeout in
+  ms (default 5000; a mutant that loops is killed by it).
 
   Fails when a mutant survives. Runs in the test environment.
   """
@@ -56,10 +58,12 @@ defmodule Mix.Tasks.Xeito.Mutate do
 
   defp selected(plan, :all), do: plan
 
-  defp selected(plan, :changed) do
+  defp selected(plan, mode) do
     base = System.get_env("XEITO_MUTATE_BASE", "HEAD")
-    {run, skipped} = Mutate.select(plan, config(), changed(base))
-    Enum.each(skipped, &Mix.shell().info("#{&1}: unchanged since #{base}, not mutated (only_when_changed)"))
+    {run, skipped} = Mutate.select(plan, config(), changed(base), mode)
+    why = if mode == :changed, do: "XEITO_MUTATE=changed", else: "only_when_changed"
+    Enum.each(skipped, &Mix.shell().info("#{&1}: unchanged since #{base}, not mutated (#{why})"))
+    if run == [], do: Mix.shell().info("nothing changed since #{base} among the sources in #{@config}")
     run
   end
 

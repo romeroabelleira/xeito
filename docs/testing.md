@@ -2,14 +2,14 @@
 
 Everything here runs on a laptop without models: model calls in tests go to stubs. Only the benchmarks at the end need real model tiers.
 
-## 1. Before every commit: `mix ci`
+## 1. The whole check: `mix ci`
 
 ```bash
 mix deps.get
 mix ci
 ```
 
-`mix ci` is the whole check, and CI runs the same command. On a push to `main`, CI leaves out mutation testing (`XEITO_MUTATE=off`), since it ran here before the commit; it runs nightly over every source (`XEITO_MUTATE=all`, also for a manual run here) and on pull requests:
+`mix ci` is the whole check, and CI runs the same command. The git hooks (§5) run its costly parts when they are due: before a commit, the tests with the CRAP gate; before a push, mutation testing of the sources changed since the commit the remote already has. So CI leaves mutation testing out on a push to `main` (`XEITO_MUTATE=off`), runs it on pull requests for the sources changed since their base, and nightly over every source (`XEITO_MUTATE=all`, also for a manual run here):
 
 | Step | What it catches |
 |---|---|
@@ -23,7 +23,7 @@ mix ci
 | `cmd mix test --only oracle` | Risk's labels and claims against what commands really do: each example with a fixture runs, is undone and runs twice in a throwaway workspace (`test/xeito/risk_oracle_test.exs`; tagged `:oracle`, so plain `mix test` leaves it out) |
 | `cmd mix xeito.mutate` | surviving mutants in the sources listed in `test/mutate.exs` (§4) |
 
-It runs in the test environment and takes under a minute on a warm build. A red step stops it; the output above the error says which.
+It runs in the test environment; mutation testing of every source takes several minutes, the rest under a minute on a warm build. A red step stops it; the output above the error says which.
 
 ## 2. While working: tests first
 
@@ -71,15 +71,26 @@ A mutant that cannot change behaviour (an *equivalent* mutant) usually marks dea
 
 `test/mutate.exs` lists the sources held to zero survivors, each with the tests that cover it. An entry can limit a source to one section: `[tests: [...], section: "guards"]` mutates only the lines under the `# --- guards ---` comment. Each source runs only its own tests, so the list states truthfully what covers it. Add a source when its logic decides something that matters: security, limits, control flow, input handling.
 
-## 5. The pre-commit hook
+`XEITO_MUTATE=changed` mutates only the listed sources that differ from `$XEITO_MUTATE_BASE` (default `HEAD`), or whose tests do; the pre-push hook uses it with the commit the remote has. `XEITO_MUTATE=all` mutates every listed source, and `XEITO_MUTATE=off` none.
 
-`scripts/check-crap.sh` runs the tests with the CRAP gate when Elixir files are staged. Without Elixir installed, it refuses the commit. To use it as your pre-commit hook:
+## 5. The git hooks
+
+Two scripts are written to be git hooks. Never commit or push with `--no-verify`.
+
+- `scripts/check-crap.sh`, before a commit: runs the tests with the CRAP gate when Elixir files are staged. Without Elixir installed, it refuses the commit.
+- `scripts/check-mutants.sh`, before a push: mutation testing of the sources in `test/mutate.exs` that changed since the commit the remote already has, or whose tests did (`XEITO_MUTATE=changed`). A commit it passed is noted in `.git/xeito-mutated`, so pushing the same commit to a second remote does not mutate it again. Without Elixir installed, it lets the push through with a note: the commit was checked where it was pushed from.
+
+To use them as your hooks:
 
 ```bash
 ln -s ../../scripts/check-crap.sh .git/hooks/pre-commit
 ```
 
-If you already have a pre-commit hook, call the script from it. Never commit with `--no-verify`. The hook checks less than `mix ci`, so run `mix ci` as well.
+```bash
+ln -s ../../scripts/check-mutants.sh .git/hooks/pre-push
+```
+
+If you already have a hook, call the script from it (the pre-push script takes the hook's arguments and stdin). Together the hooks check what `mix ci` checks, in parts and on the changed sources; `mix ci` remains the whole check in one go.
 
 ## 6. By hand: a throwaway daemon
 
