@@ -36,6 +36,20 @@ defmodule Xeito.Backends.AnthropicTest do
       assert_in_delta Anthropic.cost(Anthropic.price("claude-opus-5-5"), usage), 4 + 0.2 + 5 + 2, 1.0e-6
     end
 
+    test "the prices that moved on the pricing page (checked 2026-11-02): Sonnet 5.5 and Fable 5 cache reads" do
+      assert_in_delta Anthropic.price("claude-sonnet-5-5").cache_read, 0.1e-6, 1.0e-12
+      assert_in_delta Anthropic.price("claude-fable-5-1").cache_read, 0.25e-6, 1.0e-12
+      assert_in_delta Anthropic.price("claude-fable-5").cache_read, 1.0e-6, 1.0e-12
+    end
+
+    test "every model that takes server-side fallbacks has a price, so its calls are never costed at zero" do
+      for model <- ~w(claude-fable-5-1 claude-fable-5 claude-opus-5-5 claude-opus-5 claude-sonnet-5-5) do
+        assert Anthropic.fallbacks?(model)
+        assert %{prompt: prompt} = Anthropic.price(model)
+        assert prompt > 0
+      end
+    end
+
     test "a missing usage field counts as zero" do
       assert_in_delta Anthropic.cost(Anthropic.price("claude-sonnet-5-5"), %{"output_tokens" => 1_000_000}), 10, 1.0e-6
     end
@@ -45,6 +59,12 @@ defmodule Xeito.Backends.AnthropicTest do
       assert [%{from: 100_000}] = price.tiers
       assert_in_delta Anthropic.cost(price, %{"input_tokens" => 100_000}), 0.05, 1.0e-9
       assert_in_delta Anthropic.cost(price, %{"input_tokens" => 200_000, "output_tokens" => 1_000_000}), 0.1 + 2.5, 1.0e-9
+    end
+
+    test "past 100k tokens, Haiku 5.5's cache reads and writes are dearer too, and the prompt length counts them" do
+      price = Anthropic.price("claude-haiku-5-5")
+      usage = %{"input_tokens" => 50_000, "cache_read_input_tokens" => 50_000, "cache_creation_input_tokens" => 10_000}
+      assert_in_delta Anthropic.cost(price, usage), 0.025 + 0.0025 + 0.00625, 1.0e-9
     end
   end
 

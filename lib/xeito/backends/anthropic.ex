@@ -26,23 +26,27 @@ defmodule Xeito.Backends.Anthropic do
   @fallback_beta "server-side-fallback-2026-07-01"
 
   # USD per million tokens: input, output, cache read (a cache write costs 1.25 × input); the
-  # window and the longest answer. Published list prices, 2026-10.
+  # window and the longest answer. Published list prices, checked 2026-11-02.
   @prices %{
     "claude-fable-5-1" => {10, 50, 0.25, 1_000_000, 128_000},
-    "claude-fable-5" => {10, 50, 0.25, 1_000_000, 128_000},
+    "claude-fable-5" => {10, 50, 1, 1_000_000, 128_000},
     "claude-opus-5-5" => {4, 20, 0.20, 1_000_000, 128_000},
     "claude-opus-5" => {5, 25, 0.50, 1_000_000, 128_000},
     "claude-opus-4-8" => {5, 25, 0.50, 1_000_000, 128_000},
     "claude-opus-4-7" => {5, 25, 0.50, 1_000_000, 128_000},
     "claude-opus-4-6" => {5, 25, 0.50, 1_000_000, 128_000},
-    "claude-sonnet-5-5" => {2, 10, 0.20, 1_000_000, 128_000},
+    "claude-sonnet-5-5" => {2, 10, 0.10, 1_000_000, 128_000},
     "claude-sonnet-5" => {2, 10, 0.20, 1_000_000, 128_000},
     "claude-sonnet-4-6" => {3, 15, 0.30, 1_000_000, 128_000},
     "claude-haiku-5-5" => {0.10, 0.50, 0.01, 1_000_000, 128_000},
     "claude-haiku-4-5" => {1, 5, 0.10, 200_000, 64_000}
   }
-  # Haiku 5.5 charges five times as much for a prompt past 100k tokens.
-  @tiers %{"claude-haiku-5-5" => [%{from: 100_000, prompt: 0.50 / 1_000_000, completion: 2.50 / 1_000_000}]}
+  # Haiku 5.5 charges five times as much for a prompt past 100k tokens, cache reads included.
+  @tiers %{
+    "claude-haiku-5-5" => [
+      %{from: 100_000, prompt: 0.50 / 1_000_000, completion: 2.50 / 1_000_000, cache_read: 0.05 / 1_000_000}
+    ]
+  }
 
   # Models whose safety classifiers may decline a request, and that take `fallbacks: "default"`.
   @fallbacks ~w(claude-fable-5-1 claude-fable-5 claude-opus-5-5 claude-opus-5 claude-sonnet-5-5)
@@ -54,7 +58,7 @@ defmodule Xeito.Backends.Anthropic do
           cache_read: float(),
           context: pos_integer(),
           output: pos_integer(),
-          tiers: [%{from: pos_integer(), prompt: float(), completion: float()}]
+          tiers: [%{from: pos_integer(), prompt: float(), completion: float(), cache_read: float()}]
         }
 
   @impl true
@@ -126,7 +130,7 @@ defmodule Xeito.Backends.Anthropic do
   def cost(price, usage) do
     %{input: input, read: read, written: written, output: output} = counts(usage)
     rate = price |> Map.get(:tiers, []) |> Enum.filter(&(&1.from <= input + read + written)) |> List.last(price)
-    input * rate.prompt + read * price.cache_read + written * rate.prompt * 1.25 + output * rate.completion
+    input * rate.prompt + read * rate.cache_read + written * rate.prompt * 1.25 + output * rate.completion
   end
 
   @doc """
