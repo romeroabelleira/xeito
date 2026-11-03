@@ -25,6 +25,8 @@ mix ci
 
 It runs in the test environment; mutation testing of every source takes several minutes, the rest under a minute on a warm build. A red step stops it; the output above the error says which.
 
+Not part of `mix ci`: `mix xeito.plan.check` reports where `docs/implementation-plan.md` disagrees with the repository (modules and tasks it names, its links, its dated notes, the milestone table against the sections), one line per finding, and exits 1 with any. CI runs it nightly without failing the job; [plan-review.md §0](plan-review.md#0-the-plan-against-the-repository-mix-xeitoplancheck) says what to do with its findings.
+
 ## 2. While working: tests first
 
 Write the failing test, then the code, then refactor. Run as little as you need while you work:
