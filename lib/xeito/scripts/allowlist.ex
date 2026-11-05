@@ -11,18 +11,21 @@ defmodule Xeito.Scripts.Allowlist do
 
   @behaviour Dune.Allowlist
 
+  alias Xeito.Scripts.Api
+
   @restricted_modules [DateTime, Date, NaiveDateTime, Time, Calendar, Calendar.ISO, Process, :rand, :crypto]
   @restricted_erlang ~w(date time timestamp system_time monotonic_time universaltime localtime
                         localtime_to_universaltime universaltime_to_localtime unique_integer make_ref
                         phash2 time_offset)a
 
   @doc """
-  A short name for this allow-list and Dune's version, logged with each script
-  (`Xeito.Effect.script/2`): a replay under another sandbox could see other functions, so it is refused.
+  A short name for this allow-list, the API's result shapes (`Xeito.Scripts.Api.shapes/0`) and
+  Dune's version, logged with each script (`Xeito.Effect.script/2`): a replay under another
+  sandbox could see other functions or other shapes, so it is refused.
   """
   @spec fingerprint() :: String.t()
   def fingerprint do
-    {@restricted_modules, @restricted_erlang, Application.spec(:dune, :vsn)}
+    {@restricted_modules, @restricted_erlang, Api.shapes(), Application.spec(:dune, :vsn)}
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
@@ -30,7 +33,7 @@ defmodule Xeito.Scripts.Allowlist do
   end
 
   @impl true
-  def fun_status(module, _fun, _arity) when module in [Xeito.Scripts.Api, Script], do: :allowed
+  def fun_status(module, _fun, _arity) when module in [Api, Script], do: :allowed
   def fun_status(module, _fun, _arity) when module in @restricted_modules, do: :restricted
   def fun_status(:erlang, fun, _arity) when fun in @restricted_erlang, do: :restricted
   def fun_status(module, fun, arity), do: Dune.Allowlist.Default.fun_status(module, fun, arity)

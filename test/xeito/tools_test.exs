@@ -37,8 +37,12 @@ defmodule Xeito.ToolsTest do
       assert {:error, "invalid arguments for script" <> _} = effect("script", %{"code" => "1"})
       refute Tools.risky?(%{name: "script", arguments: %{"program" => "Script.bash(\"rm -rf /\")"}})
       assert [%{function: %{name: "script", description: description}}] = Tools.specs(["script"])
-      assert description =~ "Script.read"
-      assert description =~ "Script.bash"
+      assert description =~ "Script.read(path) gives {:ok, text} or {:error, reason}"
+      assert description =~ "Script.bash(command) gives {:ok, output} when the command exits 0"
+      assert description =~ "{:error, %{exit_status: n, output: text}}"
+
+      assert description =~
+               ~s|Example:\n{:ok, out} = Script.bash("grep -rln TODO lib/")\nfor file <- String.split(out, "\\n", trim: true) do\n  {:ok, text} = Script.read(file)|
     end
 
     test "bash takes the timeout the model asks for, in seconds, up to the maximum" do

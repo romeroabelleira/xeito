@@ -155,18 +155,24 @@ defmodule Xeito.Tools do
         "script",
         "Run a short Elixir program in a sandbox to do in one call what would take many: loop " <>
           "over files or command output, filter, count, group, and return only what matters. It " <>
-          "reaches the project only through Script.read(path), which gives " <>
-          ~s|%{"ok" => true, "content" => text} or %{"ok" => false, "error" => reason}, and | <>
-          ~s|Script.bash(command), which gives %{"exit_status" => n, "output" => text}; only | <>
-          "commands that are safe by rule run (reads, grep, git status, the project's tests), " <>
-          "one that would need review fails with an error, and a forbidden one stops the script. " <>
-          "Script.write(path, content) and Script.edit(path, old, new) change files (undone as one step). " <>
+          "reaches the project only through Script. Script.read(path) gives {:ok, text} or " <>
+          "{:error, reason}. Script.bash(command) gives {:ok, output} when the command exits 0, " <>
+          "{:error, %{exit_status: n, output: text}} otherwise, and {:error, reason} when it did " <>
+          "not run: only commands that are safe by rule run (reads, grep, git status, the " <>
+          "project's tests), one that would need review fails that call, and a forbidden one " <>
+          "stops the script. Script.write(path, text) and Script.edit(path, old, new) give :ok " <>
+          "or {:error, reason} (undone as one step). " <>
           ~s|Script.classify(%{"name" => %{"type" => "choice", "options" => [...], "criteria" => "..."}}, state) | <>
           ~s|asks a small model (types: choice, bool, score with "range" => [min, max]) and gives | <>
-          ~s|%{"name" => %{"value" => ..., "confidence" => ...}}; Script.remember(id, attrs) keeps an object in the log. | <>
+          ~s|{:ok, %{"name" => %{value: v, confidence: c}}}; Script.remember(id, attrs) keeps an object in the log. | <>
           "Script.text(value) adds a line to the output; the program's last value is output too. " <>
           "No File, System, Process, clock or randomness: use Script.now() and Script.random(). " <>
-          "Long output is shortened for you, as a command's is.",
+          "Long output is shortened for you, as a command's is. Example:\n" <>
+          ~s|{:ok, out} = Script.bash("grep -rln TODO lib/")\n| <>
+          ~s|for file <- String.split(out, "\\n", trim: true) do\n| <>
+          ~s|  {:ok, text} = Script.read(file)\n| <>
+          ~s|  Script.text("\#{file}: \#{length(String.split(text, "\\n"))} lines")\n| <>
+          "end",
         %{
           program: %{type: "string", description: "the Elixir program; Enum, String, Map, Regex and Script are available"},
           timeout_s: %{

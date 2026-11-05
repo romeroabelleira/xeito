@@ -426,7 +426,7 @@ defmodule Xeito.Effects.ScriptTest do
     on_exit(fn -> Host.stop(run) end)
     child = fn _parent, effect -> Local.run(effect, []) end
 
-    code = ~s|Script.read("a.txt")["content"] \|> String.split("\\n", trim: true) \|> length()|
+    code = ~s|{:ok, text} = Script.read("a.txt"); text \|> String.split("\\n", trim: true) \|> length()|
     effect = %{Effect.script(code, cwd: ws, timeout: 10_000) | id: run <> "/e1"}
     assert %{ok: true, content: "2", ref: ref} = Local.run(effect, run_id: run, child: child)
     assert ref == run <> "/e1"

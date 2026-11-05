@@ -20,7 +20,7 @@ defmodule Xeito.Scripts.SandboxTest do
     assert {{:ok, 3, "hi\n"}, sandbox, []} = eval(sandbox, ~s|IO.puts("hi"); 1 + 2|)
 
     on_call = fn "read", [path], calls -> {%{"ok" => true, "content" => "A"}, [path | calls]} end
-    assert {{:ok, "A", ""}, sandbox, ["a.ex"]} = eval(sandbox, ~s|Script.read("a.ex")["content"]|, %{}, on_call)
+    assert {{:ok, "A", ""}, sandbox, ["a.ex"]} = eval(sandbox, ~s|{:ok, text} = Script.read("a.ex"); text|, %{}, on_call)
 
     assert {{:error, %{type: :restricted}}, _sandbox, []} = eval(sandbox, ~s|File.read!("x")|)
   end

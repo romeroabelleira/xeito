@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Xeito.LogTest do
     log = Xeito.Log.for_workspace(ws)
     id = "ses-lt-script-#{System.unique_integer([:positive])}"
     on_exit(fn -> Xeito.Scripts.Host.stop(id) end)
-    code = ~s|[Script.read("a.ex")["content"], Script.now()] \|> Enum.map(&inspect/1) \|> Enum.join(" ")|
+    code = ~s|[elem(Script.read("a.ex"), 1), Script.now()] \|> Enum.map(&inspect/1) \|> Enum.join(" ")|
 
     {:ok, run} =
       Xeito.RunSupervisor.start_run(Xeito.TestMachines.Scripted, %{cwd: ws, code: code},

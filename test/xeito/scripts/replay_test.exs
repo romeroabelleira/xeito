@@ -98,7 +98,7 @@ defmodule Xeito.Scripts.ReplayTest do
       ]
     end
 
-    @code ~s|Script.read("a.ex")["content"] \|> String.upcase()|
+    @code ~s|{:ok, text} = Script.read("a.ex"); String.upcase(text)|
 
     test "the same calls and the same result replay exactly; a different result is a desync at the script",
          %{sandbox: sandbox} do
@@ -115,10 +115,10 @@ defmodule Xeito.Scripts.ReplayTest do
     end
 
     test "a different call, or one past the end of the log, is a desync naming the call", %{sandbox: sandbox} do
-      other = ~s|Script.read("b.ex")["content"] \|> String.upcase()|
+      other = ~s|{:ok, text} = Script.read("b.ex"); String.upcase(text)|
       assert {{:desync, "r/e1/c1"}, sandbox} = Replay.verify(run(other, "abc", %{ok: true, content: "ABC"}), sandbox)
 
-      more = ~s|Script.read("a.ex")["content"] <> Script.read("a.ex")["content"]|
+      more = ~s|{:ok, a} = Script.read("a.ex"); {:ok, b} = Script.read("a.ex"); a <> b|
       assert {{:desync, "r/e1/c2"}, _} = Replay.verify(run(more, "abc", %{ok: true, content: "abcabc"}), sandbox)
     end
 

@@ -24,8 +24,9 @@ defmodule Xeito.Scripts.VmTest do
     end
 
     code = """
-    files = Script.bash("ls")["output"] |> String.split("\\n", trim: true)
-    texts = Enum.map(files, &Script.read(&1)["content"])
+    {:ok, out} = Script.bash("ls")
+    files = String.split(out, "\\n", trim: true)
+    texts = Enum.map(files, fn f -> {:ok, text} = Script.read(f); text end)
     {Script.now(), texts}
     """
 
@@ -77,7 +78,7 @@ defmodule Xeito.Scripts.VmTest do
              ] =
                serve([
                  %{t: "run", id: "s1", code: "1 + 2"},
-                 %{t: "run", id: "s2", code: ~s|Script.read("a")["content"]|},
+                 %{t: "run", id: "s2", code: ~s|{:ok, text} = Script.read("a"); text|},
                  %{t: "reply", id: "s2", value: %{"ok" => true, "content" => "A"}},
                  %{t: "run", id: "s3", code: ~s|File.read!("x")|}
                ])
@@ -92,7 +93,7 @@ defmodule Xeito.Scripts.VmTest do
              ] =
                serve([
                  %{t: "hello"},
-                 %{t: "run", id: "s1", code: ~s|Script.read("a")["error"]|},
+                 %{t: "run", id: "s1", code: ~s|{:error, reason} = Script.read("a"); reason|},
                  %{t: "nonsense", id: "s1"}
                ])
     end

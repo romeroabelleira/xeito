@@ -5,7 +5,8 @@ defmodule Xeito.Effects.Script do
 
     * `read` and `bash` calls become child effects (`Xeito.Effect.child_id/2`) that the run
       requests, logs and completes like its own (`Xeito.Run.child/3`; `opts[:child]` replaces
-      it in tests). The script sees each result as JSON carries it, without the model's shaping.
+      it in tests). The script gets each result as `Xeito.Scripts.Api` shapes it for Elixir
+      code, from the runner's answer as JSON carries it, without the model's shaping.
     * `bash` runs only a command `Xeito.Decisions.Risk`'s rules call safe. One they would send
       to review fails that call with an error saying so; a forbidden one stops the script, and
       every later call fails with the reason.
@@ -324,7 +325,8 @@ defmodule Xeito.Effects.Script do
   defp desync(acc, id, reason), do: acc |> Map.put(:desync, id) |> stop("desync at #{id}: #{reason}")
   defp stop(acc, reason), do: {error("stopped: " <> reason), %{acc | stopped: reason}}
 
-  # The result as the script sees it: string keys, without the model's shaping and reference.
+  # The result as the runner answers it: string keys, without the model's shaping and reference;
+  # the script's API shapes it from there.
   defp seen(result), do: result |> Map.drop([:shaped, :ref]) |> Protocol.jsonable()
 
   defp text(value, acc) do

@@ -88,8 +88,9 @@ defmodule Xeito.MachinesTest do
     on_exit(fn -> Host.stop(session) end)
 
     code = """
-    files = Script.bash("ls *.ex")["output"] |> String.split("\\n", trim: true)
-    todo = Enum.filter(files, &String.contains?(Script.read(&1)["content"], "TODO"))
+    {:ok, out} = Script.bash("ls *.ex")
+    files = String.split(out, "\\n", trim: true)
+    todo = Enum.filter(files, fn f -> {:ok, text} = Script.read(f); String.contains?(text, "TODO") end)
     Script.text("checked \#{length(files)} files")
     todo
     """
@@ -126,7 +127,7 @@ defmodule Xeito.MachinesTest do
     on_exit(fn -> Host.stop(session) end)
     Xeito.Events.subscribe(:all)
 
-    code = ~s|a = Script.read("a.ex")["content"]; b = Script.read("b.ex")["content"]; String.trim(a <> b)|
+    code = ~s|{:ok, a} = Script.read("a.ex"); {:ok, b} = Script.read("b.ex"); String.trim(a <> b)|
     id = session <> "/t1"
 
     {:ok, ^id} =

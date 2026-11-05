@@ -1,66 +1,118 @@
 defmodule Xeito.Scripts.Api do
   @moduledoc """
-  What a script calls to reach the outside: each function is one request to the runner
-  (`Xeito.Scripts.Vm.call/2`), which answers it as an effect of its own, logged and gated
-  (`Xeito.Effects.Script`).
+  What a script calls to reach the outside, under the short name `Script`: each function is one
+  request to the runner (`Xeito.Scripts.Vm.call/2`), which answers it as an effect of its own,
+  logged and gated (`Xeito.Effects.Script`), and shaped here as Elixir code expects it.
 
-  Results are maps with string keys, as JSON carries them: `read/1` gives
-  `%{"ok" => true, "content" => text}` or `%{"ok" => false, "error" => reason}`; `bash/1` gives
-  `%{"exit_status" => n, "output" => text}` for a command safe by rule, and
-  `%{"ok" => false, "error" => reason}` for one that would need a review (a forbidden one stops
-  the script). `write/2` and `edit/3` give `%{"ok" => true}` or an error, and refuse the
-  directories the tools refuse; a script's changes are one undo step. `decide/2` runs a
-  registered decision type by name (`"triage"`) and `classify/2` one ad-hoc decision per
-  question (`Xeito.Decisions.AdHoc`), each answered as `%{"value" => v, "confidence" => c,
-  "actor" => a, "model" => m, "probabilities" => %{}}`; `remember/2` writes an object to the
-  run's log (its `"type"` attribute is the object's type). `mcp/3` calls a tool of one of the
-  workspace's MCP servers (`Xeito.Mcp`) and gives `%{"ok" => true, "content" => text}` or an
-  error; only a read-only, closed-world tool runs from a script, and `search_tools/1` finds
-  tools by words. `text/1` adds a line to the script's
-  output for the model (the last value of the script is output, too) and returns it. `now/0`
-  (Unix milliseconds) and `random/0` come from the runner as effects of their own, so a replay
-  sees what the first run saw. `parallel/3` maps `fun` over `items`, at most `max:` (4) at a
-  time by the runner's account; here it is in order.
+  A call that can fail gives `{:ok, value}` or `{:error, reason}`; one that only changes
+  something gives `:ok` or `{:error, reason}`; the maps have atom keys; a call that cannot fail
+  gives its value, and raises only when the script was stopped (a forbidden command, a desync).
+
+  | call | success | failure |
+  |---|---|---|
+  | `read(path)` | `{:ok, text}` | `{:error, reason}` |
+  | `bash(command)` | `{:ok, output}` when the command exits 0 | `{:error, %{exit_status: n, output: text}}`; `{:error, reason}` when it did not run (it would need a review; a forbidden one stops the script) |
+  | `write(path, text)`, `edit(path, old, new)` | `:ok` | `{:error, reason}` (the directories the tools refuse); a script's changes are one undo step |
+  | `decide(type, input)` | `{:ok, %{value: v, confidence: c, actor: a, model: m, probabilities: %{}}}` for a registered type by name (`"triage"`) | `{:error, reason}` |
+  | `classify(questions, state)` | `{:ok, %{"name" => %{value: v, confidence: c, …}}}`, one ad-hoc decision per question (`Xeito.Decisions.AdHoc`) | `{:error, reason}` |
+  | `remember(id, attrs)` | `:ok`, the object written to the run's log (`"type"` is its type) | `{:error, reason}` |
+  | `mcp(server, tool, args)` | `{:ok, text}`, for a read-only, closed-world tool of the workspace's MCP servers (`Xeito.Mcp`) | `{:error, reason}` |
+  | `search_tools(words)` | `[%{server: s, name: n, description: d, schema: %{}}]` | raises |
+  | `text(value)` | the line added to the script's output (the last value is output too) | raises |
+  | `now()`, `random()` | Unix milliseconds; a float in [0, 1), both from the runner so a replay sees what the first run saw | raises |
+  | `parallel(items, fun, max: 4)` | `fun` over `items`, in order here | — |
+
+  The runner answers in JSON, with string keys, and the log keeps each child effect's result as
+  the runner gave it; the shaping happens here, after the reply, so a replay feeds the same
+  answers. `shapes/0` numbers these shapes for the sandbox fingerprint
+  (`Xeito.Scripts.Allowlist.fingerprint/0`): a script written for other shapes is not run again.
   """
 
   alias Xeito.Scripts.Vm
 
-  @spec read(String.t()) :: map()
-  def read(path), do: Vm.call("read", [path])
+  @shapes 2
+  @keys %{
+    "value" => :value,
+    "confidence" => :confidence,
+    "actor" => :actor,
+    "model" => :model,
+    "probabilities" => :probabilities,
+    "error" => :error,
+    "exit_status" => :exit_status,
+    "output" => :output,
+    "server" => :server,
+    "name" => :name,
+    "description" => :description,
+    "schema" => :schema
+  }
 
-  @spec bash(String.t()) :: map()
-  def bash(command), do: Vm.call("bash", [command])
+  @doc "The version of the shapes this API gives scripts; part of the sandbox fingerprint."
+  @spec shapes() :: pos_integer()
+  def shapes, do: @shapes
 
-  @spec write(String.t(), String.t()) :: map()
-  def write(path, content), do: Vm.call("write", [path, content])
+  @spec read(String.t()) :: {:ok, String.t()} | {:error, term()}
+  def read(path), do: "read" |> Vm.call([path]) |> content()
 
-  @spec edit(String.t(), String.t(), String.t()) :: map()
-  def edit(path, old, new), do: Vm.call("edit", [path, old, new])
+  @spec bash(String.t()) :: {:ok, String.t()} | {:error, term()}
+  def bash(command), do: "bash" |> Vm.call([command]) |> command()
 
-  @spec decide(String.t(), map()) :: map()
-  def decide(type, input), do: Vm.call("decide", [type, input])
+  @spec write(String.t(), String.t()) :: :ok | {:error, term()}
+  def write(path, content), do: "write" |> Vm.call([path, content]) |> done()
 
-  @spec classify(map(), map()) :: map()
-  def classify(questions, state), do: Vm.call("classify", [questions, state])
+  @spec edit(String.t(), String.t(), String.t()) :: :ok | {:error, term()}
+  def edit(path, old, new), do: "edit" |> Vm.call([path, old, new]) |> done()
 
-  @spec remember(String.t(), map()) :: map()
-  def remember(id, attrs), do: Vm.call("remember", [id, attrs])
+  @spec decide(String.t(), map()) :: {:ok, map()} | {:error, term()}
+  def decide(type, input), do: "decide" |> Vm.call([type, input]) |> verdict()
 
-  @spec mcp(String.t(), String.t(), map()) :: map()
-  def mcp(server, tool, args), do: Vm.call("mcp", [server, tool, args])
+  @spec classify(map(), map()) :: {:ok, %{String.t() => map()}} | {:error, term()}
+  def classify(questions, state), do: "classify" |> Vm.call([questions, state]) |> verdicts()
+
+  @spec remember(String.t(), map()) :: :ok | {:error, term()}
+  def remember(id, attrs), do: "remember" |> Vm.call([id, attrs]) |> done()
+
+  @spec mcp(String.t(), String.t(), map()) :: {:ok, String.t()} | {:error, term()}
+  def mcp(server, tool, args), do: "mcp" |> Vm.call([server, tool, args]) |> content()
 
   @spec search_tools(String.t()) :: [map()]
-  def search_tools(query), do: Vm.call("search_tools", [query])
+  def search_tools(query), do: "search_tools" |> Vm.call([query]) |> plain() |> Enum.map(&atom_keys/1)
 
-  @spec text(term()) :: term()
-  def text(value), do: Vm.call("text", [value])
+  @spec text(term()) :: String.t()
+  def text(value), do: "text" |> Vm.call([value]) |> plain()
 
   @spec now() :: integer()
-  def now, do: Vm.call("now", [])
+  def now, do: "now" |> Vm.call([]) |> plain()
 
   @spec random() :: float()
-  def random, do: Vm.call("random", [])
+  def random, do: "random" |> Vm.call([]) |> plain()
 
   @spec parallel(Enumerable.t(), (term() -> term()), keyword()) :: [term()]
   def parallel(items, fun, _opts \\ []), do: Enum.map(items, fun)
+
+  defp content(%{"ok" => true, "content" => content}), do: {:ok, content}
+  defp content(reply), do: failed(reply)
+
+  defp command(%{"exit_status" => 0, "output" => output}), do: {:ok, output}
+  defp command(%{"exit_status" => status, "output" => output}), do: {:error, %{exit_status: status, output: output}}
+  defp command(reply), do: failed(reply)
+
+  defp done(%{"ok" => true}), do: :ok
+  defp done(reply), do: failed(reply)
+
+  # A decision that was made has a value and no error; one that was not has the reason.
+  defp verdict(%{"value" => _} = verdict) when not is_map_key(verdict, "error"), do: {:ok, atom_keys(verdict)}
+  defp verdict(reply), do: failed(reply)
+
+  defp verdicts(%{"ok" => false} = reply), do: failed(reply)
+  defp verdicts(answers) when is_map(answers), do: {:ok, Map.new(answers, fn {name, v} -> {name, atom_keys(v)} end)}
+  defp verdicts(reply), do: failed(reply)
+
+  defp failed(%{"error" => reason}), do: {:error, reason}
+  defp failed(reply), do: {:error, "unexpected answer: " <> inspect(reply)}
+
+  # The calls that cannot fail: the runner refuses one only once the script is stopped.
+  defp plain(%{"ok" => false, "error" => reason}), do: raise(RuntimeError, message: reason)
+  defp plain(value), do: value
+
+  defp atom_keys(map), do: Map.new(map, fn {k, v} -> {Map.get(@keys, k, k), v} end)
 end
