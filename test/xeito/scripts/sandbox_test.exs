@@ -31,6 +31,16 @@ defmodule Xeito.Scripts.SandboxTest do
     assert {{:ok, "{:error, " <> _, ""}, _sandbox, []} = eval(sandbox, ~s|JSON.decode("nope")|)
   end
 
+  test "a script that raises on a megabyte value fails with the exception, not a limit", %{sandbox: sandbox} do
+    # As a CI log: tabs, quotes and escape codes, which a report of the value would have to escape.
+    line = "Ubuntu 24.04, OTP 27.3\tUNKNOWN STEP\t2026-10-28T14:58:39Z \e[31m** (MatchError) no match: \"x\"\e[0m\n"
+    big = String.duplicate(line, div(1_000_000, byte_size(line)))
+    on_call = fn "read", ["big.log"], acc -> {%{"ok" => true, "content" => big}, acc} end
+
+    assert {{:error, %{type: :exception, message: "** (MatchError) no match of right hand side value" <> _}}, _, []} =
+             eval(sandbox, ~s|%{content: c} = Script.read("big.log")|, %{}, on_call)
+  end
+
   test "values the protocol cannot carry come back inspected; a script past its time is a timeout", %{sandbox: sandbox} do
     assert {{:ok, "{1, 2}", ""}, sandbox, []} = eval(sandbox, "{1, 2}")
 

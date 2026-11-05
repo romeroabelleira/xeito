@@ -48,6 +48,30 @@ defmodule Xeito.Scripts.VmTest do
     assert message =~ "ArithmeticError"
   end
 
+  test "the default limits let a script read a megabyte and pass over its lines, and still stop a runaway" do
+    line = "Ubuntu 24.04, OTP 27.3\tUNKNOWN STEP\t2026-10-28T14:58:39Z lib/foo.ex:12: warning: unused variable\n"
+    big = String.duplicate(line, div(1_000_000, byte_size(line)))
+    on_call = fn "read", ["big.log"] -> %{"ok" => true, "content" => big} end
+
+    pass = """
+    {:ok, text} = Script.read("big.log")
+    lines = String.split(text, "\\n")
+    hits = for {l, i} <- Enum.with_index(lines), Regex.match?(~r/(FAIL|Error|error:|warning)/, l), do: i
+    {length(lines), length(hits)}
+    """
+
+    assert {:ok, {lines, hits}, ""} = run(pass, on_call)
+    assert lines > 10_000 and hits == lines - 1
+
+    {us, outcome} = :timer.tc(fn -> run("f = fn f, n -> f.(f, n + 1) end; f.(f, 0)") end)
+    assert {:error, %{type: :reductions}} = outcome
+    assert us < 5_000_000
+
+    {us, outcome} = :timer.tc(fn -> run("Enum.to_list(1..100_000_000)") end)
+    assert {:error, %{type: :memory}} = outcome
+    assert us < 5_000_000
+  end
+
   test "watch_parent/3 waits while the daemon's OS process lives and acts once it is gone" do
     assert Vm.parent_alive?(System.pid())
     refute Vm.parent_alive?("4000000000")

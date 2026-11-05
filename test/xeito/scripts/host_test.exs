@@ -2,6 +2,8 @@ defmodule Xeito.Scripts.HostTest do
   # Starts real sandbox VMs: not async, and a few seconds.
   use ExUnit.Case, async: false
 
+  import Xeito.Case, only: [eventually: 1]
+
   alias Xeito.Scripts.Host
 
   @moduletag :sandbox
@@ -34,6 +36,8 @@ defmodule Xeito.Scripts.HostTest do
     host = Host.whereis(session)
     %{sandbox: sandbox} = :sys.get_state(host)
     Xeito.Scripts.Sandbox.stop(sandbox)
+    # The VM's exit reaches the host after stop/1 returns; a script sent before it would find the VM dying.
+    eventually(fn -> match?(%{sandbox: nil}, :sys.get_state(host)) end)
 
     assert {{:ok, 2, ""}, []} = eval(session, "2")
     assert Host.whereis(session) == host

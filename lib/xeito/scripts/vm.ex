@@ -3,23 +3,29 @@ defmodule Xeito.Scripts.Vm do
   The script sandbox: evaluates a script with Dune under `Xeito.Scripts.Allowlist` and answers its
   calls to the outside through whoever runs it.
 
-    * `run/3` evaluates `code` in a Dune process with `limits` (`reductions`, `heap`, `timeout_ms`)
-      and serves every `Xeito.Scripts.Api` call the script makes with `on_call.(name, args)`,
-      in order, while the evaluation runs. It returns the script's last value, or why it failed.
+    * `run/3` evaluates `code` in a Dune process with `limits` (`reductions`, `heap` in words,
+      `timeout_ms`; by default 100 M, 50 M and 600 000, enough to read and shape a few megabytes
+      of text and little enough to stop a runaway loop within seconds) and serves every
+      `Xeito.Scripts.Api` call the script makes with `on_call.(name, args)`, in order, while
+      the evaluation runs. It returns the script's last value, or why it failed.
     * `main/0` is the entry point of the separate VM `Xeito.Scripts.Sandbox` starts: it speaks
       `Xeito.Scripts.Protocol` on stdin and stdout and serves calls by asking the daemon, and
       halts when the stream ends or the daemon's OS pid (`-xeito_parent`) is gone
       (`watch_parent/3`), so a daemon killed outright leaves no VM behind.
 
   A script that fails any way (a restricted call, the reductions, memory or time limits, an
-  exception, a syntax error, or a call the runner refused) is reported, never raised.
+  exception, a syntax error, or a call the runner refused) is reported, never raised, and the VM
+  logs nothing: its stdout is the protocol, and a crash report of a script's exception would be
+  formatted inside the limited process.
   """
 
   alias Xeito.Scripts.Allowlist
   alias Xeito.Scripts.Protocol
 
   @name :xeito_scripts_vm
-  @default_limits %{"reductions" => 5_000_000, "heap" => 10_000_000, "timeout_ms" => 600_000}
+  # Sized for a few megabytes of text: a regex pass over 3 MB of logs costs under 64 M reductions
+  # and 4 M words; a runaway loop or an unbounded list still stops within a second or two.
+  @default_limits %{"reductions" => 100_000_000, "heap" => 50_000_000, "timeout_ms" => 600_000}
 
   @type failure :: %{type: atom(), message: String.t(), stdio: String.t()}
   @type outcome :: {:ok, term(), String.t()} | {:error, failure()}
@@ -110,6 +116,10 @@ defmodule Xeito.Scripts.Vm do
 
   @spec main() :: no_return()
   def main do
+    # Nothing is logged here: a crash report of a script's exception would be formatted inside the
+    # limited process, where a large value in it costs the heap or the reductions, and printed
+    # on stdout, which carries the protocol.
+    :logger.set_primary_config(:level, :none)
     watch(:init.get_argument(:xeito_parent))
     main(:stdio)
   end
