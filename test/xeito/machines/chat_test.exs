@@ -92,6 +92,41 @@ defmodule Xeito.Machines.ChatTest do
                Engine.handle(machine, :thinking, nudged, :chatted, repeat)
     end
 
+    test "a cut result, with the script tool offered, is followed by the hint to write a script" do
+      queued = Chat.queue_calls(ctx(), message("", [call("read", %{"path" => "big.log"})]))
+      cut = "a cut\n[shaped: 3000 → 100 lines; full output: read with result: \"r/e1\"]"
+      recorded = Chat.record_result(queued, %{ok: true, content: "all of it", shaped: cut, ref: "r/e1"})
+
+      assert %{role: "tool", content: content} = List.last(recorded.turn)
+      assert content =~ "[shaped: 3000 → 100 lines"
+      assert content =~ "write a script"
+
+      plain =
+        Chat.record_result(Map.put(queued, :tools, ~w(read bash)), %{ok: true, content: "all", shaped: cut, ref: "r/e1"})
+
+      refute List.last(plain.turn).content =~ "write a script"
+    end
+
+    test "a model that sends the same program again is told so, then nudged to write a different one" do
+      machine = Machine.fetch!(Chat)
+      program = call("script", %{"program" => "Script.text(1)"})
+
+      ran =
+        ctx()
+        |> Chat.queue_calls(message("", [program]))
+        |> Chat.record_result(%{ok: true, content: "1", ref: "r/e1"})
+
+      once = Chat.queue_calls(ran, message("", [program]))
+      assert %{role: "tool", content: content} = List.last(once.turn)
+      assert content =~ "the same program gives the same result"
+
+      assert {:ok, %{to: :thinking, ctx: nudged}} =
+               Engine.handle(machine, :thinking, once, :chatted, message("", [program]))
+
+      assert %{role: "user", content: nudge} = List.last(nudged.turn)
+      assert nudge =~ "Write a different program"
+    end
+
     test "a turn that already edited, or was already nudged, is not nudged" do
       machine = Machine.fetch!(Chat)
       bad = message("", [call("no_such_tool", %{})])

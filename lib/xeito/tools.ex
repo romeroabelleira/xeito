@@ -162,9 +162,10 @@ defmodule Xeito.Tools do
           "project's tests), one that would need review fails that call, and a forbidden one " <>
           "stops the script. Script.write(path, text) and Script.edit(path, old, new) give :ok " <>
           "or {:error, reason} (undone as one step). " <>
-          ~s|Script.classify(%{"name" => %{"type" => "choice", "options" => [...], "criteria" => "..."}}, state) | <>
-          ~s|asks a small model (types: choice, bool, score with "range" => [min, max]) and gives | <>
-          ~s|{:ok, %{"name" => %{value: v, confidence: c}}}; Script.remember(id, attrs) keeps an object in the log. | <>
+          ~s|Script.classify(%{"urgency" => %{"type" => "choice", "options" => ["low", "high"], "criteria" => "..."}}, state) | <>
+          ~s|asks a small model one question per name (types: choice, bool, score with "range" => [min, max]) | <>
+          ~s|and gives {:ok, %{"urgency" => %{value: "high", confidence: 0.9}}}; Script.remember(id, attrs) keeps | <>
+          "an object in the log. " <>
           "Script.text(value) adds a line to the output; the program's last value is output too. " <>
           "No File, System, Process, clock or randomness: use Script.now() and Script.random(). " <>
           "Long output is shortened for you, as a command's is. Example:\n" <>
@@ -177,7 +178,8 @@ defmodule Xeito.Tools do
           program: %{
             type: "string",
             description:
-              "the Elixir program; Enum, String, Map, Regex, JSON (decode!/1, encode!/1) and Script are available"
+              "the Elixir program; Enum, String, Map, Regex, JSON (decode!/1, encode!/1) and Script are available. " <>
+                "A list is not indexable (Enum.at(list, i), not list[i]); Enum.with_index(list) gives {item, index}"
           },
           timeout_s: %{
             type: "integer",
@@ -366,6 +368,21 @@ defmodule Xeito.Tools do
   @doc "The text a tool result is reported to the model as."
   @spec result_text(map()) :: String.t()
   def result_text(result), do: text(result) <> timeout_hint(result)
+
+  @doc """
+  A line after a cut (`shaped`) read or command output, when the `script` tool is offered: to
+  work over all of it, write a script. Empty otherwise, and after a script's own output.
+  """
+  @spec script_hint(map(), map(), map()) :: String.t()
+  def script_hint(%{name: name}, %{shaped: shaped}, ctx) when name in ["read", "bash"] and is_binary(shaped) do
+    if "script" in names_for(ctx),
+      do:
+        "\nTo work over all of it rather than this cut (filter, count, group, extract), write a " <>
+          "script: Script.read(path) and Script.bash(command) give the whole text.",
+      else: ""
+  end
+
+  def script_hint(_call, _result, _ctx), do: ""
 
   defp text(%{shaped: text}) when is_binary(text), do: text
   defp text(%{exit_status: status, output: output}), do: "exit status #{status}\n#{output}"

@@ -316,7 +316,7 @@ defmodule Xeito.Machines.Chat do
   def queue_calls_and_nudge(ctx, message) do
     ctx
     |> queue_calls(message)
-    |> Transcript.put_turn([Calls.nudge()])
+    |> Transcript.put_turn([Calls.nudge(message)])
     |> Map.put(:nudged, true)
   end
 
@@ -368,7 +368,9 @@ defmodule Xeito.Machines.Chat do
     |> Map.update(:edited, edit_done?, &(&1 or edit_done?))
     # An edit may change what a repeat would see: repeats are allowed again.
     |> then(&if(edit_done?, do: Calls.forget(&1), else: Calls.remember_result(&1, result)))
-    |> Transcript.put_turn([Transcript.tool(ctx.current, Tools.result_text(result), result)])
+    |> Transcript.put_turn([
+      Transcript.tool(ctx.current, Tools.result_text(result) <> Tools.script_hint(ctx.current, result, ctx), result)
+    ])
     |> advance(ctx.pending)
   end
 

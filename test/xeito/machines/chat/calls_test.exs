@@ -27,6 +27,24 @@ defmodule Xeito.Machines.Chat.CallsTest do
       assert rest =~ "Its result:\n\na.ex\n\n"
     end
 
+    test "a repeated program is told that the same program gives the same result, and what to do instead" do
+      script = call("script", %{"program" => "Script.text(1)"})
+      key = {"script", %{"program" => "Script.text(1)"}}
+
+      assert {[], [{_, known}]} = Calls.sort(reply([script]), ctx(%{seen: [key], results: %{key => "1"}}))
+
+      assert known =~
+               "not run again: this exact program already ran in this turn, and the same program gives the same result"
+
+      assert known =~ "Its result:\n\n1\n\n"
+      assert known =~ "change the program"
+      assert known =~ "Script.text(inspect(value))"
+
+      assert {[], [{_, unknown}]} = Calls.sort(reply([script]), ctx(%{seen: [key]}))
+      assert unknown =~ "not run: this exact program already ran in this turn, and its result is above"
+      assert unknown =~ "change the program"
+    end
+
     test "a reply without calls has none" do
       assert Calls.sort(%{content: "Done."}, ctx()) == {[], []}
       assert Calls.valid(%{content: "Done."}, ctx()) == []
@@ -69,6 +87,16 @@ defmodule Xeito.Machines.Chat.CallsTest do
     assert note =~ "going in circles"
     assert Calls.stuck_note(ctx(%{openings: ["Hm"]}), reply("Hm. Yes", [])) == []
     assert Calls.stuck_note(ctx(%{openings: ["", ""]}), reply("  ", [])) == []
+  end
+
+  test "the nudge speaks of programs when the repeated calls are scripts, of results otherwise" do
+    assert %{role: "user", content: calls} = Calls.nudge(reply("", [ls()]))
+    assert calls =~ "You already have the results you need"
+
+    assert %{role: "user", content: programs} = Calls.nudge(reply("", [ls(), call("script", %{"program" => "1"})]))
+    assert programs =~ "the same program again"
+    assert programs =~ "Write a different program"
+    refute programs =~ "You already have the results you need"
   end
 
   test "results are kept for repeats until an edit" do

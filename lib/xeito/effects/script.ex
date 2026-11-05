@@ -30,7 +30,8 @@ defmodule Xeito.Effects.Script do
       another sandbox (`args.sandbox`) is not run again.
     * The result: `%{ok: true, content: output, ref: id}` (what the script printed, its texts,
       its last value), shaped by `Xeito.Tools.Shape` when long; or `%{ok: false, error: reason}`
-      naming the failure (`restricted`, `timeout`, `exception`, …, or `stopped`) with the output so far.
+      naming the failure (`restricted`, `timeout`, `exception`, …, or `stopped`) with the output so far;
+      an exception on `Jason` says that `JSON` is built in.
 
   A halted run takes the session's sandbox with it; the next script starts a new one.
   """
@@ -247,6 +248,13 @@ defmodule Xeito.Effects.Script do
 
   defp classify(_args, acc), do: {error("classify takes a map of questions and a state map"), acc}
 
+  # The question itself where the named questions go: the description's shape, read with "name" as a key.
+  defp types(%{"type" => _}),
+    do:
+      {:error,
+       ~s|classify takes named questions, %{"urgency" => %{"type" => "choice", ...}}; this is one | <>
+         "question without a name: put it in a map under its name"}
+
   defp types(questions) do
     Enum.reduce_while(Enum.sort(questions), {:ok, []}, fn {name, question}, {:ok, types} ->
       case AdHoc.type(name, question) do
@@ -350,7 +358,14 @@ defmodule Xeito.Effects.Script do
   end
 
   def finish(effect, {:error, %{type: type, message: message} = failure}, acc),
-    do: failed(effect, "#{type}: #{message}", output(failure[:stdio], acc.texts, nil))
+    do: failed(effect, "#{type}: #{message}" <> json_hint(message), output(failure[:stdio], acc.texts, nil))
+
+  # A program written for another project reaches for Jason; Elixir's own JSON is there.
+  defp json_hint(message) do
+    if message =~ "Jason.",
+      do: "\n(there is no Jason here: JSON is built in, JSON.decode!/1 and JSON.encode!/1)",
+      else: ""
+  end
 
   # What the script printed, its texts, then its last value, one per line; nothing for empties.
   defp output(stdio, texts, value) do

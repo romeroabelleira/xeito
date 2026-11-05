@@ -44,6 +44,12 @@ defmodule Xeito.ToolsTest do
       assert description =~ "{:error, %{exit_status: n, output: text}}"
 
       assert description =~
+               ~s|Script.classify(%{"urgency" => %{"type" => "choice", "options" => ["low", "high"], "criteria" => "..."}}, state)|
+
+      assert description =~ ~s|{:ok, %{"urgency" => %{value: "high", confidence: 0.9}}}|
+      assert program.description =~ "Enum.at(list, i), not list[i]"
+
+      assert description =~
                ~s|Example:\n{:ok, out} = Script.bash("grep -rln TODO lib/")\nfor file <- String.split(out, "\\n", trim: true) do\n  {:ok, text} = Script.read(file)|
     end
 
@@ -139,6 +145,21 @@ defmodule Xeito.ToolsTest do
     assert Tools.result_text(%{ok: false, error: "missing"}) == "error: missing"
     assert Tools.result_text(%{ok: false, error: :enoent}) == "error: :enoent"
     assert Tools.result_text(%{something: 1}) == "%{something: 1}"
+  end
+
+  test "a cut read or command output hints at a script when the script tool is offered, else nothing" do
+    ctx = %{cwd: "/w"}
+    shaped = %{ok: true, content: "all of it", shaped: "a cut\n[shaped: 3000 → 100 lines]"}
+    read = %{name: "read", arguments: %{"path" => "big.log"}}
+
+    assert Tools.script_hint(read, shaped, ctx) =~ "write a script"
+
+    assert Tools.script_hint(%{name: "bash", arguments: %{"command" => "cat big.log"}}, shaped, ctx) =~
+             "Script.bash(command)"
+
+    assert Tools.script_hint(read, shaped, Map.put(ctx, :tools, ~w(read bash))) == ""
+    assert Tools.script_hint(read, %{ok: true, content: "short"}, ctx) == ""
+    assert Tools.script_hint(%{name: "script", arguments: %{"program" => "1"}}, shaped, ctx) == ""
   end
 
   describe "direct MCP tools (ctx.mcp)" do

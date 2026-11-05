@@ -214,6 +214,15 @@ defmodule Xeito.Effects.ScriptTest do
                  Script.handle("classify", args, acc(ws))
       end
 
+      # The question itself where the named questions go: what a model does with the description's shape.
+      one = %{"name" => "urgency", "type" => "choice", "options" => ["low", "high"], "criteria" => "How urgent?"}
+
+      assert {%{"ok" => false, "error" => "classify takes named questions, " <> rest}, _} =
+               Script.handle("classify", [one, %{}], acc(ws))
+
+      assert rest =~ ~s|%{"urgency" => %{"type" => "choice", ...}}|
+      assert rest =~ "this is one question without a name"
+
       refute_received {:asked, _, _, _}
     end
 
@@ -413,6 +422,14 @@ defmodule Xeito.Effects.ScriptTest do
                  acc(ws)
                  | texts: ["note"]
                })
+
+      jason = "** (UndefinedFunctionError) function Jason.decode!/1 is undefined (module Jason is not available)"
+
+      assert %{ok: false, error: error} =
+               Script.finish(effect, {:error, %{failure | type: :exception, message: jason}}, acc(ws))
+
+      assert error =~ "exception: ** (UndefinedFunctionError) function Jason.decode!/1"
+      assert error =~ "there is no Jason here: JSON is built in, JSON.decode!/1 and JSON.encode!/1"
 
       stopped = %{acc(ws) | stopped: "`rm -rf ~/` is forbidden"}
       assert %{ok: false, error: "stopped: `rm -rf ~/` is forbidden"} = Script.finish(effect, {:ok, 1, ""}, stopped)

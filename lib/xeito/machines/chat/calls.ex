@@ -5,10 +5,14 @@ defmodule Xeito.Machines.Chat.Calls do
   - `sort/2` splits a reply's calls into those that run and those refused with a reason: a call
     `Xeito.Tools.to_effect/2` rejects, or an exact repeat (same name and arguments) of a call
     made in this turn since its last edit (`ctx.seen`), answered with the earlier result when
-    it is known (`ctx.results`). Repeats within one reply count too.
+    it is known (`ctx.results`). Repeats within one reply count too. A repeated `script` is told
+    that the same program gives the same result, and to change the program if the result is not
+    what it meant: a model sends a program again when its result was empty or wrong, not to see
+    it again.
   - `remember/3` records a reply: its valid calls as seen, the streak of replies with no valid
     call (`ctx.invalid_streak`), and how it opened (`ctx.openings`). `stuck_note/2` is a nudge
-    for a reply opening with the same sentence as two earlier ones.
+    for a reply opening with the same sentence as two earlier ones; `nudge/1` the one for a
+    second reply of repeats, about programs when they are scripts.
   - `remember_result/2` keeps a call's result for repeats; `forget/1` allows repeats again
     after an edit (`edit_done?/2`).
   """
@@ -35,18 +39,33 @@ defmodule Xeito.Machines.Chat.Calls do
 
     case {Tools.to_effect(call, ctx), key in seen} do
       {{:error, reason}, _} -> {ok, [{call, "error: " <> reason} | bad], seen}
-      {{:ok, _}, true} -> {ok, [{call, repeated(Map.get(Map.get(ctx, :results, %{}), key))} | bad], seen}
+      {{:ok, _}, true} -> {ok, [{call, repeated(call, Map.get(Map.get(ctx, :results, %{}), key))} | bad], seen}
       {{:ok, _}, false} -> {[call | ok], bad, [key | seen]}
     end
   end
 
-  defp repeated(nil),
+  @change_the_program "If that is what you needed, answer now. If not, the program did not do what you " <>
+                        "meant: change the program (check each pattern against what it matches: Regex.scan " <>
+                        "gives lists, Enum.with_index gives {item, index}), and print the values it works " <>
+                        "on with Script.text(inspect(value))."
+
+  defp repeated(%{name: "script"}, nil),
+    do:
+      "not run: this exact program already ran in this turn, and its result is above (if it was " <>
+        "elided, read it back with result). " <> @change_the_program
+
+  defp repeated(%{name: "script"}, result),
+    do:
+      "not run again: this exact program already ran in this turn, and the same program gives the " <>
+        "same result. Its result:\n\n" <> result <> "\n\n" <> @change_the_program
+
+  defp repeated(_call, nil),
     do:
       "not run: you already made this exact call in this turn, and its result is above (if it " <>
         "was elided, read it back with result). Use that result instead of repeating the call; " <>
         "if you are stuck, say what blocks you."
 
-  defp repeated(result),
+  defp repeated(_call, result),
     do:
       "not run again: you already made this exact call in this turn. Its result:\n\n" <>
         result <> "\n\nUse it instead of repeating the call."
@@ -100,15 +119,24 @@ defmodule Xeito.Machines.Chat.Calls do
     |> String.slice(0, 80)
   end
 
-  @doc "The nudge for a second step of only repeated or invalid calls in a turn that changed nothing."
-  @spec nudge() :: map()
-  def nudge,
-    do: %{
-      role: "user",
-      content:
-        "You already have the results you need, and repeating calls will end this turn. " <>
-          "Act on them now: make the change you planned, give your answer, or say what blocks you."
-    }
+  @doc """
+  The nudge for a second step of only repeated or invalid calls in a turn that changed nothing:
+  about programs when `message` repeats a script, else about the results already in hand.
+  """
+  @spec nudge(map()) :: map()
+  def nudge(message) do
+    content =
+      if Enum.any?(Map.get(message, :tool_calls, []), &(&1.name == "script")),
+        do:
+          "You sent the same program again, and running it again gives the same result; " <>
+            "repeating calls will end this turn. Write a different program, give your answer, " <>
+            "or say what blocks you.",
+        else:
+          "You already have the results you need, and repeating calls will end this turn. " <>
+            "Act on them now: make the change you planned, give your answer, or say what blocks you."
+
+    %{role: "user", content: content}
+  end
 
   @doc "Keeps the result of the current call, to answer a repeat of it."
   @spec remember_result(map(), map()) :: map()
