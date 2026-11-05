@@ -174,7 +174,11 @@ defmodule Xeito.Tools do
           ~s|  Script.text("\#{file}: \#{length(String.split(text, "\\n"))} lines")\n| <>
           "end",
         %{
-          program: %{type: "string", description: "the Elixir program; Enum, String, Map, Regex and Script are available"},
+          program: %{
+            type: "string",
+            description:
+              "the Elixir program; Enum, String, Map, Regex, JSON (decode!/1, encode!/1) and Script are available"
+          },
           timeout_s: %{
             type: "integer",
             description:

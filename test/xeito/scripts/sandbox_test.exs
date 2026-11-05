@@ -25,6 +25,12 @@ defmodule Xeito.Scripts.SandboxTest do
     assert {{:error, %{type: :restricted}}, _sandbox, []} = eval(sandbox, ~s|File.read!("x")|)
   end
 
+  test "the first script of a fresh VM reaches every allowed module: JSON decodes and encodes", %{sandbox: sandbox} do
+    code = ~s|JSON.decode!(~s({"a": [1, 2]})) \|> Map.update!("a", &Enum.sum/1) \|> JSON.encode!()|
+    assert {{:ok, ~s({"a":3}), ""}, sandbox, []} = eval(sandbox, code)
+    assert {{:ok, "{:error, " <> _, ""}, _sandbox, []} = eval(sandbox, ~s|JSON.decode("nope")|)
+  end
+
   test "values the protocol cannot carry come back inspected; a script past its time is a timeout", %{sandbox: sandbox} do
     assert {{:ok, "{1, 2}", ""}, sandbox, []} = eval(sandbox, "{1, 2}")
 
@@ -34,8 +40,9 @@ defmodule Xeito.Scripts.SandboxTest do
   end
 
   test "a VM that dies mid-script is reported as crashed, and the sandbox is gone", %{sandbox: sandbox} do
+    # Killed outright: a VM told to stop would still answer the call before it ends.
     killer = fn "now", [], acc ->
-      :exec.stop(sandbox.pid)
+      :ok = :exec.kill(sandbox.os_pid, 9)
       {0, acc}
     end
 

@@ -7,6 +7,9 @@ defmodule Xeito.Scripts.Allowlist do
   creation already. This list also refuses `DateTime`, `Date`, `NaiveDateTime`, `Time`, `Calendar`,
   `Process`, `:rand`, `:crypto`, and the `:erlang` functions that read a clock or make unique values, so a script sees
   only what the runner gives it (`now/0`, `random/0`) and a replay sees what the first run saw.
+  Dune's default allows `JSON.decode/1`, `decode!/1`, `encode!/1` and `encode_to_iodata!/1`, so a
+  script decodes and encodes JSON; `Xeito.Scripts.Vm.preload/0` loads the allowed modules before
+  a script is parsed, so their names resolve in a fresh VM.
   """
 
   @behaviour Dune.Allowlist

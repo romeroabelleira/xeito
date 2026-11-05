@@ -38,6 +38,8 @@ defmodule Xeito.ToolsTest do
       refute Tools.risky?(%{name: "script", arguments: %{"program" => "Script.bash(\"rm -rf /\")"}})
       assert [%{function: %{name: "script", description: description}}] = Tools.specs(["script"])
       assert description =~ "Script.read(path) gives {:ok, text} or {:error, reason}"
+      assert [%{function: %{parameters: %{properties: %{program: program}}}}] = Tools.specs(["script"])
+      assert program.description =~ "JSON (decode!/1, encode!/1)"
       assert description =~ "Script.bash(command) gives {:ok, output} when the command exits 0"
       assert description =~ "{:error, %{exit_status: n, output: text}}"
 

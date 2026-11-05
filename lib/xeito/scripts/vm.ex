@@ -28,7 +28,7 @@ defmodule Xeito.Scripts.Vm do
   @spec run(String.t(), map(), (String.t(), [term()] -> term())) :: outcome()
   def run(code, limits, on_call) do
     limits = Map.merge(@default_limits, limits)
-    Enum.each([Script, Xeito.Scripts.Api], &make_known/1)
+    preload()
     Process.register(self(), @name)
 
     parent = self()
@@ -55,11 +55,20 @@ defmodule Xeito.Scripts.Vm do
     Process.unregister(@name)
   end
 
-  # Dune sees only the functions of loaded modules, and its parser, which creates no atoms, resolves
-  # an alias only when the atoms of its segments exist: in a fresh VM, they do not until this runs.
-  defp make_known(module) do
-    Code.ensure_loaded!(module)
-    module |> Module.split() |> Enum.each(&String.to_atom/1)
+  @doc """
+  Loads every module a script may call, with the atoms of their aliases, so a fresh VM resolves
+  them from its first script: Dune's parser creates no atoms, so it maps a name that does not
+  exist yet (a function no loaded module exports, an alias no loaded module names) to a private
+  one, and the call fails as undefined.
+  """
+  @spec preload() :: :ok
+  def preload do
+    modules = [Script, Xeito.Scripts.Api, Dune.Allowlist.Default | Application.spec(:elixir, :modules)]
+    Code.ensure_all_loaded!(modules)
+
+    modules
+    |> Enum.flat_map(fn module -> module |> Atom.to_string() |> String.split(".") end)
+    |> Enum.each(&String.to_atom/1)
   end
 
   # Calls arrive while the evaluation runs; the evaluator's result ends the loop.
