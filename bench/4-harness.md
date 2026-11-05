@@ -281,3 +281,53 @@ A script's commands are not Risk decisions: a command safe by rule runs, any oth
 4. Getting the tool used at all: on this model, offering `script` changes nothing. A routing rule (a request that names "every" file, comment or issue of a repository goes to a script-first turn) or a one-line instruction in the system prompt would be the next experiment, after 1–3, since a script that fails is worse than none.
 
 Until those are tried, `script` stays offered (it costs nothing when unused) and the measurement stands as the baseline for the next run of the same script.
+
+### Follow-on 2026-11-05: after the first three follow-ups
+
+The first three follow-ups are in: results shaped as Elixir expects them (`{:ok, text}` and `{:error, reason}`, atom keys, a worked example in the tool description); a fresh sandbox VM that resolves every allowed module from its first script (`JSON` was on the allow-list all along: Dune's parser creates no atoms, so a function name no loaded module exported yet, such as `decode!`, was mapped to a private atom and the call failed as undefined); limits of 100 M reductions and 50 M words, and a VM that logs nothing. Measured before the change, a regex pass over the 855 KB log costs under 16 M reductions and under 1 M words, so the heap limit was never hit by a script: the "memory exceeded" failures were OTP's default logger formatting the crash report of a script's MatchError, with the 855 KB value in it, inside the limited process. The workspaces were rebuilt with `p4h_workspaces.sh` and are byte-identical to the first run's (same logs, same twelve issues, same TODOs); `p4h_scripts.exs DIR/tasks.json OUT.json 2 scripts,script_only` ran the two script variants, and the plain baseline above is reused, since nothing on the plain tools' path changed.
+
+| Task | Variant | Run | Success (coverage) | Turns | Tokens | s | Calls | Rules | Human | Failed | Scripts |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| todos | script offered | 1 | no (0.20) | 5 | 26 399 | 42 | 28 | 0 | 0 | 1 | 2 |
+| todos | script offered | 2 | ok (1.00) | 4 | 20 237 | 26 | 14 | 0 | 0 | 1 | 2 |
+| todos | script only | 1 | ok (1.00) | 5 | 21 676 | 43 | 26 | — | 0 | 2 | 4 |
+| todos | script only | 2 | no (0.00) | 11 | 52 868 | 54 | 17 | — | 0 | 4 | 7 |
+| ci_logs | script offered | 1 | ok (1.00) | 18 | 238 765 | 174 | 34 | 6 | 28 | 0 | 0 |
+| ci_logs | script offered | 2 | no (0.00) | 6 | 96 818 | 134 | 9 | 5 | 2 | 0 | 0 |
+| ci_logs | script only | 1 | no (0.67) | 15 | 360 873 | 207 | 15 | — | 0 | 0 | 11 |
+| ci_logs | script only | 2 | no (0.00) | 9 | 48 641 | 58 | 11 | — | 0 | 1 | 5 |
+| issues | script offered | 1 | ok (1.00) | 2 | 7 085 | 13 | 1 | 0 | 0 | 0 | 0 |
+| issues | script offered | 2 | ok (1.00) | 2 | 7 116 | 13 | 1 | 0 | 0 | 0 | 0 |
+| issues | script only | 1 | no (0.08) | 8 | 14 870 | 31 | 3 | — | 0 | 1 | 4 |
+| issues | script only | 2 | no (0.42) | 8 | 47 345 | 52 | 3 | — | 0 | 1 | 4 |
+
+Means over the six runs of each variant, with the first run's beside them:
+
+| Variant | Successes | Coverage | Turns | Tokens | s | Calls | By rule | Human | Failed | Scripts |
+|---|---|---|---|---|---|---|---|---|---|---|
+| plain (2026-11-03) | 5/6 | 0.94 | 11.2 | 124 804 | 91 | 19.2 | 12.5 | 3.2 | 0.5 | 0 |
+| script offered (2026-11-03) | 4/6 | 0.78 | 10.5 | 127 802 | 65 | 14.0 | 9.8 | 0.3 | 1.7 | 0 |
+| script offered (2026-11-05) | 4/6 | 0.70 | 6.2 | 66 070 | 67 | 14.5 | 1.8 | 5.0 | 0.3 | 0.7 |
+| script only (2026-11-03) | 3/6 | 0.57 | 11.8 | 90 895 | 50 | 9.8 | — | 0 | 6.7 | 8.7 |
+| script only (2026-11-05) | 1/6 | 0.36 | 9.3 | 91 046 | 74 | 12.5 | — | 0 | 1.5 | 5.8 |
+
+The scripts the model wrote, by how they ended (from the workspaces' logs):
+
+| Cause | 2026-11-03 (52 scripts) | 2026-11-05 (39 scripts) |
+|---|---|---|
+| result shape (`{:ok, out}`, `%{content: c}`, `.content` against a string-keyed map) | 24 | 0 |
+| no JSON decoder reached (`Jason.decode!`, `Code.eval_string`) | 5 | 2 (`Jason.decode!`, both issues runs) |
+| heap or reductions limit | 7 | 0 |
+| `classify` question map read literally (`%{"name" => "urgency", "type" => …}` for `%{"urgency" => %{"type" => …}}`) | 0 | 3 raised, and 5 more ran and printed the same error |
+| ordinary Elixir mistakes (`lines[i]` on a list, `String.index/2`, a wrong arity, `String.contains?` on an integer) | 4 | 6 |
+| failed in all | 40 (77%) | 11 (28%) |
+
+**Result: the three follow-ups removed the failures they aimed at, and the exit criteria still do not hold.**
+
+- **Scripts now run.** Failed effects per script-only run fell from 6.7 to 1.5; not one script failed on a result shape or a limit, and every script of the first ci_logs run succeeded over the 855 KB log (eleven reads and passes of it). What fails now is the model's Elixir (`lines[i]` on a list, four times), the `classify` question map, which the description shows as `%{"name" => %{…}}` and the model copied with `"name"` as a literal key (one run found the right shape on its third try and classified all ten TODOs on the small model), and `Jason.decode!`, which both issues runs wrote although the program's description names `JSON`; after it failed, both fell back to regular expressions over the raw JSON.
+- **Success fell with scripts alone, from 3/6 to 1/6, because the runs were stopped.** Five of the six ended with the chat machine's "kept making tool calls that could not run": a reply whose calls are all repeats of an exact earlier call, or invalid, twice in a row, ends the turn. When a script's result is not what the model wanted it sends the same program again, byte for byte, where with the plain tools it varies the flags; the first ci_logs run had two of the three causes in hand, after eleven successful scripts, when it repeated one and was stopped. The todos run that failed repeated `classify` attempts; the issues runs repeated the same regex pass.
+- **Offered beside the plain tools, `script` was chosen for the first time**: both todos runs wrote two scripts each (grep, then read each file: the request the description's example resembles), none for ci_logs or issues. Turns per run halved (6.2 against 10.5) and tokens too (66 k against 128 k), at the same 4/6: the second ci_logs run failed on an HTTP 500 from Ollama after six turns, and the first todos run reported wrong line numbers for eight of ten comments. One run of each kind is not enough to separate the tool's effect from the model's variance.
+- **The exit criteria.** "Five times fewer turns at equal or better success": 9.3 turns against 11.2, at 1/6 against 5/6. Not met. The JavaScript comparison is still not run (no JavaScript runtime, no pi here).
+
+**What the rerun asks for next**, the fourth follow-up, in order: (1) the repeat guard and scripts: a program sent twice is a repeated call, and that, not the scripts, ended five of six runs; either the tool result of a repeated script should say so and what to change, or the nudge should name scripts; (2) the description's `classify` example should use a real question name (`%{"urgency" => %{…}}`), and the `program` description should say that lists are not indexable (`Enum.at/2`); (3) an undefined `Jason` in a script should fail with a message naming `JSON.decode!/1`; (4) only then the routing rule or prompt line, measured on this set: offered, the tool is now used where the example matches the request and nowhere else.
+

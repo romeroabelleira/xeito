@@ -3,7 +3,10 @@
 # and with `script` offered as well. Run in-process:
 #
 #   source ~/.config/xeito/tiers.env
-#   mix run bench/scripts/p4h_scripts.exs TASKS.json OUT.json [REPEATS]
+#   mix run bench/scripts/p4h_scripts.exs TASKS.json OUT.json [REPEATS [VARIANTS]]
+#
+# VARIANTS is a comma-separated subset of plain, scripts and script_only (all three by default), so a
+# rerun after a change to scripts alone can leave out the plain baseline.
 #
 # TASKS.json is a list of `{"id", "workspace", "request", "check"}`; `check` names the success
 # check below with its data (`{"kind": "mentions", "all": [...]}`: every string appears in the
@@ -17,18 +20,19 @@ alias Xeito.Session
 
 [tasks_file, out | rest] = System.argv()
 
-repeats =
-  case rest,
-    do: (
-      [n] -> String.to_integer(n)
-      [] -> 1
-    )
+{repeats, only} =
+  case rest do
+    [] -> {1, nil}
+    [n] -> {String.to_integer(n), nil}
+    [n, variants] -> {String.to_integer(n), String.split(variants, ",")}
+  end
 
 tasks = tasks_file |> File.read!() |> JSON.decode!()
 
 plain = ~w(read bash write edit)
 # `scripts` offers the script tool beside the plain ones; `script_only` leaves the model nothing else.
-variants = [plain: plain, scripts: plain ++ ["script"], script_only: ["script"]]
+all_variants = [plain: plain, scripts: plain ++ ["script"], script_only: ["script"]]
+variants = if only, do: Enum.filter(all_variants, fn {v, _} -> to_string(v) in only end), else: all_variants
 
 defmodule Bench.P4h do
   @moduledoc false
