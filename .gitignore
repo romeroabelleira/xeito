@@ -42,3 +42,7 @@ xeito-*.tar
 
 # Worktrees that agents work in.
 /.claude/worktrees/
+
+# Python bytecode (the benchmark scripts in bench/scripts).
+__pycache__/
+*.py[cod]
