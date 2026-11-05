@@ -331,3 +331,39 @@ The scripts the model wrote, by how they ended (from the workspaces' logs):
 
 **What the rerun asks for next**, the fourth follow-up, in order: (1) the repeat guard and scripts: a program sent twice is a repeated call, and that, not the scripts, ended five of six runs; either the tool result of a repeated script should say so and what to change, or the nudge should name scripts; (2) the description's `classify` example should use a real question name (`%{"urgency" => %{…}}`), and the `program` description should say that lists are not indexable (`Enum.at/2`); (3) an undefined `Jason` in a script should fail with a message naming `JSON.decode!/1`; (4) only then the routing rule or prompt line, measured on this set: offered, the tool is now used where the example matches the request and nowhere else.
 
+### Follow-on 2026-11-05, later: after the fourth follow-up
+
+The fourth follow-up changed what the turn tells the model, not the scripts: a repeated program is told that the same program gives the same result and to change it rather than "use the result"; the nudge before the turn ends speaks of programs; the description's `classify` example uses a real question name and the answer under it, a questions map in a question's own shape is refused saying what shape to use, an exception on `Jason` says that `JSON` is built in, and the program's description says that a list is not indexable; a cut read or command output, when `script` is offered, is followed by one line saying a script gets the whole text. Same material (the workspaces are unchanged), same two variants, two runs each, plain baseline reused.
+
+| Task | Variant | Run | Success (coverage) | Turns | Tokens | s | Calls | Rules | Human | Failed | Scripts |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| todos | script offered | 1 | no (0.00) | 26 | 195 839 | 74 | 29 | 0 | 0 | 1 | 1 |
+| todos | script offered | 2 | ok (1.00) | 2 | 7 824 | 23 | 11 | 0 | 0 | 0 | 1 |
+| todos | script only | 1 | ok (1.00) | 26 | 259 922 | 111 | 38 | — | 0 | 1 | 24 |
+| todos | script only | 2 | ok (1.00) | 19 | 139 149 | 81 | 20 | — | 0 | 2 | 15 |
+| ci_logs | script offered | 1 | ok (1.00) | 13 | 211 142 | 123 | 16 | 16 | 0 | 3 | 0 |
+| ci_logs | script offered | 2 | no (0.00) | 26 | 449 524 | 220 | 47 | 45 | 2 | 0 | 0 |
+| ci_logs | script only | 1 | no (0.00) | 10 | 62 387 | 59 | 11 | — | 0 | 1 | 5 |
+| ci_logs | script only | 2 | no (0.00) | 8 | 58 089 | 53 | 6 | — | 0 | 2 | 4 |
+| issues | script offered | 1 | ok (1.00) | 2 | 7 147 | 13 | 1 | 0 | 0 | 0 | 0 |
+| issues | script offered | 2 | ok (1.00) | 2 | 7 177 | 12 | 1 | 0 | 0 | 0 | 0 |
+| issues | script only | 1 | no (0.33) | 8 | 47 382 | 49 | 3 | — | 0 | 1 | 4 |
+| issues | script only | 2 | no (1.00) | 26 | 250 645 | 109 | 23 | — | 0 | 1 | 24 |
+
+| Variant | Successes | Coverage | Turns | Tokens | s | Calls | By rule | Human | Failed | Scripts |
+|---|---|---|---|---|---|---|---|---|---|---|
+| plain (2026-11-03) | 5/6 | 0.94 | 11.2 | 124 804 | 91 | 19.2 | 12.5 | 3.2 | 0.5 | 0 |
+| script offered, after follow-ups 1–3 | 4/6 | 0.70 | 6.2 | 66 070 | 67 | 14.5 | 1.8 | 5.0 | 0.3 | 0.7 |
+| script offered, after follow-up 4 | 4/6 | 0.67 | 11.8 | 146 442 | 78 | 17.5 | 10.2 | 0.3 | 0.7 | 0.3 |
+| script only, after follow-ups 1–3 | 1/6 | 0.36 | 9.3 | 91 046 | 74 | 12.5 | — | 0 | 1.5 | 5.8 |
+| script only, after follow-up 4 | 2/6 | 0.56 | 16.2 | 136 262 | 77 | 16.8 | — | 0 | 1.3 | 12.7 |
+
+Of 78 programs, 8 failed (10%, against 28% and 77% before): `Jason.decode!` twice, and both runs then wrote `JSON.decode!` on the hint's word, where before they fell back to regular expressions; `Regex.match?` and `String.contains?` on a non-string three times; two compile errors and one syntax error. None on a shape, a limit, or `classify`, which no program called this time.
+
+**Result: no gain, and the exit criteria still do not hold.** Nine of the twelve runs were ended by Xeito, not by the model: five by the repeat guard, four by the step limit of 25. Only three answered on their own (one todos run with scripts offered, both issues runs with scripts offered, where the model read the file and answered in two turns, as with the plain tools). What the logs show:
+
+- **The repeat message does not break the loop.** In four runs the model sent the same program three times, byte for byte, after being told that the same program gives the same result and what to change; one run changed the program after two repeats and then looped on the new one. The repeated program's result was fine in three of the five cases (a 20 KB listing of the issues, a 30 KB pass over the logs): the model loops after a long result as after an empty one. Offered the plain tools, one ci_logs run looped the same way on two `grep` calls. The loop is the model's, at 10–20 k tokens of tool output in its window, and no wording of the turn's messages changes it; the guard's job is to end it cheaply, which it does.
+- **Without the loop, the model uses a script as a `read`.** Two script-only runs wrote 24 programs each and hit the step limit: one read the lines around one TODO per program (and classified all ten right, at 26 turns); the other printed the issues with a shorter slice each time, from 24 KB down to 1 KB, never answering. A program per step is the plain tools' pattern with more ceremony: the model does not plan a loop, it plans the next look.
+- **The cut-output hint changed nothing visible**: the ci_logs runs with scripts offered kept to `grep` and `sed` over the logs (which a person would do too), and neither wrote a script.
+
+**What this says for P4h.** On this local model the `script` tool is used only where the request looks like the description's example, and when it is used the model writes one small program per step or loops; the harness cannot talk it out of either. The three follow-ups that fixed the sandbox were right and stay (programs run: 10% fail, from 77%); the fourth, the turn's wording, was the last cheap lever and did not move the numbers. What is left is not in Xeito's hands at the turn level: a model that plans (the frontier deciders of P4f, or a larger local one, measured with the same script), sampling settings against byte-identical repeats (Ollama's `repeat_penalty`, `temperature`, which the chat effect does not set), or a window small enough that the model never reaches the 15–20 k tokens where it loops. The exit criterion "five times fewer turns" is also unreachable where the plain tools take two turns (issues). Until one of those is tried, the phase's gain is not shown, and `script` stays offered as it is.
