@@ -21,7 +21,7 @@ jobs:
       # Pinned to a commit, not a tag: this job holds a token that can write to the repository,
       # and a tag can be moved to other code. Dependabot updates the hash and the comment.
       - id: meta
-        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
       - name: Enable auto-merge
         # Updates of GitHub Actions always wait for review: they change the code this job runs.
