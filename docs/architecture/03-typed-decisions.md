@@ -89,7 +89,7 @@ No tier asks the model for its confidence in words. Measured results: [bench 2](
 - llama-server's `top_logprobs` come from the *unconstrained* distribution, so the top alternatives can be tokens the grammar forbids. Logprob confidence must be renormalised over the grammar-allowed first tokens of each option, or computed by scoring each option explicitly.
 - Generating a rationale costs ~4× the decision itself on the CPU tier. Put `value` first in the schema, and make `rationale` optional and capped (off by default for the small tier).
 
-Calibration is **per decision type and per model**. It is fitted offline against the labelled examples (temperature or isotonic scaling), and the thresholds in `min_confidence` are tuned from the mined logs. See [05](05-event-log-and-process-mining.md).
+Calibration is **per decision type and per model**. It is fitted offline against the labelled examples (temperature or isotonic scaling), and the thresholds in `min_confidence` are tuned from the mined logs. A threshold belongs to the probabilities it was fitted on, so `min_confidence` may be a map read by the backend that answered, then by the tier, then its `:default`: `%{default: 0.8, colibri: 0.6}` for a type whose answers on Colibri, scored per option, are as right as elsewhere but flatter. See [05](05-event-log-and-process-mining.md).
 
 ## Abstention is a value
 

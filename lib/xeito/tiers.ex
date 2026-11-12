@@ -115,10 +115,13 @@ defmodule Xeito.Tiers do
     backend = backend(tier, cfg)
 
     case Backends.module(backend) do
-      {:ok, module} -> module.decide(type, input, cfg)
+      {:ok, module} -> type |> module.decide(input, cfg) |> named(backend)
       :error -> {:error, {:unknown_backend, backend}}
     end
   end
+
+  defp named({:ok, result}, backend), do: {:ok, Map.put(result, :backend, backend)}
+  defp named(error, _backend), do: error
 
   defp add_energy({:ok, result}, tier) do
     watts =

@@ -23,7 +23,8 @@ defmodule Xeito.Decisions.Triage do
 
   # Smaller tiers are left out until they pass the zero-shot gate for this type.
   deciders [:local]
-  min_confidence 0.8
+  # 0.6 on Colibri: its probabilities come from scoring the options and are flatter (P4d step 8).
+  min_confidence %{default: 0.8, colibri: 0.6}
 
   defp env_pattern,
     do:

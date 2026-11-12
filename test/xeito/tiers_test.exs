@@ -7,6 +7,7 @@ defmodule Xeito.TiersTest do
   alias Xeito.Backends.SystemOne
   alias Xeito.Decider
   alias Xeito.Decision
+  alias Xeito.Decision.Type
   alias Xeito.Decisions.Triage
   alias Xeito.Tiers
 
@@ -268,6 +269,33 @@ defmodule Xeito.TiersTest do
       assert %Decision{value: :code_bug, actor: :local, model: "laya-multilingual"} = decision
       assert_in_delta decision.confidence, 0.95, 1.0e-9
       assert [%{tier: :local_decision, confidence: 0.5}] = decision.evidence
+    end
+
+    test "a type's threshold for a backend holds for the tier that speaks it, and for no other" do
+      Req.Test.stub(:unsure, fn conn ->
+        Req.Test.json(conn, %{
+          "answers" => %{"triage" => %{"choice" => "code_bug", "probabilities" => %{"code_bug" => 0.6, "flaky" => 0.4}}}
+        })
+      end)
+
+      assert Type.threshold(type(), :local, :colibri) == 0.6
+      assert Type.threshold(type(), :local, :system_one) == 0.8
+
+      colibri = Decider.decide(Triage, @input, deciders: [:local], tiers: [local: cfg(:unsure, backend: :colibri)])
+      assert %Decision{value: :code_bug, actor: :local, confidence: 0.6} = colibri
+
+      other = Decider.decide(Triage, @input, deciders: [:local], tiers: [local: cfg(:unsure, backend: :system_one)])
+      assert %Decision{value: :abstain} = other
+      assert [%{tier: :local, confidence: 0.6}] = other.evidence
+    end
+
+    test "a tier's result names the backend that answered" do
+      Req.Test.stub(:named, fn conn ->
+        Req.Test.json(conn, %{"answers" => %{"triage" => %{"choice" => "flaky", "probabilities" => %{"flaky" => 1.0}}}})
+      end)
+
+      assert {:ok, %{backend: :colibri}} = Tiers.run(:local, type(), @input, cfg(:named))
+      assert {:ok, %{backend: :system_one}} = Tiers.run(:local, type(), @input, cfg(:named, backend: :system_one))
     end
 
     test "rules decide before any tier" do

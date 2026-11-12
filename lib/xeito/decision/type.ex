@@ -2,6 +2,9 @@ defmodule Xeito.Decision.Type do
   @moduledoc """
   A compiled decision type: inputs, closed values with descriptions, rules, deciders,
   thresholds, and an optional severity order (for monotonic types such as `Risk`).
+
+  A threshold is fitted on one backend's probabilities, so `min_confidence` may name backends:
+  `%{default: 0.8, colibri: 0.6}` (`threshold/3`).
   """
 
   @enforce_keys [:module, :name, :version, :instructions, :values]
@@ -55,10 +58,15 @@ defmodule Xeito.Decision.Type do
     end
   end
 
-  @doc "The confidence threshold for a tier."
-  @spec threshold(t(), atom()) :: float()
-  def threshold(%__MODULE__{min_confidence: t}, _tier) when is_number(t), do: t
-  def threshold(%__MODULE__{min_confidence: map}, tier), do: Map.get(map, tier, 0.8)
+  @doc """
+  The confidence an answer needs to decide. A number holds for every answer; a map is read by the
+  backend that answered, then by the tier, then its `:default` (0.8 without one).
+  """
+  @spec threshold(t(), atom(), atom() | nil) :: float()
+  def threshold(%__MODULE__{min_confidence: t}, _tier, _backend) when is_number(t), do: t
+
+  def threshold(%__MODULE__{min_confidence: map}, tier, backend),
+    do: Map.get_lazy(map, backend, fn -> Map.get_lazy(map, tier, fn -> Map.get(map, :default, 0.8) end) end)
 
   @doc """
   Normalises an input map: keeps the declared inputs (as strings), truncates them

@@ -45,7 +45,7 @@ defmodule Xeito.Decision.DSL do
   @doc "The model tiers to try, in order, when no rule fires."
   defmacro deciders(list), do: put(:xeito_decision_deciders, list)
 
-  @doc "Confidence threshold: a number, or a map per tier."
+  @doc "Confidence threshold: a number, or a map by backend or tier with a `:default` (`Xeito.Decision.Type.threshold/3`)."
   defmacro min_confidence(threshold), do: put(:xeito_decision_min_confidence, threshold)
 
   @doc """

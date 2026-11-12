@@ -21,7 +21,8 @@ defmodule Xeito.Decisions.Done do
 
   # Small tiers failed the zero-shot gate; they decide again once they pass.
   deciders [:local]
-  min_confidence 0.8
+  # 0.6 on Colibri: its probabilities come from scoring the options and are flatter (P4d step 8).
+  min_confidence %{default: 0.8, colibri: 0.6}
 
   @doc false
   def blocked_by_access?(%{last_output: output}) do

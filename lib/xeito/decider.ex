@@ -93,7 +93,8 @@ defmodule Xeito.Decider do
   end
 
   @doc """
-  Whether a tier attempt decides: a value whose confidence reaches the tier's threshold, or a
+  Whether a tier attempt decides: a value whose confidence reaches the type's threshold for the
+  tier and the backend that answered, or a
   terminal result (a tier without calibrated confidence that policy has already admitted).
   """
   @spec accept?(Type.t(), map()) :: boolean()
@@ -101,7 +102,7 @@ defmodule Xeito.Decider do
     case attempt do
       %{error: _} -> false
       %{terminal: true, value: _} -> true
-      %{confidence: c} when is_number(c) -> c >= Type.threshold(type, tier)
+      %{confidence: c} when is_number(c) -> c >= Type.threshold(type, tier, attempt[:backend])
       _ -> false
     end
   end

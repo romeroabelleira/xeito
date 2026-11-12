@@ -41,7 +41,8 @@ defmodule Xeito.Backends do
           required(:model) => String.t(),
           required(:latency_ms) => non_neg_integer(),
           optional(:cost) => map(),
-          optional(:terminal) => boolean()
+          optional(:terminal) => boolean(),
+          optional(:backend) => atom()
         }
 
   @type spend :: :billed | :priced | :none
