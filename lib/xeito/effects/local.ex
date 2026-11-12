@@ -28,7 +28,7 @@ defmodule Xeito.Effects.Local do
 
   @behaviour Xeito.Effects.Runner
 
-  alias Xeito.Backends.Ollama
+  alias Xeito.Backends
   alias Xeito.Budget
   alias Xeito.Chat
   alias Xeito.Decider
@@ -286,7 +286,7 @@ defmodule Xeito.Effects.Local do
         %{loaded: false, swap_allowed: false, error: :tier_unavailable}
 
       cfg ->
-        case Ollama.loaded?(cfg) do
+        case Backends.loaded?(Tiers.backend(tier, cfg), cfg) do
           {:ok, loaded} ->
             %{loaded: loaded, swap_allowed: Policy.swap_allowed?(args.policy, args.parent)}
 
@@ -298,7 +298,7 @@ defmodule Xeito.Effects.Local do
 
   defp swap(%{tier: tier} = args, opts) do
     with cfg when cfg != nil <- Tiers.config(tier, get_in(opts, [:tiers, tier]) || []),
-         {:ok, ms} <- Ollama.load(cfg) do
+         {:ok, ms} <- Backends.load(Tiers.backend(tier, cfg), cfg) do
       if args.parent, do: Budget.add(args.parent, :swaps, 1)
       %{ok: true, ms: ms}
     else

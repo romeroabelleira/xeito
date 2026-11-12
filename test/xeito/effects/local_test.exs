@@ -253,7 +253,7 @@ defmodule Xeito.Effects.LocalTest do
 
     defp local_tier(stub) do
       Req.Test.stub(stub, &ollama/1)
-      [tiers: [local: [url: "http://large.test", plug: {Req.Test, stub}, model: "big"]]]
+      [tiers: [local: [backend: :ollama, url: "http://large.test", plug: {Req.Test, stub}, model: "big"]]]
     end
 
     test "swap loads the local model and counts the swap against the run that asked" do
@@ -266,12 +266,24 @@ defmodule Xeito.Effects.LocalTest do
       assert %{ok: true} = Local.run(%{effect | args: %{tier: :local, parent: nil}}, local_tier(:local_swap2))
     end
 
+    test "a backend that serves one model holds it: the probe needs no request and no swap follows" do
+      colibri = [tiers: [local: [url: "http://unreached.test", model: "qwen36"]]]
+      probe = %Effect{kind: :probe, args: %{tier: :local, policy: %{}, parent: nil}, reply: :probed}
+      assert %{loaded: true} = Local.run(probe, colibri)
+    end
+
     test "swap reports a tier that is not configured, or that fails" do
       effect = %Effect{kind: :swap, args: %{tier: :local, parent: nil}, reply: :swapped}
       assert Local.run(effect, []) == %{ok: false, error: :tier_unavailable}
 
       Req.Test.stub(:local_down, &Plug.Conn.send_resp(&1, 500, "down"))
-      down = [tiers: [local: [url: "http://down.test", plug: {Req.Test, :local_down}, model: "big", retry: false]]]
+
+      down = [
+        tiers: [
+          local: [backend: :ollama, url: "http://down.test", plug: {Req.Test, :local_down}, model: "big", retry: false]
+        ]
+      ]
+
       assert %{ok: false, error: _} = Local.run(effect, down)
     end
 

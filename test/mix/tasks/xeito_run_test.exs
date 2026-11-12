@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Xeito.RunTest do
           conn |> Plug.Conn.put_resp_content_type("application/x-ndjson") |> Plug.Conn.send_resp(200, body)
       end)
 
-      chat = [url: "http://ollama.test", plug: {Req.Test, :run_task_ollama}, model: "big"]
+      chat = [backend: :ollama, url: "http://ollama.test", plug: {Req.Test, :run_task_ollama}, model: "big"]
       log = start_log!(ctx)
       # Socket paths are limited to about 100 bytes, too short for ExUnit's tmp_dir.
       socket_dir = Path.join(System.tmp_dir!(), "xr-#{System.unique_integer([:positive])}")

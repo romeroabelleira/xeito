@@ -1,6 +1,8 @@
-defmodule Xeito.Chat.OpenRouter.Stream do
+defmodule Xeito.Chat.OpenAI.Stream do
   @moduledoc """
-  Reads OpenRouter's streamed chat completion (server-sent events) into one assistant message.
+  Reads a streamed OpenAI chat completion (server-sent events) into one assistant message.
+
+    * `new/1` takes the backend's name, which labels `served_by` and an error
 
     * chunks may split a line; `feed/3` buffers the rest
     * text deltas go to `on_delta` as they arrive
@@ -11,9 +13,11 @@ defmodule Xeito.Chat.OpenRouter.Stream do
 
   @type t :: map()
 
-  @doc "An empty stream."
-  @spec new() :: t()
-  def new, do: %{buffer: "", content: [], calls: %{}, usage: %{}, model: nil, provider: nil, finish: nil, error: nil}
+  @doc "An empty stream of the backend `name`."
+  @spec new(atom()) :: t()
+  def new(name) do
+    %{name: name, buffer: "", content: [], calls: %{}, usage: %{}, model: nil, provider: nil, finish: nil, error: nil}
+  end
 
   @doc "Adds a chunk of the response body."
   @spec feed(t(), binary(), (String.t() -> any())) :: t()
@@ -40,12 +44,12 @@ defmodule Xeito.Chat.OpenRouter.Stream do
        tokens_out: usage["completion_tokens"] || 0,
        cached_tokens: get_in(usage, ["prompt_tokens_details", "cached_tokens"]) || 0,
        usd: (usage["cost"] || 0) * 1.0,
-       served_by: served_by(acc.model, acc.provider),
+       served_by: served_by(acc.name, acc.model, acc.provider),
        finish_reason: acc.finish
      }}
   end
 
-  defp message(acc), do: {:error, {:openrouter, acc.error}}
+  defp message(acc), do: {:error, {acc.name, acc.error}}
 
   defp line("data: " <> json, acc, on_delta), do: chunk(decode(String.trim(json)), acc, on_delta)
   defp line(_line, acc, _on_delta), do: acc
@@ -102,9 +106,9 @@ defmodule Xeito.Chat.OpenRouter.Stream do
     end
   end
 
-  defp served_by(nil, _provider), do: nil
-  defp served_by(model, nil), do: "openrouter:" <> model
-  defp served_by(model, provider), do: "openrouter:#{model}@#{provider}"
+  defp served_by(_name, nil, _provider), do: nil
+  defp served_by(name, model, nil), do: "#{name}:#{model}"
+  defp served_by(name, model, provider), do: "#{name}:#{model}@#{provider}"
 
   defp decode("[DONE]"), do: nil
 

@@ -5,7 +5,8 @@ defmodule Xeito.Backends.Ollama do
   Decisions run at temperature 0. Confidence comes from the `top_logprobs` at the value's first
   token, renormalised over the options (`Xeito.Decision.Scoring.one_step/2`); when those give
   nothing, the chosen value gets the product of its own token probabilities.
-  `loaded?/1` and `load/1` check and load the resident model.
+  `loaded?/1` and `load/1` check and load the resident model. `chat/4` is `Xeito.Chat.Ollama`'s.
+  `probe/2` reads `GET /api/ps`: the resident models with VRAM, context and seconds to unload.
   """
 
   @behaviour Xeito.Backends
@@ -50,8 +51,37 @@ defmodule Xeito.Backends.Ollama do
     end
   end
 
+  @impl true
+  def chat(messages, tools, cfg, on_delta), do: Xeito.Chat.Ollama.complete(messages, tools, cfg, on_delta)
+
+  @impl true
+  def probe(cfg, opts) do
+    case Backends.get(cfg, "/api/ps", Keyword.fetch!(opts, :timeout)) do
+      {:ok, %{"models" => models}} -> %{up: true, loaded: Enum.map(models, &resident(&1, Keyword.fetch!(opts, :now)))}
+      _ -> %{up: false, loaded: []}
+    end
+  end
+
+  defp resident(m, now) do
+    %{
+      name: m["name"],
+      vram_bytes: m["size_vram"],
+      context: m["context_length"],
+      unload_in_s: seconds_until(m["expires_at"], now)
+    }
+  end
+
+  defp seconds_until(nil, _now), do: nil
+
+  defp seconds_until(iso, now) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, at, _} -> max(DateTime.diff(at, now), 0)
+      _ -> nil
+    end
+  end
+
   @doc "Whether `model` is resident. Returns `{:ok, boolean}` or an error."
-  @spec loaded?(keyword()) :: {:ok, boolean()} | {:error, term()}
+  @impl true
   def loaded?(cfg) do
     model = Keyword.fetch!(cfg, :model)
 
@@ -68,7 +98,7 @@ defmodule Xeito.Backends.Ollama do
   end
 
   @doc "Loads `model` (an empty generate request). Returns `{:ok, milliseconds}`."
-  @spec load(keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @impl true
   def load(cfg) do
     started = System.monotonic_time(:millisecond)
 

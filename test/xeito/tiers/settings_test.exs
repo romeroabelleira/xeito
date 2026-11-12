@@ -12,26 +12,71 @@ defmodule Xeito.Tiers.SettingsTest do
     assert tiers(%{}) == []
   end
 
-  test "a local tier is configured by its URL and speaks its default backend" do
+  test "a local tier is configured by its URL and speaks Colibri unless it names another backend" do
     env = %{
+      "XEITO_LOCAL_URL" => "http://127.0.0.1:8000",
+      "XEITO_LOCAL_MODEL" => "qwen36",
+      "XEITO_LOCAL_CONTEXT" => "65536",
+      "XEITO_LOCAL_DECISION_URL" => "http://127.0.0.1:8000"
+    }
+
+    assert tiers(env) == [
+             local_decision: [backend: :colibri, url: "http://127.0.0.1:8000"],
+             local: [backend: :colibri, url: "http://127.0.0.1:8000", model: "qwen36", context: 65_536]
+           ]
+  end
+
+  test "Ollama and a System One server stay options, each named as the tier's backend" do
+    env = %{
+      "XEITO_LOCAL_BACKEND" => "ollama",
       "XEITO_LOCAL_URL" => "http://127.0.0.1:11434",
       "XEITO_LOCAL_MODEL" => "qwen3.8:27b",
-      "XEITO_LOCAL_CONTEXT" => "65536",
       "XEITO_LOCAL_KEEP_ALIVE" => "5m",
+      "XEITO_LOCAL_DECISION_BACKEND" => "system_one",
       "XEITO_LOCAL_DECISION_URL" => "http://127.0.0.1:8082",
       "XEITO_LOCAL_DECISION_KEY_FILE" => "laya.key"
     }
 
     assert tiers(env) == [
              local_decision: [backend: :system_one, url: "http://127.0.0.1:8082", api_key: "key-of-laya.key"],
-             local: [
-               backend: :ollama,
-               url: "http://127.0.0.1:11434",
-               model: "qwen3.8:27b",
-               context: 65_536,
-               keep_alive: "5m"
-             ]
+             local: [backend: :ollama, url: "http://127.0.0.1:11434", model: "qwen3.8:27b", keep_alive: "5m"]
            ]
+  end
+
+  test "a backend without a public URL gives a tier none: OpenAI-compatible and Colibri servers are named by theirs" do
+    for backend <- ["openai", "colibri", "ollama"] do
+      env = %{"XEITO_REMOTE_BACKEND" => backend, "XEITO_REMOTE_MODEL" => "m", "XEITO_REMOTE_KEY_FILE" => "k"}
+      assert tiers(env) == []
+    end
+  end
+
+  describe "a local tier is on this host" do
+    test "a URL on another machine is refused, naming the setting and the way out" do
+      error = assert_raise ArgumentError, fn -> tiers(%{"XEITO_LOCAL_URL" => "http://192.0.2.7:8000"}) end
+      assert error.message =~ "XEITO_LOCAL_URL"
+      assert error.message =~ "192.0.2.7"
+      assert error.message =~ "XEITO_LOCAL_HOSTS"
+
+      assert_raise ArgumentError, ~r/XEITO_LOCAL_DECISION_URL/, fn ->
+        tiers(%{"XEITO_LOCAL_DECISION_URL" => "http://192.0.2.7:8082"})
+      end
+    end
+
+    test "a host listed in XEITO_LOCAL_HOSTS is accepted: a container on this host" do
+      env = %{"XEITO_LOCAL_URL" => "http://192.0.2.7:8000", "XEITO_LOCAL_HOSTS" => "colibri, 192.0.2.7"}
+      assert [local: local] = tiers(env)
+      assert local[:url] == "http://192.0.2.7:8000"
+    end
+
+    test "a remote tier's URL is not held to it" do
+      env = %{
+        "XEITO_REMOTE_URL" => "http://192.0.2.7:8000",
+        "XEITO_REMOTE_MODEL" => "m",
+        "XEITO_REMOTE_KEY_FILE" => "k"
+      }
+
+      assert [remote: _] = tiers(env)
+    end
   end
 
   test "a remote tier needs both its model and its key file, and defaults to OpenRouter" do
@@ -93,17 +138,17 @@ defmodule Xeito.Tiers.SettingsTest do
   end
 
   test "a backend can be named; an unknown one stops the configuration with the setting's name" do
-    env = %{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_BACKEND" => "openrouter"}
-    assert [local: [backend: :openrouter, url: "http://x"]] = tiers(env)
+    env = %{"XEITO_LOCAL_URL" => "http://localhost:1", "XEITO_LOCAL_BACKEND" => "openrouter"}
+    assert [local: [backend: :openrouter, url: "http://localhost:1"]] = tiers(env)
 
     assert_raise ArgumentError, ~r/XEITO_LOCAL_BACKEND: unknown backend "cohere"/, fn ->
-      tiers(%{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_BACKEND" => "cohere"})
+      tiers(%{"XEITO_LOCAL_URL" => "http://localhost:1", "XEITO_LOCAL_BACKEND" => "cohere"})
     end
   end
 
   test "a context that is not a whole number stops the configuration with the setting's name" do
     assert_raise ArgumentError, ~r/XEITO_LOCAL_CONTEXT: not a whole number: "80k"/, fn ->
-      tiers(%{"XEITO_LOCAL_URL" => "http://x", "XEITO_LOCAL_CONTEXT" => "80k"})
+      tiers(%{"XEITO_LOCAL_URL" => "http://localhost:1", "XEITO_LOCAL_CONTEXT" => "80k"})
     end
   end
 

@@ -106,8 +106,8 @@ defmodule Xeito.MonitorTest do
     models =
       Models.read(
         tiers: [
-          local: [url: "http://local.test", model: "big:27b", plug: plug],
-          local_decision: [url: "http://s1.test", plug: plug]
+          local: [backend: :ollama, url: "http://local.test", model: "big:27b", plug: plug],
+          local_decision: [backend: :system_one, url: "http://s1.test", plug: plug]
         ],
         now: @now
       )
@@ -143,6 +143,28 @@ defmodule Xeito.MonitorTest do
     assert %{configured: true, model: "s1", up: true, loaded: ["multilingual"]} = models.local
     assert models.remote_decision == %{configured: true}
     assert models.remote == %{configured: true}
+  end
+
+  test "a Colibri server reports the one model it serves, and a tier set to another one" do
+    Req.Test.stub(:mon_colibri, fn conn ->
+      case conn.request_path do
+        "/health" -> Req.Test.json(conn, %{"status" => "ok"})
+        "/v1/models" -> Req.Test.json(conn, %{"data" => [%{"id" => "qwen36", "context_length" => 65_536}]})
+      end
+    end)
+
+    tier = [url: "http://colibri.test", plug: {Req.Test, :mon_colibri}]
+    models = Models.read(tiers: [local: tier ++ [model: "qwen36"], local_decision: tier ++ [model: "laya"]])
+
+    assert models.local == %{
+             configured: true,
+             model: "qwen36",
+             up: true,
+             loaded: [%{name: "qwen36", context: 65_536}],
+             mismatch: false
+           }
+
+    assert %{configured: true, model: "laya", up: true, mismatch: true} = models.local_decision
   end
 
   test "the monitor polls only while someone watches" do

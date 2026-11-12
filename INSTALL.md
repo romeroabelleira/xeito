@@ -12,7 +12,7 @@ How to build Xeito from source, connect it to models, and run its daemon as a se
 | Erlang/OTP and Elixir, at the versions in `.tool-versions` | Xeito is an Elixir/OTP application. [mise](https://mise.jdx.dev) or asdf installs the pinned versions. |
 | A C and C++ compiler, and `make` | Two dependencies build native code with the others: SQLite for the event log (`exqlite`), and erlexec's port program, which runs shell commands so they can be stopped with everything they start. On Debian or Ubuntu: `sudo apt install build-essential`. On macOS: `xcode-select --install`. |
 | git | `/undo` and `/redo` snapshot the workspace with git, and the `commit` machine commits with it. |
-| A model server for the `local` tier | [Ollama](https://ollama.com), on a GPU that holds the chat model. Without a model, the daemon still runs commands and machines that need none (`/run`), and every decision abstains. |
+| A model server for the `local` tier | [Colibri](https://github.com/JustVugg/colibri) (the default backend) or [Ollama](https://ollama.com), on a GPU that holds the chat model. Without a model, the daemon still runs commands and machines that need none (`/run`), and every decision abstains. |
 | Optional: mise in your projects | A command runs with the tool versions its workspace pins with mise ([USAGE](USAGE.md)). |
 
 ## 2. Build
@@ -32,17 +32,17 @@ Tiers are places on the escalation ladder, named by the kind of model and where 
 
 | Tier | Kind | Default backend |
 |---|---|---|
-| `local_decision` | a System One decision model on this machine (`laya-serve`) | `system_one` |
+| `local_decision` | decisions on this machine through `/v1/systemone`: a Colibri server, whose chat model scores the options or which serves a decision model; or `laya-serve` with the `system_one` backend | `colibri` |
 | `remote_decision` | a hosted System One decision model (Jev) | `system_one` |
-| `local` | the language model on the local GPU: the chat model, and the decider of every built-in decision type | `ollama` |
+| `local` | the language model on the local GPU: the chat model, and the decider of every built-in decision type | `colibri` |
 | `remote` | a hosted language model with logprobs, so its confidence is calibrated | `openrouter` |
 | `remote_frontier` | the strongest hosted language model; it answers without a confidence, terminally | `openrouter` |
 
-A practical minimum is the `local` tier alone: install Ollama, pull a model that fits your GPU (the [reference deployment](docs/architecture/09-reference-deployment.md#tier-local-gpu) explains the choice), and point Xeito at it.
+A practical minimum is the `local` tier alone: a Colibri server with a chat model that fits your machine (its setup recommends one; the [reference deployment](docs/architecture/09-reference-deployment.md#tier-local-gpu) explains the choice), and Xeito pointed at it. A Colibri server serves one model, and `XEITO_LOCAL_MODEL` must be the id it serves (`GET /v1/models`).
 
-```bash
-ollama pull qwen3.6:27b
-```
+Ollama stays an option: set `XEITO_LOCAL_BACKEND=ollama`, pull a model (`ollama pull qwen3.6:27b`) and point `XEITO_LOCAL_URL` at Ollama. Any other server that speaks OpenAI's chat completions is reached with the `openai` backend.
+
+A local tier's server must run on this machine: its URL is a loopback address, one of the machine's own addresses, or a host listed in `XEITO_LOCAL_HOSTS` (a comma list, for a container on this host reached by its name or bridge address). The daemon does not start with any other URL on a local tier; a model on another machine is a remote tier.
 
 ### Model tiers
 
@@ -50,12 +50,13 @@ Each tier reads the same variables under its own prefix, `XEITO_<TIER>_`, when t
 
 | Variable (for `XEITO_LOCAL_…`; the same for every tier) | Meaning | Example |
 |---|---|---|
-| `XEITO_LOCAL_URL` | the backend's address; a local tier is configured by it | `http://127.0.0.1:11434` |
-| `XEITO_LOCAL_MODEL` | the model | `qwen3.6:27b` |
+| `XEITO_LOCAL_URL` | the backend's address; a local tier is configured by it, and it must be on this machine | `http://127.0.0.1:8000` |
+| `XEITO_LOCAL_MODEL` | the model; for Colibri, the id the server serves | `qwen36` |
 | `XEITO_LOCAL_KEY_FILE` | a file holding the backend's API key, or an `op://` reference the 1Password CLI resolves when the daemon starts | `~/.config/xeito/laya_api_key` |
-| `XEITO_LOCAL_BACKEND` | the API the tier speaks: `ollama`, `openrouter`, `anthropic` (the Claude API directly) or `system_one` | (the tier's default) |
-| `XEITO_LOCAL_CONTEXT` | Ollama: the context window in tokens, sent as `num_ctx` with every request; the chat machine fits its requests into it | `65536` (unset: the server's setting, and a 32768 budget) |
+| `XEITO_LOCAL_BACKEND` | how the tier reaches its model: `colibri`, `ollama`, `openai` (any OpenAI-compatible server), `openrouter`, `anthropic` (the Claude API directly) or `system_one` | (the tier's default) |
+| `XEITO_LOCAL_CONTEXT` | the context window in tokens the chat machine fits its requests into. Colibri: the context the server was started with (`--ctx`). Ollama: also sent as `num_ctx` with every request | `65536` (unset: a 32768 budget) |
 | `XEITO_LOCAL_KEEP_ALIVE` | Ollama: how long the model stays in VRAM after the last request | `5m` (default `10m`) |
+| `XEITO_LOCAL_HOSTS` (not per tier) | further hosts that are this machine, for the local tiers' URLs: a container's name or bridge address | `colibri,ollama` |
 | `XEITO_REMOTE_PROVIDERS`, `XEITO_REMOTE_ZDR` | OpenRouter: providers to pin (comma list); `false` to allow endpoints that retain prompts | `Parasail`; default on |
 | `XEITO_REMOTE_FRONTIER_REASONING` | OpenRouter chat: a reasoning effort (`low`, `medium`, `high`) | (the model's default) |
 | `XEITO_REMOTE_FRONTIER_CONTEXT` | a remote chat tier's window: the chat machine fits its requests into it | `131072` (the default) |
@@ -79,10 +80,17 @@ Keep the variables in one file that both your shell and the service source:
 
 ```bash
 # ~/.config/xeito/tiers.env
-export XEITO_LOCAL_URL=http://127.0.0.1:11434
-export XEITO_LOCAL_MODEL=qwen3.6:27b
+export XEITO_LOCAL_URL=http://127.0.0.1:8000
+export XEITO_LOCAL_MODEL=qwen36
 export XEITO_LOCAL_CONTEXT=65536
-export XEITO_LOCAL_KEEP_ALIVE=5m
+# The same Colibri server answers decisions, by scoring the options.
+export XEITO_LOCAL_DECISION_URL=http://127.0.0.1:8000
+export XEITO_LOCAL_DECISION_MODEL=qwen36
+# Ollama instead:
+# export XEITO_LOCAL_BACKEND=ollama
+# export XEITO_LOCAL_URL=http://127.0.0.1:11434
+# export XEITO_LOCAL_MODEL=qwen3.6:27b
+# export XEITO_LOCAL_KEEP_ALIVE=5m
 # Off-box, opt-in: uncomment to use a hosted model where policy allows it.
 # export XEITO_REMOTE_MODEL=qwen/qwen3.8-27b
 # export XEITO_REMOTE_KEY_FILE="$HOME/.config/xeito/openrouter.key"
@@ -94,9 +102,9 @@ export XEITO_LOCAL_KEEP_ALIVE=5m
 
 ## 4. Recommended local configuration
 
-- **Set `XEITO_LOCAL_CONTEXT` to the context window your model really runs with.** Ollama does not refuse a prompt that is too long: it cuts it from the front, which drops the system prompt first, and reports no error. Xeito fits its requests into the window it is told about, and warns when the server cut one anyway.
-- **Keep every model server on loopback.** Ollama binds to `127.0.0.1:11434` by default; check that its service configuration does not bind it to other interfaces. Reach a server from another machine through an SSH tunnel or a private VPN, never a port open on the LAN ([09 · Services](docs/architecture/09-reference-deployment.md#services)).
-- **Choose `XEITO_LOCAL_KEEP_ALIVE`** by how you share the GPU: a few minutes frees VRAM for other work soon after a session goes quiet, at the cost of a reload (seconds) on the next request.
+- **Set `XEITO_LOCAL_CONTEXT` to the context window your model really runs with.** A Colibri server reports it (`context_length` in `GET /v1/models`) and refuses a prompt that does not fit. Ollama does not refuse a prompt that is too long: it cuts it from the front, which drops the system prompt first, and reports no error. Xeito fits its requests into the window it is told about, and warns when the server cut one anyway.
+- **Keep every model server on loopback.** Colibri binds to localhost by default. Ollama binds to `127.0.0.1:11434` by default; check that its service configuration does not bind it to other interfaces. Reach a server from another machine through an SSH tunnel or a private VPN, never a port open on the LAN ([09 · Services](docs/architecture/09-reference-deployment.md#services)).
+- **With Ollama, choose `XEITO_LOCAL_KEEP_ALIVE`** by how you share the GPU: a few minutes frees VRAM for other work soon after a session goes quiet, at the cost of a reload (seconds) on the next request.
 - **Budget CPU threads** when a decision model runs on the CPU next to a GPU model: [09 · Thread budget](docs/architecture/09-reference-deployment.md#thread-budget).
 - **Work in git repositories.** Undo relies on git snapshots of the workspace; outside a repository there is nothing to undo with.
 - **Trust your projects' mise configuration** (`mise trust` in the project) if they pin tools in a `mise.toml`; mise refuses to load an untrusted one, and Xeito reports that with the fix.

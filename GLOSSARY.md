@@ -20,7 +20,7 @@ for the details; `mix xeito.map` lists every module with its public functions.
 - **decision**: one answer to a decision type: a value with confidence, actor and provenance. `Xeito.Decision`
 - **rule**: a deterministic answer in a decision type, tried first, confidence 1.0. `Xeito.Tiers.Rules`
 - **tier**: a place on the escalation ladder, named by kind and place: `local_decision`, `remote_decision`, `local`, `remote`, `remote_frontier`. `Xeito.Tiers`
-- **backend**: the API a tier speaks: `ollama`, `openrouter`, `system_one`. `Xeito.Backends`
+- **backend**: one way of reaching a model, a strategy a tier names: `colibri`, `ollama`, `openai`, `openrouter`, `anthropic`, `system_one`. It decides, chats, reports its service, and says what its calls cost. `Xeito.Backends`
 - **System One model**: an encoder that returns a probability per option and generates no text (Laya, Jev). `Xeito.Backends.SystemOne`
 - **decider**: the same ladder run in-process, for evaluation (`mix xeito.eval`). `Xeito.Decider`
 - **escalation**: running a decision up the tiers until one is confident enough, as a logged machine. `Xeito.Escalation`

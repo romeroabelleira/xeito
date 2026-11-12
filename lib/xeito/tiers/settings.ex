@@ -5,13 +5,16 @@ defmodule Xeito.Tiers.Settings do
   Per tier, under the prefix `XEITO_<TIER>_` (e.g. `XEITO_LOCAL_MODEL`):
 
     * `BACKEND` — the API it speaks (`Xeito.Backends`); default: the tier's (`Xeito.Tiers`)
-    * `URL` — default: OpenRouter's for an OpenRouter tier, the Claude API's for an `anthropic`
-      one, none otherwise
+    * `URL` — default: the backend's own (`Xeito.Backends.default_url/1`: OpenRouter's, the
+      Claude API's), none otherwise
     * `MODEL`, `KEY_FILE` (a file holding the API key, or an `op://` reference that the 1Password
       CLI resolves when the daemon starts: `read_key/2`)
     * `CONTEXT` (Ollama `num_ctx`), `KEEP_ALIVE` (Ollama)
     * `PROVIDERS` (OpenRouter: comma list to pin), `ZDR` (OpenRouter: `false` allows endpoints
       that retain prompts; default on), `REASONING` (OpenRouter chat effort, e.g. `low`)
+
+  A local tier's URL must be on this host (`Xeito.Tiers.Host`); `XEITO_LOCAL_HOSTS`, a comma
+  list, names further hosts that are, such as a container running here. Any other URL raises.
 
   Not per tier (`app_env/1`): `XEITO_CHAT_TIER` (default chat tier) and `XEITO_MAX_USD_PER_RUN`
   (off-box spend limit per run, `Xeito.Policy`).
@@ -23,14 +26,30 @@ defmodule Xeito.Tiers.Settings do
 
   alias Xeito.Backends
   alias Xeito.Tiers
-
-  @openrouter_url "https://openrouter.ai/api"
-  @anthropic_url "https://api.anthropic.com"
+  alias Xeito.Tiers.Host
 
   @doc "The `config :xeito, :tiers` keyword list for an environment (`System.get_env/0`)."
   @spec from_env(%{String.t() => String.t()}, (String.t() -> String.t())) :: keyword()
   def from_env(env, read_key \\ &read_key/1) do
-    for tier <- Tiers.all(), cfg = tier(tier, setting(env, tier), read_key), cfg != nil, do: {tier, cfg}
+    allowed = Host.allowed(env["XEITO_LOCAL_HOSTS"])
+
+    for tier <- Tiers.all(), cfg = tier(tier, setting(env, tier), read_key), cfg != nil do
+      {tier, on_host!(tier, cfg, setting(env, tier), allowed)}
+    end
+  end
+
+  # A local tier's input stays on this machine, so its URL must be here too.
+  defp on_host!(tier, cfg, get, allowed) do
+    if tier in Tiers.off_box() or Host.local?(cfg[:url], allowed: allowed) do
+      cfg
+    else
+      {name, _value} = get.("URL")
+
+      raise ArgumentError,
+            "#{name}: #{cfg[:url]} is not on this host. A local tier's URL must be: a loopback address, one of " <>
+              "this machine's addresses, or a host listed in XEITO_LOCAL_HOSTS (a container running here). " <>
+              "A model on another machine is a remote tier."
+    end
   end
 
   defp setting(env, tier) do
@@ -40,7 +59,7 @@ defmodule Xeito.Tiers.Settings do
 
   defp tier(tier, get, read_key) do
     backend = backend(tier, get.("BACKEND"))
-    url = value(get.("URL")) || default_url(backend)
+    url = value(get.("URL")) || Backends.default_url(backend)
     api_key = key(value(get.("KEY_FILE")), read_key)
 
     if configured?(tier, url, value(get.("MODEL")), api_key) do
@@ -111,10 +130,6 @@ defmodule Xeito.Tiers.Settings do
         backend
     end
   end
-
-  defp default_url(:openrouter), do: @openrouter_url
-  defp default_url(:anthropic), do: @anthropic_url
-  defp default_url(_backend), do: nil
 
   defp key(nil, _read_key), do: nil
   defp key(path, read_key), do: read_key.(path)

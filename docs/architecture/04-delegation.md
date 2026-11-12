@@ -39,14 +39,14 @@ stateDiagram-v2
 
 The diagram leaves out `remote_decision`, which sits between `local_decision` and `local` and behaves like `remote`.
 
-A **tier** is a place on this ladder, named by the kind of model and where it runs (P4d). The API it speaks is its **backend** (`Xeito.Backends`: `system_one`, `ollama`, `openrouter`), named in the tier's configuration; each tier has a default.
+A **tier** is a place on this ladder, named by the kind of model and where it runs (P4d). How it reaches its model is its **backend** (`Xeito.Backends`: `colibri`, `ollama`, `openai`, `openrouter`, `anthropic`, `system_one`), named in the tier's configuration; each tier has a default. A backend is a strategy: one module that decides, chats, probes its service, and says whether it holds a model resident and what its calls cost, so the ladder, the chat client and the monitor ask the tier's backend and never match its name.
 
 | State | Kind | Default backend | Default timeout |
 |---|---|---|---|
 | `rules` | deterministic decision-table rules ([03](03-typed-decisions.md)) | — | 5 s |
-| `local_decision` | a System One decision model on this machine: an encoder that scores the options (Laya via `laya-serve`; [03](03-typed-decisions.md#three-families-of-small-decider)) | `system_one` | 10 s |
+| `local_decision` | a System One decision model on this machine: an encoder that scores the options (Laya via `laya-serve` on the `system_one` backend; [03](03-typed-decisions.md#three-families-of-small-decider)), or a Colibri server's `/v1/systemone`, where the chat model scores the options | `colibri` | 10 s |
 | `remote_decision` | a hosted System One decision model (Jev); off-box | `system_one` | 30 s |
-| `local` | the local GPU language model, also the chat model (may involve a *model swap*, see below) | `ollama` | 120 s |
+| `local` | the local GPU language model, also the chat model (on Ollama it may involve a *model swap*, see below; a Colibri server holds one model and never swaps) | `colibri` | 120 s |
 | `remote` | a hosted language model with logprobs, so a calibrated confidence ([below](#openrouter)); off-box | `openrouter` | 90 s |
 | `remote_frontier` | the strongest hosted language model; no logprobs, so its answer is terminal; off-box | `openrouter` | 180 s |
 | `human` | ask in the TUI; the run waits | — | configurable |

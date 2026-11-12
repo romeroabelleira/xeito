@@ -41,7 +41,7 @@ defmodule Xeito.HarnessTest do
       respond(conn, req, test_pid, script, decisions)
     end)
 
-    [url: "http://ollama.test", plug: {Req.Test, :harness_ollama}, model: "big"]
+    [backend: :ollama, url: "http://ollama.test", plug: {Req.Test, :harness_ollama}, model: "big"]
   end
 
   defp respond(%{request_path: "/api/ps"} = conn, _req, _pid, _script, _decisions),

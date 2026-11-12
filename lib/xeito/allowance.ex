@@ -15,7 +15,6 @@ defmodule Xeito.Allowance do
   use GenServer
 
   alias Xeito.Backends
-  alias Xeito.Backends.Anthropic
 
   @fresh_ms 60_000
 
@@ -129,8 +128,8 @@ defmodule Xeito.Allowance do
     end
   end
 
-  # The allowance and the endpoint prices are OpenRouter's; a tier without a backend is one of its.
-  defp openrouter?(cfg), do: Keyword.get(cfg, :backend, :openrouter) == :openrouter
+  # The allowance and the endpoint prices are a billing service's; a tier without a backend is OpenRouter's.
+  defp openrouter?(cfg), do: Backends.spend(Keyword.get(cfg, :backend, :openrouter)) == :billed
 
   @doc "The last known allowance, without asking OpenRouter; `nil` before the first fetch."
   @spec last(keyword()) :: float() | nil
@@ -145,7 +144,7 @@ defmodule Xeito.Allowance do
   @doc "The tier's model's price (`price/1`), fetched once; `nil` if unknown."
   @spec model_price(keyword()) :: map() | nil
   def model_price(cfg) do
-    if openrouter?(cfg), do: endpoint_price(cfg), else: Anthropic.price(cfg[:model])
+    if openrouter?(cfg), do: endpoint_price(cfg), else: Backends.list_price(cfg[:backend], cfg)
   end
 
   defp endpoint_price(cfg) do

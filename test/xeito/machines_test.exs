@@ -42,7 +42,7 @@ defmodule Xeito.MachinesTest do
       Plug.Conn.send_resp(conn, 200, body <> "\n")
     end)
 
-    [url: "http://chat.test", plug: {Req.Test, :machines_chat}, model: "big"]
+    [backend: :ollama, url: "http://chat.test", plug: {Req.Test, :machines_chat}, model: "big"]
   end
 
   defp assistant(content, []), do: %{"role" => "assistant", "content" => content}

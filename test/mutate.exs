@@ -36,6 +36,8 @@
     "test/xeito/machines/chat_test.exs"
   ],
   "lib/xeito/policy.ex" => ["test/xeito/policy_test.exs"],
+  # Whether a local tier's URL is this machine: a wrong case sends local-only input elsewhere.
+  "lib/xeito/tiers/host.ex" => ["test/xeito/tiers/host_test.exs"],
   # Which commands a script may run, and when a script is stopped.
   "lib/xeito/effects/script.ex" => ["test/xeito/effects/script_test.exs"],
   # What a script gets from each call: a wrong shape fails every script written for the right one.

@@ -6,13 +6,8 @@ defmodule Xeito.Monitor.Models do
   by `:timeout`. Remote tiers are not probed, they report only `configured: true`. A tier
   without a configuration is `configured: false`.
 
-    * `:ollama`: `GET /api/ps`; resident models with VRAM, context and seconds to unload
-    * `:system_one`: `GET /health`; up, loaded models
-
-  | backend       | probe              | reports                                           |
-  |---------------|--------------------|---------------------------------------------------|
-  | `:ollama`     | `GET /api/ps`      | resident models: VRAM, context, seconds to unload |
-  | `:system_one` | laya `GET /health` | up, loaded models                                 |
+  What a local tier reports beyond `configured: true` and its `model` is its backend's
+  `probe/2` (`Xeito.Backends.probe/3`): `up`, and `loaded`, the models the service holds.
   """
 
   alias Xeito.Backends
@@ -48,53 +43,6 @@ defmodule Xeito.Monitor.Models do
     if tier in Tiers.off_box(), do: %{configured: true}, else: local(Tiers.backend(tier, cfg), cfg, timeout, now)
   end
 
-  defp local(:ollama, cfg, timeout, now), do: configured(cfg, ollama(cfg, timeout, now))
-  defp local(:system_one, cfg, timeout, _now), do: configured(cfg, system_one(cfg, timeout))
-  defp local(_backend, _cfg, _timeout, _now), do: %{configured: true}
-
-  defp configured(cfg, probe), do: Map.merge(%{configured: true, model: cfg[:model]}, probe)
-
-  defp ollama(cfg, timeout, now) do
-    case get(cfg, "/api/ps", timeout) do
-      {:ok, %{"models" => models}} ->
-        %{up: true, loaded: Enum.map(models, &resident(&1, now))}
-
-      _ ->
-        %{up: false, loaded: []}
-    end
-  end
-
-  defp resident(m, now) do
-    %{
-      name: m["name"],
-      vram_bytes: m["size_vram"],
-      context: m["context_length"],
-      unload_in_s: seconds_until(m["expires_at"], now)
-    }
-  end
-
-  defp seconds_until(nil, _now), do: nil
-
-  defp seconds_until(iso, now) do
-    case DateTime.from_iso8601(iso) do
-      {:ok, at, _} -> max(DateTime.diff(at, now), 0)
-      _ -> nil
-    end
-  end
-
-  defp system_one(cfg, timeout) do
-    case get(cfg, "/health", timeout) do
-      {:ok, %{"status" => "ok"} = body} -> %{up: true, loaded: body["loaded"] || []}
-      _ -> %{up: false}
-    end
-  end
-
-  defp get(cfg, path, timeout) do
-    opts = [method: :get, url: path] ++ Backends.req_options(Keyword.put(cfg, :timeout, timeout))
-
-    case Req.request(Keyword.put(opts, :connect_options, timeout: timeout)) do
-      {:ok, %{status: 200, body: body}} -> {:ok, body}
-      _ -> :error
-    end
-  end
+  defp local(backend, cfg, timeout, now),
+    do: Map.merge(%{configured: true, model: cfg[:model]}, Backends.probe(backend, cfg, timeout: timeout, now: now))
 end

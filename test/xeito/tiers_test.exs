@@ -194,8 +194,9 @@ defmodule Xeito.TiersTest do
     end
 
     test "each tier has a default backend, and its configuration may name another" do
-      assert Tiers.backend(:local_decision, []) == :system_one
-      assert Tiers.backend(:local, []) == :ollama
+      assert Tiers.backend(:local_decision, []) == :colibri
+      assert Tiers.backend(:local, []) == :colibri
+      assert Tiers.backend(:local, backend: :ollama) == :ollama
       assert Tiers.backend(:remote_decision, []) == :system_one
       assert Tiers.backend(:remote, []) == :openrouter
       assert Tiers.backend(:remote_frontier, []) == :openrouter

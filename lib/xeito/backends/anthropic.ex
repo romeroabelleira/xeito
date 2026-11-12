@@ -62,6 +62,21 @@ defmodule Xeito.Backends.Anthropic do
         }
 
   @impl true
+  def chat(messages, tools, cfg, on_delta), do: Xeito.Chat.Anthropic.complete(messages, tools, cfg, on_delta)
+
+  @impl true
+  def default_url, do: "https://api.anthropic.com"
+
+  @impl true
+  def spend, do: :priced
+
+  @impl true
+  def list_price(cfg), do: price(cfg[:model])
+
+  @impl true
+  def destination(_cfg), do: "the Claude API"
+
+  @impl true
   def decide(type, input, cfg) do
     started = System.monotonic_time(:millisecond)
     model = Keyword.fetch!(cfg, :model)

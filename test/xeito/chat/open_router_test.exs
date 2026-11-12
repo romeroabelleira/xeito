@@ -2,67 +2,6 @@ defmodule Xeito.Chat.OpenRouterTest do
   use ExUnit.Case, async: true
 
   alias Xeito.Chat.OpenRouter
-  alias Xeito.Chat.OpenRouter.Stream
-
-  describe "messages/1: Xeito's conversation in OpenAI's form" do
-    test "tool calls get ids, and their results answer them in order" do
-      messages = [
-        %{role: "system", content: "sys"},
-        %{role: "user", content: "hi", ref: "e1"},
-        %{
-          role: "assistant",
-          content: "",
-          tool_calls: [
-            %{function: %{name: "read", arguments: %{"path" => "a"}}},
-            %{function: %{name: "bash", arguments: %{"command" => "ls"}}}
-          ]
-        },
-        %{role: "tool", tool_name: "read", content: "A", ref: "e2", about: "read of a"},
-        %{role: "tool", tool_name: "bash", content: "B"},
-        %{role: "assistant", content: "done"}
-      ]
-
-      assert OpenRouter.messages(messages) == [
-               %{role: "system", content: "sys"},
-               %{role: "user", content: "hi"},
-               %{
-                 role: "assistant",
-                 content: nil,
-                 tool_calls: [
-                   %{id: "call_3_1", type: "function", function: %{name: "read", arguments: ~s({"path":"a"})}},
-                   %{id: "call_3_2", type: "function", function: %{name: "bash", arguments: ~s({"command":"ls"})}}
-                 ]
-               },
-               %{role: "tool", tool_call_id: "call_3_1", content: "A"},
-               %{role: "tool", tool_call_id: "call_3_2", content: "B"},
-               %{role: "assistant", content: "done"}
-             ]
-    end
-
-    test "a call left without a result is answered before the conversation goes on" do
-      messages = [
-        %{role: "assistant", content: "let me look", tool_calls: [%{function: %{name: "read", arguments: %{}}}]},
-        %{role: "user", content: "stop"}
-      ]
-
-      assert [
-               %{role: "assistant", content: "let me look", tool_calls: [%{id: "call_1_1"}]},
-               %{role: "tool", tool_call_id: "call_1_1", content: "(no result: the call was not run)"},
-               %{role: "user", content: "stop"}
-             ] = OpenRouter.messages(messages)
-    end
-
-    test "unanswered calls at the end are answered too" do
-      messages = [%{role: "assistant", content: "", tool_calls: [%{function: %{name: "read", arguments: %{}}}]}]
-
-      assert [_, %{role: "tool", tool_call_id: "call_1_1"}] = OpenRouter.messages(messages)
-    end
-
-    test "a result whose call was dropped becomes a note from the user" do
-      assert OpenRouter.messages([%{role: "tool", tool_name: "bash", content: "out"}]) ==
-               [%{role: "user", content: "[bash result]\nout"}]
-    end
-  end
 
   describe "body/3" do
     test "streams, asks for the usage, keeps prompts private and stops at max_tokens" do
@@ -111,66 +50,6 @@ defmodule Xeito.Chat.OpenRouterTest do
 
     test "Anthropic models cache the conversation's prefix" do
       assert OpenRouter.body([], [], model: "anthropic/claude-x").cache_control == %{type: "ephemeral"}
-    end
-  end
-
-  describe "Stream: OpenAI's server-sent events" do
-    defp feed(chunks, on_delta \\ fn _ -> :ok end) do
-      chunks |> Enum.reduce(Stream.new(), &Stream.feed(&2, &1, on_delta)) |> Stream.finish()
-    end
-
-    defp event(map), do: "data: " <> JSON.encode!(map) <> "\n\n"
-
-    test "text arrives in pieces, possibly split mid-line, and is passed on as it comes" do
-      parent = self()
-      data = event(%{choices: [%{delta: %{content: "Hel"}}]}) <> event(%{choices: [%{delta: %{content: "lo"}}]})
-      {a, b} = String.split_at(data, 20)
-
-      assert {:ok, %{content: "Hello", tool_calls: []}} =
-               feed([": OPENROUTER PROCESSING\n\n", a, b, "data: [DONE]\n\n"], &send(parent, {:delta, &1}))
-
-      assert_received {:delta, "Hel"}
-      assert_received {:delta, "lo"}
-    end
-
-    test "tool calls are assembled from fragments by index" do
-      chunks = [
-        event(%{
-          choices: [%{delta: %{tool_calls: [%{index: 0, id: "x", function: %{name: "read", arguments: ~s({"pa)}}]}}]
-        }),
-        event(%{choices: [%{delta: %{tool_calls: [%{index: 0, function: %{arguments: ~s(th":"a"})}}]}}]}),
-        event(%{choices: [%{delta: %{tool_calls: [%{index: 1, function: %{name: "bash", arguments: ""}}]}}]})
-      ]
-
-      assert {:ok, %{tool_calls: [%{name: "read", arguments: %{"path" => "a"}}, %{name: "bash", arguments: %{}}]}} =
-               feed(chunks)
-    end
-
-    test "arguments that are not JSON are kept raw" do
-      chunks = [event(%{choices: [%{delta: %{tool_calls: [%{index: 0, function: %{name: "r", arguments: "{"}}]}}]})]
-      assert {:ok, %{tool_calls: [%{arguments: %{"_raw" => "{"}}]}} = feed(chunks)
-    end
-
-    test "the last event carries the usage: tokens, cache reads and the cost" do
-      usage = %{prompt_tokens: 100, completion_tokens: 7, cost: 0.0123, prompt_tokens_details: %{cached_tokens: 80}}
-      chunks = [event(%{model: "m/x", provider: "P", choices: [%{delta: %{}}], usage: usage})]
-
-      assert {:ok, %{tokens_in: 100, tokens_out: 7, cached_tokens: 80, usd: 0.0123, served_by: "openrouter:m/x@P"}} =
-               feed(chunks)
-    end
-
-    test "without usage, counts are zero" do
-      assert {:ok, %{tokens_in: 0, tokens_out: 0, cached_tokens: 0, usd: usd, served_by: nil}} = feed([])
-      assert usd == 0.0
-    end
-
-    test "an error event ends the answer with that error" do
-      assert {:error, {:openrouter, %{"message" => "no"}}} =
-               feed([event(%{choices: [%{delta: %{content: "a"}}]}), event(%{error: %{message: "no"}})])
-    end
-
-    test "a line that is not JSON is skipped" do
-      assert {:ok, %{content: "a"}} = feed(["data: {oops\n\n", event(%{choices: [%{delta: %{content: "a"}}]})])
     end
   end
 

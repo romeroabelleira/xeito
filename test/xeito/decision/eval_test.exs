@@ -178,13 +178,13 @@ defmodule Xeito.Decision.EvalTest do
 
     test "a tier alone: its answer and model, or an abstention with the error" do
       Req.Test.stub(:eval_local, &decision_response(&1, "review"))
-      local = [url: "http://local.test", plug: {Req.Test, :eval_local}, model: "big"]
+      local = [backend: :ollama, url: "http://local.test", plug: {Req.Test, :eval_local}, model: "big"]
       [_, other, _] = Eval.run(Risk, :local, @examples, tiers: [local: local])
       assert %{predicted: :review, model: "big"} = other
       assert other.confidence > 0.9
 
       Req.Test.stub(:eval_down, &Plug.Conn.send_resp(&1, 500, "down"))
-      down = [url: "http://down.test", plug: {Req.Test, :eval_down}, model: "big", retry: false]
+      down = [backend: :ollama, url: "http://down.test", plug: {Req.Test, :eval_down}, model: "big", retry: false]
       [_, failed, _] = Eval.run(Risk, :local, @examples, tiers: [local: down])
       assert %{predicted: :abstain, confidence: nil, error: _} = failed
     end

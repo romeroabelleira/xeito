@@ -24,7 +24,7 @@ defmodule Xeito.ChatTest do
       |> Plug.Conn.send_resp(200, Enum.map_join(lines, "\n", &JSON.encode!/1))
     end)
 
-    [url: "http://chat.test", plug: {Req.Test, :chat_client}, model: "big"]
+    [backend: :ollama, url: "http://chat.test", plug: {Req.Test, :chat_client}, model: "big"]
   end
 
   defp call(arguments), do: %{"function" => %{"name" => "read", "arguments" => arguments}}
@@ -144,8 +144,15 @@ defmodule Xeito.ChatTest do
     end
 
     test "a tier whose backend cannot chat is an error" do
-      assert Chat.complete([], [], tier: :local_decision, url: "http://x.test") ==
+      assert Chat.complete([], [], tier: :local_decision, backend: :system_one, url: "http://x.test") ==
                {:error, {:no_chat_backend, :system_one}}
+    end
+
+    test "off the machine, a backend that neither reports nor prices its calls is refused before any request" do
+      for backend <- [:openai, :colibri, :ollama, :system_one] do
+        opts = [tier: :remote, backend: backend, url: "http://unreached.test", model: "m", api_key: "k"]
+        assert Chat.complete([%{role: "user", content: "hi"}], [], opts) == {:error, {:unpriced_backend, backend}}
+      end
     end
   end
 

@@ -110,7 +110,8 @@ All services bind to **loopback only**. Remote access goes through an SSH tunnel
 
 | Unit (systemd `--user`) | Default bind | Notes |
 |---|---|---|
-| `ollama` | `127.0.0.1:11434` | Make sure Ollama is not bound to all interfaces. |
+| `colibri` | `127.0.0.1:8000` | One server, one model: the chat model of the `local` tier, which also answers `local_decision` on `/v1/systemone`. Started with a fixed `--ctx`; binds to localhost by default. |
+| `ollama` (optional) | `127.0.0.1:11434` | The other backend for `local`; the card holds one model, so it is not loaded while Colibri serves. Make sure Ollama is not bound to all interfaces. |
 | `xeito-laya` (Docker, upstream `laya-serve`) | `127.0.0.1:8082` | Pinned upstream tag, API key file, `LAYA_PRELOAD=1`, model pinned per request |
 | `xeitod` | Unix socket under `$XDG_STATE_HOME/xeito/`, inspector on `127.0.0.1:4040` | `mix release`, `Restart=on-failure` |
 | `xeito-mine.timer` | — | Nightly PM4Py batch over the project logs ([05](05-event-log-and-process-mining.md)) |
@@ -122,12 +123,19 @@ Tiers are read from the environment at startup (`Xeito.Tiers.Settings`; [INSTALL
 
 ```bash
 # ~/.config/xeito/tiers.env
-export XEITO_LOCAL_DECISION_URL=http://127.0.0.1:8082
-export XEITO_LOCAL_DECISION_KEY_FILE="$HOME/.config/xeito/laya_api_key"
-export XEITO_LOCAL_URL=http://127.0.0.1:11434
-export XEITO_LOCAL_MODEL=qwen3.6:27b
+export XEITO_LOCAL_URL=http://127.0.0.1:8000
+export XEITO_LOCAL_MODEL=qwen36
 export XEITO_LOCAL_CONTEXT=65536
-export XEITO_LOCAL_KEEP_ALIVE=5m
+export XEITO_LOCAL_DECISION_URL=http://127.0.0.1:8000
+export XEITO_LOCAL_DECISION_MODEL=qwen36
+# Ollama and laya-serve instead:
+# export XEITO_LOCAL_BACKEND=ollama
+# export XEITO_LOCAL_URL=http://127.0.0.1:11434
+# export XEITO_LOCAL_MODEL=qwen3.6:27b
+# export XEITO_LOCAL_KEEP_ALIVE=5m
+# export XEITO_LOCAL_DECISION_BACKEND=system_one
+# export XEITO_LOCAL_DECISION_URL=http://127.0.0.1:8082
+# export XEITO_LOCAL_DECISION_KEY_FILE="$HOME/.config/xeito/laya_api_key"
 # Off-box and opt-in:
 # export XEITO_REMOTE_MODEL=qwen/qwen3.8-27b
 # export XEITO_REMOTE_KEY_FILE="$HOME/.config/xeito/openrouter.key"

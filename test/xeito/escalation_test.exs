@@ -31,14 +31,14 @@ defmodule Xeito.EscalationTest do
       })
     end)
 
-    [url: "http://#{stub}.test", plug: {Req.Test, stub}, model: "multilingual"]
+    [backend: :system_one, url: "http://#{stub}.test", plug: {Req.Test, stub}, model: "multilingual"]
   end
 
   defp local_decision(conf), do: decision_model(:esc_local_decision, conf)
 
   defp local(loaded?, test_pid \\ nil) do
     Req.Test.stub(:esc_local, &ollama(&1, loaded?, test_pid))
-    [url: "http://local.test", plug: {Req.Test, :esc_local}, model: "big"]
+    [backend: :ollama, url: "http://local.test", plug: {Req.Test, :esc_local}, model: "big"]
   end
 
   defp ollama(%{request_path: "/api/ps"} = conn, loaded?, _test_pid) do
@@ -243,7 +243,7 @@ defmodule Xeito.EscalationTest do
         })
     end)
 
-    tiers = [local: [url: "http://local.test", plug: {Req.Test, :esc_local}, model: "big"]]
+    tiers = [local: [backend: :ollama, url: "http://local.test", plug: {Req.Test, :esc_local}, model: "big"]]
     {decision, _, _} = decide(Risk, %{command: "some-unknown-tool --flag"}, deciders: [:local], tiers: tiers)
 
     assert %{value: :review, actor: actor} = decision

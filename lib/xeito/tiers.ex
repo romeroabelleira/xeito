@@ -6,9 +6,9 @@ defmodule Xeito.Tiers do
 
   | tier               | kind                                                   | default backend |
   |--------------------|--------------------------------------------------------|-----------------|
-  | `:local_decision`  | System One decision model on this machine              | `:system_one`   |
+  | `:local_decision`  | decisions on this machine, by a decision or chat model | `:colibri`      |
   | `:remote_decision` | System One decision model, hosted                      | `:system_one`   |
-  | `:local`           | language model on the local GPU: chat and decisions    | `:ollama`       |
+  | `:local`           | language model on the local GPU: chat and decisions    | `:colibri`      |
   | `:remote`          | hosted language model with logprobs (calibrated)       | `:openrouter`   |
   | `:remote_frontier` | the strongest hosted language model; answers terminally | `:openrouter`  |
 
@@ -54,9 +54,9 @@ defmodule Xeito.Tiers do
   @off_box [:remote_decision, :remote, :remote_frontier]
 
   @default_backends %{
-    local_decision: :system_one,
+    local_decision: :colibri,
     remote_decision: :system_one,
-    local: :ollama,
+    local: :colibri,
     remote: :openrouter,
     remote_frontier: :openrouter
   }

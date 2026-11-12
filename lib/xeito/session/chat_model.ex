@@ -8,6 +8,7 @@ defmodule Xeito.Session.ChatModel do
   `XEITO_CHAT_TIER` for every session), never the model.
   """
 
+  alias Xeito.Backends
   alias Xeito.Tiers
 
   @chat_tiers [:local, :remote, :remote_frontier]
@@ -72,14 +73,14 @@ defmodule Xeito.Session.ChatModel do
     if off_box?(tier),
       do:
         line(tier, cfg, nil) <>
-          "\nThe conversation, and every file the model reads, now leave this machine (#{where(cfg)}). " <>
+          "\nThe conversation, and every file the model reads, now leave this machine (#{where(tier, cfg)}). " <>
           "Spend: up to #{usd(max_usd)} per turn (/budget <usd>); /model local switches back.",
       else: line(tier, cfg, nil)
   end
 
   defp line(tier, cfg, left), do: "chat: #{tier} · #{holds(tier, cfg)}" <> left(left)
 
-  defp where(cfg), do: if(cfg[:backend] == :anthropic, do: "the Claude API", else: "OpenRouter, zero data retention")
+  defp where(tier, cfg), do: Backends.destination(Tiers.backend(tier, cfg), cfg)
 
   defp holds(_tier, nil), do: "not configured"
   defp holds(tier, cfg), do: "#{cfg[:model]}" <> if(off_box?(tier), do: " · off-box", else: "")
